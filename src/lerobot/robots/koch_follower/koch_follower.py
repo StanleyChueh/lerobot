@@ -202,26 +202,56 @@ class KochFollower(Robot):
 
         return obs_dict
 
-    def send_action(self, action: dict[str, float]) -> dict[str, float]:
+    def send_action(self, action: dict[str, float] | list[float] | tuple[float] ) -> dict[str, float]:
         """Command arm to move to a target joint configuration.
 
-        The relative action magnitude may be clipped depending on the configuration parameter
-        `max_relative_target`. In this case, the action sent differs from original action.
-        Thus, this function always returns the action actually sent.
+        Accepts:
+          - mapping with keys 'joint.pos' or 'joint'
+          - list/tuple/ndarray ordered as self.bus.motors
 
-        Args:
-            action (dict[str, float]): The goal positions for the motors.
-
-        Returns:
-            dict[str, float]: The action sent to the motors, potentially clipped.
+        Returns the actual action sent as {'joint.pos': value}.
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        goal_pos = {key.removesuffix(".pos"): val for key, val in action.items() if key.endswith(".pos")}
+        # --- normalize input to {joint: value} ---
+        motor_names = list(self.bus.motors.keys())
+        goal_pos: dict[str, float] = {}
 
-        # Cap goal position when too far away from present position.
-        # /!\ Slower fps expected due to reading from the follower.
+        # Case 1: sequence (np.ndarray/list/tuple) -> map by motor order
+        try:
+            import numpy as _np  # lazy import, optional
+            is_np = isinstance(action, _np.ndarray)  # type: ignore[arg-type]
+        except Exception:
+            is_np = False
+
+        if isinstance(action, (list, tuple)) or is_np:
+            seq = list(action)  # type: ignore[arg-type]
+            if len(seq) != len(motor_names):
+                raise ValueError(
+                    f"Expected {len(motor_names)} values for motors {motor_names}, got {len(seq)}."
+                )
+            goal_pos = {motor_names[i]: float(seq[i]) for i in range(len(motor_names))}
+
+        # Case 2: mapping -> accept both 'joint.pos' and 'joint'
+        elif isinstance(action, dict):
+            for k, v in action.items():
+                if k.endswith(".pos"):
+                    k = k[:-4]
+                if k in self.bus.motors:
+                    goal_pos[k] = float(v)
+
+        else:
+            raise TypeError(f"Unsupported action type: {type(action)}")
+
+        if not goal_pos:
+            raise ValueError(
+                "Empty action received. Provide a vector (list/tuple/ndarray) "
+                f"of length {len(motor_names)} or a dict with keys in {motor_names} "
+                "or '<joint>.pos'."
+            )
+
+        # Cap goal position when too far away from present position (safety)
         if self.config.max_relative_target is not None:
             present_pos = self.bus.sync_read("Present_Position")
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
@@ -229,7 +259,10 @@ class KochFollower(Robot):
 
         # Send goal position to the arm
         self.bus.sync_write("Goal_Position", goal_pos)
+
+        # Return .pos-format dict (what upper layers expect)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
+
 
     def disconnect(self):
         if not self.is_connected:
@@ -240,3 +273,29 @@ class KochFollower(Robot):
             cam.disconnect()
 
         logger.info(f"{self} disconnected.")
+    
+    def reset(self) -> None:
+        """Safe no-op reset.
+
+        Some envs call robot.reset() unconditionally. We keep it safe by
+        commanding the current joint positions as goals so the arm holds
+        position without sudden motion.
+        """
+        if not self.is_connected:
+            # If not connected, nothing to do.
+            return
+        try:
+            # Read current positions and write them back as goals
+            present_pos = self.bus.sync_read("Present_Position")
+            self.bus.sync_write("Goal_Position", present_pos)
+            logger.info(f"{self.id} reset: holding current joint positions.")
+        except Exception as e:
+            logger.warning(f"{self.id} reset encountered an issue: {e}")
+
+
+from .config_koch_follower import KochFollowerEndEffectorConfig
+
+class KochFollowerEndEffector(KochFollower):
+    """Same driver as KochFollower, but paired with URDF/EE-aware config."""
+    config_class = KochFollowerEndEffectorConfig
+    name = "koch_follower_end_effector"

@@ -23,48 +23,53 @@ from .robot import Robot
 def make_robot_from_config(config: RobotConfig) -> Robot:
     if config.type == "koch_follower":
         from .koch_follower import KochFollower
-
         return KochFollower(config)
+
+    elif config.type == "koch_follower_end_effector":
+        # NEW: 支援 Koch 帶 URDF/EE 的類型
+        from .koch_follower import KochFollowerEndEffector
+        return KochFollowerEndEffector(config)
+
     elif config.type == "so100_follower":
         from .so100_follower import SO100Follower
-
         return SO100Follower(config)
+
     elif config.type == "so100_follower_end_effector":
         from .so100_follower import SO100FollowerEndEffector
-
         return SO100FollowerEndEffector(config)
+
     elif config.type == "so101_follower":
         from .so101_follower import SO101Follower
-
         return SO101Follower(config)
+
     elif config.type == "lekiwi":
         from .lekiwi import LeKiwi
-
         return LeKiwi(config)
+
     elif config.type == "stretch3":
         from .stretch3 import Stretch3Robot
-
         return Stretch3Robot(config)
+
     elif config.type == "viperx":
         from .viperx import ViperX
-
         return ViperX(config)
+
     elif config.type == "hope_jr_hand":
         from .hope_jr import HopeJrHand
-
         return HopeJrHand(config)
+
     elif config.type == "hope_jr_arm":
         from .hope_jr import HopeJrArm
-
         return HopeJrArm(config)
+
     elif config.type == "bi_so100_follower":
         from .bi_so100_follower import BiSO100Follower
-
         return BiSO100Follower(config)
+
     elif config.type == "mock_robot":
         from tests.mocks.mock_robot import MockRobot
-
         return MockRobot(config)
+
     else:
         raise ValueError(config.type)
 

@@ -37,3 +37,34 @@ class KochFollowerConfig(RobotConfig):
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
+
+@RobotConfig.register_subclass("koch_follower_end_effector")
+@dataclass
+class KochFollowerEndEffectorConfig(KochFollowerConfig):
+    """Configuration for Koch follower with end-effector/URDF support."""
+
+    # Path to URDF file for kinematics
+    urdf_path: str | None = "/home/bruce/CSL/lerobot_nn/assets/koch_follower/koch_follower.urdf"
+
+    # End-effector frame name in the URDF
+    target_frame_name: str = "gripper-moving-part-dumb_v2_1"
+
+    # Default bounds for the end-effector position (in meters)
+    end_effector_bounds: dict[str, list[float]] = field(
+        default_factory=lambda: {
+            "min": [-1.0, -1.0, -1.0],  # min x, y, z
+            "max": [1.0, 1.0, 1.0],     # max x, y, z
+        }
+    )
+
+    # Max gripper “position” scaling used by wrappers (同 SO100 命名，便於 EE & gripper wrapper 共用)
+    max_gripper_pos: float = 50
+
+    # Step sizes for EE delta control (m/step)
+    end_effector_step_sizes: dict[str, float] = field(
+        default_factory=lambda: {
+            "x": 0.02,
+            "y": 0.02,
+            "z": 0.02,
+        }
+    )

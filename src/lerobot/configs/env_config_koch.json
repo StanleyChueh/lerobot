@@ -1,0 +1,116 @@
+{
+    "type": "gym_manipulator",
+    "robot": {
+        "type": "koch_follower_end_effector",
+        "id": "my_awesome_follower_arm",
+        "port": "/dev/ttyUSB_follower",
+        "urdf_path": "/home/bruce/lerobot/low_cost_robot/simulation/low_cost_robot/low-cost-arm.urdf",
+        "target_frame_name": "gripper-moving-part-dumb_v2_1",   
+        "cameras": {
+            "front": {
+                "type": "opencv",
+                "index_or_path": 6,
+                "height": 480,
+                "width": 640,
+                "fps": 30
+            },
+            "top": {
+                "type": "opencv",
+                "index_or_path": 4,
+                "height": 480,
+                "width": 640,
+                "fps": 30
+            }
+        },
+        "end_effector_bounds": {                        
+            "min": [-0.40, -0.30, 0.02],
+            "max": [ 0.40,  0.30, 0.45]
+          },
+        "end_effector_step_sizes": { "x": 0.015, "y": 0.015, "z": 0.015 }
+    },
+    "teleop": {
+        "type": "koch_leader",
+        "id": "my_awesome_leader_arm",
+        "port": "/dev/ttyUSB_leader"
+    },
+    "wrapper": {
+        "display_cameras": false,
+        "add_joint_velocity_to_observation": true,
+        "add_current_to_observation": true,
+        "add_ee_pose_to_observation": true,
+        "crop_params_dict": {
+            "observation.images.front": [
+                0,
+                0,
+                480,
+                640
+            ],
+            "observation.images.top": [
+                0,
+                0,
+                480,
+                640
+            ]
+        },
+        "resize_size": [
+            128,
+            128
+        ],
+        "control_time_s": 30.0,
+        "use_gripper": true,
+        "gripper_quantization_threshold": null,
+        "gripper_penalty": -0.02,
+        "gripper_penalty_in_reward": false,
+        "fixed_reset_joint_positions": null,
+        "reset_time_s": 3.0,
+        "control_mode": "leader"
+    },
+    "name": "koch_real_robot",
+    "mode": "record",
+    "repo_id": "ethanCSL/test_0828",
+    "dataset_root": null,
+    "task": "test_0828",
+    "num_episodes": 1,
+    "episode": 0,
+    "pretrained_policy_name_or_path": null,
+    "device": "cpu",
+    "push_to_hub": true,
+    "fps": 20,
+    "features": {
+        "observation.images.front": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                128,
+                128
+            ]
+        },
+        "observation.images.wrist": {
+            "type": "VISUAL",
+            "shape": [
+                3,
+                128,
+                128
+            ]
+        },
+        "observation.state": {
+            "type": "STATE",
+            "shape": [
+                6
+            ]
+        },
+        "action": {
+            "type": "ACTION",
+            "shape": [
+                4
+            ]
+        }
+    },
+    "features_map": {
+        "observation.images.front": "observation.images.front",
+        "observation.images.top": "observation.images.top",
+        "observation.state": "observation.state",
+        "action": "action"
+    },
+    "reward_classifier_pretrained_path": null
+}

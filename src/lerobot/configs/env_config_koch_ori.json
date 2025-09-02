@@ -1,0 +1,86 @@
+{
+    "type": "gym_manipulator",
+    "device": "cpu",
+    "fps": 20,
+    "robot": {
+      "type": "koch_follower_end_effector",                       
+      "id": "my_koch_follower",
+      "port": "/dev/ttyUSB_follower",
+  
+      "urdf_path": "/home/bruce/lerobot/low_cost_robot/simulation/low_cost_robot/low-cost-arm.urdf",
+      "target_frame_name": "gripper-moving-part-dumb_v2_1",   
+      "cameras": {
+        "front": { "type": "opencv", "index_or_path": 6, "height": 480, "width": 640, "fps": 30 },
+        "top":   { "type": "opencv", "index_or_path": 4, "height": 480, "width": 640, "fps": 30 }
+      },
+  
+      "end_effector_bounds": {                        
+        "min": [-0.40, -0.30, 0.02],
+        "max": [ 0.40,  0.30, 0.45]
+      },
+      "end_effector_step_sizes": { "x": 0.015, "y": 0.015, "z": 0.015 },
+  
+      "max_gripper_pos": 4095,    
+      "max_relative_target": null,
+      "use_degrees": true
+      
+    },
+  
+    "teleop": {
+      "type": "koch_leader",                          
+      "id": "my_koch_leader",
+      "port": "/dev/ttyUSB_leader"                          
+    },
+  
+    "wrapper": {
+      "display_cameras": false,
+  
+      "add_joint_velocity_to_observation": true,
+      "add_current_to_observation": false,
+      "add_ee_pose_to_observation": true,
+  
+      "crop_params_dict": {
+        "observation.images.front": [  0,   0, 480, 640],
+        "observation.images.top":   [  0,   0, 480, 640]
+      },
+      "resize_size": [128, 128],
+  
+      "control_time_s": 20.0,
+      "use_gripper": false,                           
+      "gripper_quantization_threshold": null,
+      "gripper_penalty": -0.02,
+      "gripper_penalty_in_reward": false,
+  
+      "fixed_reset_joint_positions": null,            
+      "reset_time_s": 3.0,
+  
+      "control_mode": "leader_end_effector"                   
+    },
+  
+    "name": "koch_real_robot",
+    "mode": "record",                  
+    "repo_id": null,
+    "dataset_root": "./runs/koch_2025-08-26_toy0_08",
+    "task": "toy_0",
+    "num_episodes": 1,
+    "episode": 0,
+  
+    "pretrained_policy_name_or_path": null,
+    "push_to_hub": false,
+  
+    "features": {
+      "observation.images.front": { "type": "VISUAL", "shape": [3, 128, 128] },
+      "observation.images.top":   { "type": "VISUAL", "shape": [3, 128, 128] },
+      "observation.state":        { "type": "STATE",  "shape": [6] },
+      "action":                   { "type": "ACTION", "shape": [4] }
+    },
+    "features_map": {
+      "observation.images.front": "observation.images.front",
+      "observation.images.top":   "observation.images.top",
+      "observation.state":        "observation.state",
+      "action":                   "action"
+    },
+  
+    "reward_classifier_pretrained_path": null
+  }
+  

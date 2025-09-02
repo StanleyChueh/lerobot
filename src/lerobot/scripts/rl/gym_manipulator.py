@@ -57,12 +57,14 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
     so100_follower,
+    koch_follower
 )
 from lerobot.teleoperators import (
     gamepad,  # noqa: F401
     keyboard,  # noqa: F401
     make_teleoperator_from_config,
     so101_leader,  # noqa: F401
+    koch_leader
 )
 from lerobot.teleoperators.gamepad.teleop_gamepad import GamepadTeleop
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardEndEffectorTeleop
@@ -525,6 +527,51 @@ class AddCurrentToObservation(gym.ObservationWrapper):
             [observation["agent_pos"], present_current_observation], axis=-1
         )
         return observation
+
+class LeaderJointsWrapper(gym.Wrapper):
+    """
+    直接讀 teleop 的關節角度（*.pos）鍵，送進 robot.send_action()。
+    不做 IK、不做 EE delta，純 joints 直通。
+    """
+    _JOINT_KEYS = [
+        "shoulder_pan.pos",
+        "shoulder_lift.pos",
+        "elbow_flex.pos",
+        "wrist_flex.pos",
+        "wrist_roll.pos",
+        "gripper.pos",
+    ]
+
+    def __init__(self, env):
+        super().__init__(env)
+        # 安全：第一次只印一次看看實際 keys
+        self._debug_printed = False
+
+    def reset(self, **kwargs):
+        # 不要在 reset 時覆蓋成「保持原位」就好，交回下層 reset。
+        obs, info = self.env.reset(**kwargs)
+        return obs, info
+
+    def step(self, action):
+        # 讀取 leader 動作
+        teleop = getattr(self.unwrapped, "teleop", None)
+        if teleop is not None:
+            a = teleop.get_action() or {}
+            cmd = {k: a[k] for k in self._JOINT_KEYS if k in a}
+            if cmd:
+                # 可選：第一次印出來確認
+                if not self._debug_printed:
+                    print("[LeaderJointsWrapper] first cmd keys:", list(cmd.keys()))
+                    self._debug_printed = True
+                # 送進 follower
+                self.unwrapped.robot.send_action(cmd)
+
+        # 讓環境往下跑，action 對我們而言不重要（避免介面出錯，傳零向量）
+        try:
+            zeros = np.zeros_like(action) if action is not None else action
+        except Exception:
+            zeros = action
+        return self.env.step(zeros)
 
 
 class RewardWrapper(gym.Wrapper):
@@ -1168,9 +1215,9 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         # Default value for P_coeff is 32
         self.robot_leader.bus.sync_write("Torque_Enable", 1)
         for motor in self.robot_leader.bus.motors:
-            self.robot_leader.bus.write("P_Coefficient", motor, 16)
-            self.robot_leader.bus.write("I_Coefficient", motor, 0)
-            self.robot_leader.bus.write("D_Coefficient", motor, 16)
+            self.robot_leader.bus.write("Position_P_Gain", motor, 16)
+            self.robot_leader.bus.write("Position_I_Gain", motor, 0)
+            self.robot_leader.bus.write("Position_D_Gain", motor, 16)
 
         self.leader_tracking_error_queue = deque(maxlen=4)
         self._init_keyboard_listener()
@@ -1949,6 +1996,8 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
             end_effector_step_sizes=cfg.robot.end_effector_step_sizes,
             use_gripper=cfg.wrapper.use_gripper,
         )
+    elif control_mode == "leader_joints":
+        env = LeaderJointsWrapper(env)
     else:
         raise ValueError(f"Invalid control mode: {control_mode}")
 
@@ -2260,4 +2309,4 @@ def main(cfg: EnvConfig):
 
 
 if __name__ == "__main__":
-    main()
+    main()  
