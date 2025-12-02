@@ -73,6 +73,7 @@ from lerobot.utils.utils import log_say
 
 logging.basicConfig(level=logging.INFO)
 
+leader_position = None
 
 def reset_follower_position(robot_arm, target_position):
     current_position_dict = robot_arm.bus.sync_read("Present_Position")
@@ -372,7 +373,9 @@ class RobotEnv(gym.Env):
         # 1.0 action corresponds to no-op action
         action_dict["gripper"] = action[3] if self.use_gripper else 1.0
 
-        self.robot.send_action(action_dict)
+        global leader_position
+
+        self.robot.send_action(action_dict, leader_position)
 
         self._get_observation()
 
@@ -1300,6 +1303,9 @@ class BaseLeaderControlWrapper(gym.Wrapper):
             self.leader_torque_enabled = False
 
         leader_pos_dict = self.robot_leader.bus.sync_read("Present_Position")
+        global leader_position
+        leader_position = leader_pos_dict
+
         follower_pos_dict = self.robot_follower.bus.sync_read("Present_Position")
 
         leader_pos = np.array([leader_pos_dict[name] for name in leader_pos_dict])
@@ -1314,12 +1320,13 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         # print("leader_ee:", leader_ee)
         follower_ee = self.kinematics.forward_kinematics(follower_pos)[:3, 3]
         # print("follower_ee:", follower_ee)
-        # print("ik",self.kinematics.inverse_kinematics(follower_pos,self.kinematics.forward_kinematics(follower_pos)))
+        # print("ik",self.kinematics.inverse_kinematics(leader_pos,self.kinematics.forward_kinematics(leader_pos)))
         # print("fp",follower_pos)
         # print("lp",leader_pos)
         # print('ee = 0',self.kinematics.inverse_kinematics(follower_pos,self.kinematics.forward_kinematics(follower_pos)))
         # print(self.kinematics.forward_kinematics(follower_pos))
         action = np.clip(leader_ee - follower_ee, -self.end_effector_step_sizes, self.end_effector_step_sizes)
+        print("action:", action)
         # Normalize the action to the range [-1, 1]
         action = action / self.end_effector_step_sizes
 
@@ -2083,8 +2090,7 @@ def record_dataset(env, policy, cfg):
 
     # Setup initial action (zero action if using teleop)
     action = env.action_space.sample() * 0.0
-
-    action_names = ["delta_x_ee", "delta_y_ee", "delta_z_ee"]
+    action_names = ['shoulder_pan', 'shoulder_lift', 'elbow_flex', 'wrist_flex', 'wrist_roll']
     if cfg.wrapper.use_gripper:
         action_names.append("gripper_delta")
 
@@ -2140,18 +2146,20 @@ def record_dataset(env, policy, cfg):
         # Track success state collection
         success_detected = False
         success_steps_collected = 0
-
+        global leader_position
         # Run episode steps
         while time.perf_counter() - start_episode_t < cfg.wrapper.control_time_s:
             start_loop_t = time.perf_counter()
 
             # Get action from policy if available
             if cfg.pretrained_policy_name_or_path is not None:
-                action = policy.select_action(obs)
+                leader_position = policy.select_action(obs)
 
             # print(f"action:{action}")
             # Step environment
             # action[0] = float(input("Press Enter to take a step..."))
+            
+            # print(f"Leader position: {leader_position}")
             obs, reward, terminated, truncated, info = env.step(action)
             # print(f"Step done. reward:{reward}, terminated:{terminated}, truncated:{truncated}, info:{info}. Press Enter to continue...")
             # Check if episode needs to be rerecorded
@@ -2159,9 +2167,20 @@ def record_dataset(env, policy, cfg):
                 break
 
             # For teleop, get action from intervention
-            recorded_action = {
-                "action": info["action_intervention"].cpu().squeeze(0).float() if policy is None else action
-            }
+            if leader_position is not None:
+                values = list(leader_position.values())
+                action_tensor = torch.tensor(values, dtype=torch.float32)
+                # print(f"Using leader position as action: {action_tensor}")
+                recorded_action = {
+                    "action" : action_tensor
+                }
+                # print(f"l: {recorded_action}")
+            else:
+                continue
+
+            # recorded_action = {
+            #     "action": info["action_intervention"].cpu().squeeze(0).float() if policy is None else action
+            # }
 
             # Process observation for dataset
             obs_processed = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}

@@ -748,6 +748,8 @@ def validate_frame(frame: dict, features: dict):
 
     common_features = actual_features & expected_features
     for name in common_features - {"task"}:
+        if "observation.images.realsense" in name:
+            continue
         error_message += validate_feature_dtype_and_shape(name, features[name], frame[name])
 
     if error_message:

@@ -2,12 +2,12 @@
     "type": "gym_manipulator",
     "robot": {
         "type": "koch_follower_end_effector",
-        "id": "my_awesome_follower_arm",
+        "id": "my_awesome_follower_arm_v2",
         "port": "/dev/ttyUSB_follower",
-        "urdf_path": "/home/bruce/lerobot/low_cost_robot/simulation/low_cost_robot/low-cost-arm.urdf",
-        "target_frame_name": "gripper-moving-part-dumb_v2_1",   
+        "urdf_path": "/home/bruce/lerobot/koch-v1-1/simulation/follower.urdf",
+        "target_frame_name": "joint_5",   
         "cameras": {
-            "front": {
+            "fraont": {
                 "type": "opencv",
                 "index_or_path": 6,
                 "height": 480,
@@ -23,14 +23,14 @@
             }
         },
         "end_effector_bounds": {                        
-            "min": [-0.40, -0.30, 0.02],
-            "max": [ 0.40,  0.30, 0.45]
+            "max": [10.396, 10.169, 10.1353],  
+            "min": [-10.0, -10.0, -10.0]
           },
-        "end_effector_step_sizes": { "x": 0.015, "y": 0.015, "z": 0.015 }
+        "end_effector_step_sizes": { "x": 0.005, "y": 0.005, "z": 0.005 }
     },
     "teleop": {
         "type": "koch_leader",
-        "id": "my_awesome_leader_arm",
+        "id": "my_awesome_leader_arm_v2",
         "port": "/dev/ttyUSB_leader"
     },
     "wrapper": {
@@ -61,20 +61,20 @@
         "gripper_quantization_threshold": null,
         "gripper_penalty": -0.02,
         "gripper_penalty_in_reward": false,
-        "fixed_reset_joint_positions": null,
+        "fixed_reset_joint_positions": [-1.53846154, 47.55852843, -94.97681607, 0.28191704, -47.9853479, 7.65661253],
         "reset_time_s": 3.0,
         "control_mode": "leader"
     },
     "name": "koch_real_robot",
     "mode": "record",
-    "repo_id": "ethanCSL/test_0828",
+    "repo_id": "ethanCSL/test_0903",
     "dataset_root": null,
-    "task": "test_0828",
-    "num_episodes": 1,
+    "task": "test_0903",
+    "num_episodes": 11,
     "episode": 0,
     "pretrained_policy_name_or_path": null,
     "device": "cpu",
-    "push_to_hub": true,
+    "push_to_hub": false,
     "fps": 20,
     "features": {
         "observation.images.front": {

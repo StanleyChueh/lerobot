@@ -107,7 +107,9 @@ class SO100FollowerEndEffector(SO100Follower):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Convert action to numpy array if not already
+        if isinstance(action, dict) and any(key.endswith('.pos') for key in action.keys()):
+            return super().send_action(action)
+        
         if isinstance(action, dict):
             if all(k in action for k in ["delta_x", "delta_y", "delta_z"]):
                 delta_ee = np.array(

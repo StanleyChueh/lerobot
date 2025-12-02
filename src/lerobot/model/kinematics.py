@@ -21,7 +21,7 @@ class RobotKinematics:
     def __init__(
         self,
         urdf_path: str,
-        target_frame_name: str = "gripper_frame_link",
+        target_frame_name: str = "joint_5",
         joint_names: list[str] = None,
     ):
         """

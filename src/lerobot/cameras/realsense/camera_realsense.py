@@ -168,6 +168,7 @@ class RealSenseCamera(Camera):
 
         self.rs_pipeline = rs.pipeline()
         rs_config = rs.config()
+        self.align = rs.align(rs.stream.color)
         self._configure_rs_pipeline_config(rs_config)
 
         try:
@@ -337,6 +338,7 @@ class RealSenseCamera(Camera):
         start_time = time.perf_counter()
 
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
+        frame = self.align.process(frame)
 
         if not ret or frame is None:
             raise RuntimeError(f"{self} read_depth failed (status={ret}).")
@@ -377,6 +379,7 @@ class RealSenseCamera(Camera):
         start_time = time.perf_counter()
 
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
+        frame = self.align.process(frame)
 
         if not ret or frame is None:
             raise RuntimeError(f"{self} read failed (status={ret}).")
@@ -438,6 +441,18 @@ class RealSenseCamera(Camera):
 
         return processed_image
 
+    def _image_combine(self, limit_depth=1500, min_depth=0, max_depth=100):
+        color_frame = self.read(timeout_ms=500)
+        depth_map = self.read_depth(timeout_ms=500)
+
+        # 映射到 0-255
+        depth_map[depth_map>limit_depth] = max_depth
+        depth_norm = ((depth_map - min_depth) / (max_depth - min_depth) * 255).astype(np.uint8)
+        depth_rgb = np.zeros((depth_norm.shape[0], depth_norm.shape[1], 3), dtype=np.uint8)
+        depth_rgb[..., 1] = depth_norm
+        combined = np.vstack((color_frame, depth_rgb))
+        return combined
+
     def _read_loop(self):
         """
         Internal loop run by the background thread for asynchronous reading.
@@ -451,10 +466,12 @@ class RealSenseCamera(Camera):
         """
         while not self.stop_event.is_set():
             try:
-                color_image = self.read(timeout_ms=500)
+                # color_image = self.read(timeout_ms=500)
+                combined = self._image_combine()
 
                 with self.frame_lock:
-                    self.latest_frame = color_image
+                    # self.latest_frame = color_image
+                    self.latest_frame = combined
                 self.new_frame_event.set()
 
             except DeviceNotConnectedError:

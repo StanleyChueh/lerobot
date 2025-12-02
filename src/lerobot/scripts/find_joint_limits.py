@@ -123,12 +123,13 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
 
     teleop.connect()
     robot.connect()
+    print("connect follower & leader")
 
     start_episode_t = time.perf_counter()
 
     # Keep existing robot_type logic
-    robot_type = getattr(robot.config, "robot_type", "so101")
-    if "so100" in robot_type or "so101" in robot_type:
+    robot_type = getattr(robot.config, "robot_type", "koch")
+    if "koch" in robot_type or "koch" in robot_type:
         robot_type = "so_new_calibration"
 
     # URDF optional
@@ -149,9 +150,53 @@ def find_joint_and_ee_bounds(cfg: FindJointLimitsConfig):
     max_pos = joint_positions.copy()
     min_pos = joint_positions.copy()
 
+    observation = robot.get_observation()
+    joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])
+
+    last_action = None
+    threshold = 0.1 
+    
     while True:
         action = teleop.get_action()
+        #print("Leader action:", action)
         robot.send_action(action)
+
+        #######################################
+
+        # action = teleop.get_action()
+        # if last_action is None:
+        #     last_action = action.copy()
+        
+        # for key in action:
+        #     if abs(action[key] - last_action[key]) < threshold:
+        #         action[key] = last_action[key]
+
+        # last_action = action.copy()
+        # robot.send_action(action)
+
+        #########################################
+
+        # action_dict = teleop.get_action()
+        # print("Leader action:", action_dict)  
+
+        # action_array = np.array([
+        #     action_dict[f"{key}.pos"] for key in robot.bus.motors
+        # ])
+
+        # robot.send_action(action_array)
+
+        ##########################################
+
+        # leader_action = {
+        #     'shoulder_pan.pos': -6.373626373626379,
+        #     'shoulder_lift.pos': 99.3279569892473,
+        #     'elbow_flex.pos': 23.493694535263884,
+        #     'wrist_flex.pos': -46.724890829694324,
+        #     'wrist_roll.pos': -4.859584859584871,
+        #     'gripper.pos': 49.10820451843044
+        # }
+
+        # robot.send_action(leader_action)
 
         observation = robot.get_observation()
         joint_positions = np.array([observation[f"{key}.pos"] for key in robot.bus.motors])

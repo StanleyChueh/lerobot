@@ -173,11 +173,16 @@ class KochFollowerEndEffector(KochFollower):
             "names": {"delta_x": 0, "delta_y": 1, "delta_z": 2, "gripper": 3},
         }
 
-    def send_action(self, action: dict[str, Any] | list | np.ndarray) -> dict[str, float]:
+    def send_action(self, action: dict[str, Any] | list | np.ndarray, leader_pos=None) -> dict[str, float]:
         """Transform EE-space action to joint-space and send to motors."""
+        if leader_pos is not None:
+            return super().send_action(leader_pos)
 
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
+        
+        if isinstance(action, dict) and any(key.endswith('.pos') for key in action.keys()):
+            return super().send_action(action)
 
         # 轉換成 numpy array
         if isinstance(action, dict):
@@ -201,7 +206,7 @@ class KochFollowerEndEffector(KochFollower):
 
         if self.current_ee_pos is None:
             self.current_ee_pos = self.kinematics.forward_kinematics(self.current_joint_pos)
-
+        # print(self.bus.sync_read("Present_Position"))
         # 設定目標 EE 位置
         desired_ee_pos = np.eye(4)
         desired_ee_pos[:3, :3] = self.current_ee_pos[:3, :3]

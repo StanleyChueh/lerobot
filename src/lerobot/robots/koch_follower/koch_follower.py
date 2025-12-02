@@ -172,10 +172,24 @@ class KochFollower(Robot):
 
             # Set better PID values to close the gap between recorded states and actions
             # TODO(rcadene): Implement an automatic procedure to set optimal PID values for each motor
-            self.bus.write("Position_P_Gain", "elbow_flex", 1500)
-            self.bus.write("Position_I_Gain", "elbow_flex", 0)
-            self.bus.write("Position_D_Gain", "elbow_flex", 600)
-
+            # self.bus.write("Position_P_Gain", "shoulder_pan", 0)
+            # self.bus.write("Position_I_Gain", "shoulder_pan", 0)
+            # self.bus.write("Position_D_Gain", "shoulder_pan", 0)
+            # self.bus.write("Position_P_Gain", "shoulder_lift", 0)
+            # self.bus.write("Position_I_Gain", "shoulder_lift", 0)
+            # self.bus.write("Position_D_Gain", "shoulder_lift", 0)
+            # self.bus.write("Position_P_Gain", "elbow_flex", 0)
+            # self.bus.write("Position_I_Gain", "elbow_flex", 0)
+            # self.bus.write("Position_D_Gain", "elbow_flex", 0)
+            # self.bus.write("Position_P_Gain", "wrist_flex", 0)
+            # self.bus.write("Position_I_Gain", "wrist_flex", 0)
+            # self.bus.write("Position_D_Gain", "wrist_flex", 0)
+            # self.bus.write("Position_P_Gain", "wrist_roll", 0)
+            # self.bus.write("Position_I_Gain", "wrist_roll", 0)
+            # self.bus.write("Position_D_Gain", "wrist_roll", 0)
+            # self.bus.write("Position_P_Gain", "gripper", 10)
+            # self.bus.write("Position_I_Gain", "gripper", 0)
+            # self.bus.write("Position_D_Gain", "gripper", 0)
     def setup_motors(self) -> None:
         for motor in reversed(self.bus.motors):
             input(f"Connect the controller board to the '{motor}' motor only and press enter.")
@@ -211,6 +225,7 @@ class KochFollower(Robot):
 
         Returns the actual action sent as {'joint.pos': value}.
         """
+        # print(action)
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -293,9 +308,9 @@ class KochFollower(Robot):
             logger.warning(f"{self.id} reset encountered an issue: {e}")
 
 
-from .config_koch_follower import KochFollowerEndEffectorConfig
+# from .config_koch_follower import KochFollowerEndEffectorConfig
 
-class KochFollowerEndEffector(KochFollower):
-    """Same driver as KochFollower, but paired with URDF/EE-aware config."""
-    config_class = KochFollowerEndEffectorConfig
-    name = "koch_follower_end_effector"
+# class KochFollowerEndEffector(KochFollower):
+#     """Same driver as KochFollower, but paired with URDF/EE-aware config."""
+#     config_class = KochFollowerEndEffectorConfig
+#     name = "koch_follower_end_effector"

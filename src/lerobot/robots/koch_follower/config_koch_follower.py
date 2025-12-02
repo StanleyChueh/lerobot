@@ -25,7 +25,9 @@ class KochFollowerConfig(RobotConfig):
     # Port to connect to the arm
     port: str
 
+    #urdf_path: str | None = "/home/bruce/lerobot/low_cost_robot/simulation/low_cost_robot/low-cost-arm.urdf"
     disable_torque_on_disconnect: bool = True
+    #target_frame_name: str = "gripper-moving-part-dumb_v2_1"
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
     # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
@@ -44,16 +46,15 @@ class KochFollowerEndEffectorConfig(KochFollowerConfig):
     """Configuration for Koch follower with end-effector/URDF support."""
 
     # Path to URDF file for kinematics
-    urdf_path: str | None = "/home/bruce/CSL/lerobot_nn/assets/koch_follower/koch_follower.urdf"
-
+    urdf_path: str | None = "/home/bruce/lerobot/koch-v1-1/simulation/follower.urdf"
     # End-effector frame name in the URDF
-    target_frame_name: str = "gripper-moving-part-dumb_v2_1"
+    target_frame_name: str = "joint_6"
 
     # Default bounds for the end-effector position (in meters)
     end_effector_bounds: dict[str, list[float]] = field(
         default_factory=lambda: {
-            "min": [-1.0, -1.0, -1.0],  # min x, y, z
-            "max": [1.0, 1.0, 1.0],     # max x, y, z
+            "max": [10.0396, 10.0169, 10.1353],  # min x, y, z
+            "min": [-10.0396, -10.0169, -10.1353],     # max x, y, z
         }
     )
 

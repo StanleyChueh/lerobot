@@ -367,7 +367,7 @@ class RobotEnv(gym.Env):
                 - truncated (bool): True if the episode was truncated (e.g., time constraints).
                 - info (dict): Additional debugging information including intervention status.
         """
-        action_dict = {"delta_x": round(action[0], 3), "delta_y": round(action[1], 3), "delta_z": round(action[2], 3)}
+        action_dict = {"delta_x": action[0], "delta_y": action[1], "delta_z": action[2]}
 
         # 1.0 action corresponds to no-op action
         action_dict["gripper"] = action[3] if self.use_gripper else 1.0
@@ -528,50 +528,50 @@ class AddCurrentToObservation(gym.ObservationWrapper):
         )
         return observation
 
-# class LeaderJointsWrapper(gym.Wrapper):
-#     """
-#     直接讀 teleop 的關節角度（*.pos）鍵，送進 robot.send_action()。
-#     不做 IK、不做 EE delta，純 joints 直通。
-#     """
-#     _JOINT_KEYS = [
-#         "shoulder_pan.pos",
-#         "shoulder_lift.pos",
-#         "elbow_flex.pos",
-#         "wrist_flex.pos",
-#         "wrist_roll.pos",
-#         "gripper.pos",
-#     ]
+class LeaderJointsWrapper(gym.Wrapper):
+    """
+    直接讀 teleop 的關節角度（*.pos）鍵，送進 robot.send_action()。
+    不做 IK、不做 EE delta，純 joints 直通。
+    """
+    _JOINT_KEYS = [
+        "shoulder_pan.pos",
+        "shoulder_lift.pos",
+        "elbow_flex.pos",
+        "wrist_flex.pos",
+        "wrist_roll.pos",
+        "gripper.pos",
+    ]
 
-#     def __init__(self, env):
-#         super().__init__(env)
-#         # 安全：第一次只印一次看看實際 keys
-#         self._debug_printed = False
+    def __init__(self, env):
+        super().__init__(env)
+        # 安全：第一次只印一次看看實際 keys
+        self._debug_printed = False
 
-#     def reset(self, **kwargs):
-#         # 不要在 reset 時覆蓋成「保持原位」就好，交回下層 reset。
-#         obs, info = self.env.reset(**kwargs)
-#         return obs, info
+    def reset(self, **kwargs):
+        # 不要在 reset 時覆蓋成「保持原位」就好，交回下層 reset。
+        obs, info = self.env.reset(**kwargs)
+        return obs, info
 
-#     def step(self, action):
-#         # 讀取 leader 動作
-#         teleop = getattr(self.unwrapped, "teleop", None)
-#         if teleop is not None:
-#             a = teleop.get_action() or {}
-#             cmd = {k: a[k] for k in self._JOINT_KEYS if k in a}
-#             if cmd:
-#                 # 可選：第一次印出來確認
-#                 if not self._debug_printed:
-#                     print("[LeaderJointsWrapper] first cmd keys:", list(cmd.keys()))
-#                     self._debug_printed = True
-#                 # 送進 follower
-#                 self.unwrapped.robot.send_action(cmd)
+    def step(self, action):
+        # 讀取 leader 動作
+        teleop = getattr(self.unwrapped, "teleop", None)
+        if teleop is not None:
+            a = teleop.get_action() or {}
+            cmd = {k: a[k] for k in self._JOINT_KEYS if k in a}
+            if cmd:
+                # 可選：第一次印出來確認
+                if not self._debug_printed:
+                    print("[LeaderJointsWrapper] first cmd keys:", list(cmd.keys()))
+                    self._debug_printed = True
+                # 送進 follower
+                self.unwrapped.robot.send_action(cmd)
 
-#         # 讓環境往下跑，action 對我們而言不重要（避免介面出錯，傳零向量）
-#         try:
-#             zeros = np.zeros_like(action) if action is not None else action
-#         except Exception:
-#             zeros = action
-#         return self.env.step(zeros)
+        # 讓環境往下跑，action 對我們而言不重要（避免介面出錯，傳零向量）
+        try:
+            zeros = np.zeros_like(action) if action is not None else action
+        except Exception:
+            zeros = action
+        return self.env.step(zeros)
 
 
 class RewardWrapper(gym.Wrapper):
@@ -1212,7 +1212,7 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         # NOTE: Lower the gains of leader arm for automatic take-over
         # With lower gains we can manually move the leader arm without risk of injury to ourselves or the robot
         # With higher gains, it would be dangerous and difficult to modify the leader's pose while torque is enabled
-        # Default value for P_coeff is 32
+        # Default value for P_coeff is 32!!!!!!!!!!!!!!!!!!
         self.robot_leader.bus.sync_write("Torque_Enable", 1)
         for motor in self.robot_leader.bus.motors:
             self.robot_leader.bus.write("Position_P_Gain", motor, 32)
@@ -1311,14 +1311,9 @@ class BaseLeaderControlWrapper(gym.Wrapper):
         # [:3, 3] Last column of the transformation matrix corresponds to the xyz translation
         leader_ee = self.kinematics.forward_kinematics(leader_pos)[:3, 3]
         # print(leader_pos)
-        # print("leader_ee:", leader_ee)
+        print("leader_ee:", leader_ee)
         follower_ee = self.kinematics.forward_kinematics(follower_pos)[:3, 3]
         # print("follower_ee:", follower_ee)
-        # print("ik",self.kinematics.inverse_kinematics(follower_pos,self.kinematics.forward_kinematics(follower_pos)))
-        # print("fp",follower_pos)
-        # print("lp",leader_pos)
-        # print('ee = 0',self.kinematics.inverse_kinematics(follower_pos,self.kinematics.forward_kinematics(follower_pos)))
-        # print(self.kinematics.forward_kinematics(follower_pos))
         action = np.clip(leader_ee - follower_ee, -self.end_effector_step_sizes, self.end_effector_step_sizes)
         # Normalize the action to the range [-1, 1]
         action = action / self.end_effector_step_sizes
@@ -2006,8 +2001,8 @@ def make_robot_env(cfg: EnvConfig) -> gym.Env:
             end_effector_step_sizes=cfg.robot.end_effector_step_sizes,
             use_gripper=cfg.wrapper.use_gripper,
         )
-    # elif control_mode == "leader_joints":
-    #     env = LeaderJointsWrapper(env)
+    elif control_mode == "leader_joints":
+        env = LeaderJointsWrapper(env)
     else:
         raise ValueError(f"Invalid control mode: {control_mode}")
 
@@ -2151,9 +2146,10 @@ def record_dataset(env, policy, cfg):
 
             # print(f"action:{action}")
             # Step environment
-            # action[0] = float(input("Press Enter to take a step..."))
+            # print("action before step:", action)
             obs, reward, terminated, truncated, info = env.step(action)
-            # print(f"Step done. reward:{reward}, terminated:{terminated}, truncated:{truncated}, info:{info}. Press Enter to continue...")
+            # print("action actually applied:", info.get("action_intervention", None))
+
             # Check if episode needs to be rerecorded
             if info.get("rerecord_episode", False):
                 break
@@ -2162,6 +2158,7 @@ def record_dataset(env, policy, cfg):
             recorded_action = {
                 "action": info["action_intervention"].cpu().squeeze(0).float() if policy is None else action
             }
+            # print(f"tele:{recorded_action}")
 
             # Process observation for dataset
             obs_processed = {k: v.cpu().squeeze(0).float() for k, v in obs.items()}
@@ -2239,6 +2236,10 @@ def replay_episode(env, cfg):
 
     dataset = LeRobotDataset(cfg.repo_id, root=cfg.dataset_root, episodes=[cfg.episode])
     env.reset()
+
+    # obs, _ = env.reset()
+    # print("reset state:", obs["observation.state"])
+
 
     actions = dataset.hf_dataset.select_columns("action")
 
