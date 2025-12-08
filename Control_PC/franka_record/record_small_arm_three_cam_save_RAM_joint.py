@@ -1,0 +1,635 @@
+# record.py 
+import os
+import argparse
+import rospy
+import numpy as np
+from pathlib import Path
+from franka_dataset_joint import FrankaDataset
+
+from std_msgs.msg import Float32MultiArray, Float64MultiArray, Float32, String, Bool
+from geometry_msgs.msg import PoseStamped, WrenchStamped
+from cv_bridge import CvBridge
+from threading import Thread
+from sensor_msgs.msg import Image
+from sensor_msgs.msg import JointState
+import cv2
+import time
+from tqdm import tqdm
+import signal
+import sys
+import tf
+import os
+os.environ.setdefault("IMAGEIO_FFMPEG_EXE", "/usr/bin/ffmpeg")
+
+class DataRecorderNode(object):
+    def __init__(self, args):
+        rospy.init_node('franka_recorder', anonymous=False)
+        self.bridge = CvBridge()
+
+        self.target_dt = 1.0 / args.fps
+        self._last_record_time = rospy.get_time()
+
+        self.KEY_ESC = 27
+        self.KEY_LEFT = 81
+        self.KEY_RIGHT = 83
+        self.KEY_SKIP = ord('s')
+
+        self.new_joint_state = None
+        self.gripper = None
+        self.front_eye_image = None
+        self.rear_eye_image = None
+        self.agent_image = None
+        self.new_gripper = False
+        self.new_eye = False
+        self.new_rear_eye = False
+        self.new_front_eye = False
+        self.new_agent = False
+        self.records = []
+
+        self.running = True
+        self.reset_current_episode = False
+        self.finish_current_episode = False
+        self.save_status = False
+        self.discard_status = False
+        self.exit_all = False
+
+        self.active = 1
+
+        # RAM usage optimization
+        self.episode_dir = None
+        self.base_record_dir = os.path.expanduser('~/franka_recordings')
+        os.makedirs(self.base_record_dir, exist_ok=True)
+        self.img_quality = 90 
+
+        rospy.loginfo("Setting log level to INFO")
+
+        # === Robot States === #
+        self.pose_sub = rospy.Subscriber(
+            '/franka_state_controller/joint_states',
+            JointState,
+            self.joint_callback,
+            queue_size=10
+        )
+        self.gripper_sub = rospy.Subscriber(
+            '/franka_gripper/joint_states',
+            JointState,
+            self.gripper_callback,
+            queue_size=10
+        )
+        self.eye_rear_sub = rospy.Subscriber(
+            '/robot0_eye_in_hand_image_rear',
+            Image,
+            self.rear_eye_callback,
+            queue_size=1
+        )
+        self.eye_front_sub = rospy.Subscriber(
+            '/robot0_eye_in_hand_image_front',
+            Image,
+            self.front_eye_callback,
+            queue_size=1
+        )
+        self.agent_sub = rospy.Subscriber(
+            '/robot0_agentview_image',
+            Image,
+            self.agent_callback,
+            queue_size=10
+        )
+
+        # === Recording status === #
+        self.done_pub = rospy.Publisher("/done", Float32, queue_size=1)
+        self.done_published = False 
+
+        self.save_sub = rospy.Subscriber(
+            '/save',
+            Float32,
+            self.save_callback,
+            queue_size=1
+        )
+
+        self.discard_sub = rospy.Subscriber(
+            '/discard',
+            Float32,
+            self.discard_callback,
+            queue_size=1
+        )
+
+        self.reset_sub = rospy.Subscriber(
+            '/reset_done',
+            Float32,
+            self.reset_done_callback,
+            queue_size=1
+        )
+        
+        self.img_dir = os.path.expanduser('~/.local/share/Trash/')
+        os.makedirs(self.img_dir, exist_ok=True)
+        self.frame_count = 0
+
+        self.win_front_eye = "Eye Camera Monitor"
+        self.win_rear_eye = "Rear Eye Camera Monitor"
+        self.win_agent = "Agent View Monitor"
+
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+        self.ros_thread = Thread(target=rospy.spin)
+        self.ros_thread.daemon = True
+        self.ros_thread.start()
+
+        rospy.loginfo(f"Data recorder initialized. Images will be saved to {self.img_dir}")
+    
+    def ensure_episode_dir(self, episode_index):
+        """Create per-episode folder and set self.episode_dir"""
+        if self.episode_dir is None or not self.episode_dir.endswith(f"episode_{episode_index:06d}"):
+            self.episode_dir = os.path.join(self.base_record_dir, f"episode_{episode_index:06d}")
+            os.makedirs(self.episode_dir, exist_ok=True)
+            
+    def reset_done_callback(self, msg):
+        if msg.data == 1.0:
+            if self.save_status:
+                self.finish_current_episode = True
+                self.save_status = False
+            elif self.discard_status:
+                self.reset_current_episode = True
+            self.done_published = False
+
+    def save_callback(self, msg):
+        if msg.data == 1.0:
+            #self.finish_current_episode = True
+            self.save_status = True
+            if not self.done_published:
+                self.done_pub.publish(Float32(1.0))
+                rospy.loginfo("Published /done = 1 (from /save)")
+                self.done_published = True
+                rospy.Timer(rospy.Duration(0.1), self.publish_done_zero, oneshot=True)
+
+    def discard_callback(self, msg):
+        if msg.data == 1.0:
+            #self.reset_current_episode = True
+            self.discard_status = True
+            if not self.done_published:
+                self.done_pub.publish(Float32(1.0))
+                rospy.loginfo("Published /done = 1 (from /discard)")
+                self.done_published = True
+                rospy.Timer(rospy.Duration(0.1), self.publish_done_zero, oneshot=True)
+
+    def joint_callback(self, msg: JointState):
+        try:
+            self.joint_state = msg.position
+            self.new_joint_state = True
+        except Exception as e:
+            rospy.logerr(f"Error in joint callback: {e}")
+
+    def set_active_callback(self,msg):
+        if msg.data == True:
+            self.active = 2
+
+    def _signal_handler(self, sig, frame):
+        rospy.loginfo("Received interrupt signal, shutting down...")
+        self.running = False
+        if self.ros_thread and self.ros_thread.is_alive():
+            self.ros_thread.join(timeout=1.0)
+        self._cleanup()
+        sys.exit(0)
+
+    def _cleanup(self):
+        cv2.destroyAllWindows()
+        rospy.loginfo("Resources cleaned up")
+
+    def gripper_callback(self, msg: JointState):
+        try:
+            self.gripper = msg.position[0]*2
+            self.new_gripper = True
+        except Exception as e:
+            rospy.logerr(f"Error in gripper callback: {e}")
+
+    def _process_image(self, msg: Image, source_name: str):
+        try:
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            img = np_arr.reshape((msg.height, msg.width, -1))
+            if msg.encoding == 'rgb8':
+                return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            elif msg.encoding == 'bgr8':
+                return img
+            else:
+                return img[:, :, :3]
+        except Exception as e:
+            rospy.logerr(f"{source_name} image convert error: {e}")
+            import traceback
+            rospy.logerr(traceback.format_exc())
+            return None
+
+    def rear_eye_callback(self, msg: Image):
+        self.rear_eye_image = self._process_image(msg, "Rear Eye")
+        if self.rear_eye_image is not None:
+            self.new_rear_eye = True
+            rospy.logdebug("Successfully processed rear eye image")
+    
+    def front_eye_callback(self, msg: Image):
+        self.front_eye_image = self._process_image(msg, "Front Eye")
+        if self.front_eye_image is not None:
+            self.new_front_eye = True
+            rospy.logdebug("Successfully processed front eye image")
+
+    def agent_callback(self, msg: Image):
+        self.agent_image = self._process_image(msg, "Agent view")
+        if self.agent_image is not None:
+            self.new_agent = True
+            rospy.logdebug("Successfully processed agent image")
+
+    def try_record(self, episode_index):
+        # validate required data
+        if self.joint_state is None or self.gripper is None or \
+        self.rear_eye_image is None or self.front_eye_image is None or self.agent_image is None:
+            return False
+
+        now_t = rospy.get_time()
+        if now_t - self._last_record_time < self.target_dt:
+            return False
+        self._last_record_time = now_t
+
+        # ensure episode folder exists
+        self.ensure_episode_dir(episode_index)
+
+        joint_state = self.joint_state
+        gripper = self.gripper
+        ts = now_t
+        frame_idx = self.frame_count
+
+        # encode & write front image
+        try:
+            ok, buf = cv2.imencode('.jpg', self.front_eye_image, [int(cv2.IMWRITE_JPEG_QUALITY), self.img_quality])
+            if not ok:
+                rospy.logerr("Failed to encode front image")
+                return False
+            front_path = os.path.join(self.episode_dir, f"front_{frame_idx:06d}.jpg")
+            with open(front_path, 'wb') as f:
+                f.write(buf.tobytes())
+
+            # rear
+            ok, buf = cv2.imencode('.jpg', self.rear_eye_image, [int(cv2.IMWRITE_JPEG_QUALITY), self.img_quality])
+            if not ok:
+                rospy.logerr("Failed to encode rear image")
+                return False
+            rear_path = os.path.join(self.episode_dir, f"rear_{frame_idx:06d}.jpg")
+            with open(rear_path, 'wb') as f:
+                f.write(buf.tobytes())
+
+            # agent
+            ok, buf = cv2.imencode('.jpg', self.agent_image, [int(cv2.IMWRITE_JPEG_QUALITY), self.img_quality])
+            if not ok:
+                rospy.logerr("Failed to encode agent image")
+                return False
+            agent_path = os.path.join(self.episode_dir, f"agent_{frame_idx:06d}.jpg")
+            with open(agent_path, 'wb') as f:
+                f.write(buf.tobytes())
+
+        except Exception as e:
+            rospy.logerr(f"Failed to write image files: {e}")
+            return False
+
+        # store only metadata + file paths (no arrays)
+        self.records.append({
+            'timestamp': ts,
+            'joint0_state': joint_state[0], 'joint1_state': joint_state[1], 'joint2_state': joint_state[2],
+            'joint3_state': joint_state[3], 'joint4_state': joint_state[4], 'joint5_state': joint_state[5], 'joint6_state': joint_state[6],
+            'gripper_width': gripper,
+            'front_eye_path': front_path,
+            'rear_eye_path': rear_path,
+            'agent_eye_path': agent_path,
+        })
+
+        self.frame_count += 1
+        return True
+
+    # replace convert_to_dataset_format with this safer variant:
+    def convert_to_dataset_format(self, return_paths_only=True):
+        """
+        If return_paths_only=True: returns joint_states, gripper_width, list_of_front_paths, list_of_rear_paths, list_of_agent_paths
+        If return_paths_only=False: will attempt to load images into memory (may cause high RAM).
+        """
+        frame_count = len(self.records)
+        if frame_count == 0:
+            rospy.logwarn("No frames recorded!")
+            return None, None, None, None, None, None
+
+        joint_states = np.zeros((frame_count, 7))
+        gripper_width = np.zeros(frame_count)
+
+        front_paths = []
+        rear_paths = []
+        agent_paths = []
+
+        for i, record in enumerate(self.records):
+            joint_states[i] = [record['joint0_state'], record['joint1_state'], record['joint2_state'],
+                               record['joint3_state'], record['joint4_state'], record['joint5_state'], record['joint6_state']]
+            gripper_width[i] = record['gripper_width']
+
+            front_paths.append(record.get('front_eye_path'))
+            rear_paths.append(record.get('rear_eye_path'))
+            agent_paths.append(record.get('agent_eye_path'))
+
+        if return_paths_only:
+            return joint_states, gripper_width, front_paths, rear_paths, agent_paths
+
+        # else: load into memory (use with caution)
+        view1_frames = []
+        view2_frames = []
+        view3_frames = []
+        import cv2
+        for i, (fp, rp, ap) in enumerate(zip(front_paths, rear_paths, agent_paths)):
+            f = cv2.imread(fp)
+            r = cv2.imread(rp)
+            a = cv2.imread(ap)
+            if f is None or r is None or a is None:
+                rospy.logwarn(f"Missing image at index {i}: {fp}, {rp}, {ap}")
+                continue
+            view1_frames.append(f)
+            view2_frames.append(r)
+            view3_frames.append(a)
+
+        if not view1_frames or not view2_frames or not view3_frames:
+            rospy.logerr("No valid frames found after loading!")
+            return None, None, None, None, None, None
+
+        return joint_states, gripper_width, np.array(view1_frames), np.array(view2_frames), np.array(view3_frames)
+
+    def process_keyboard_input(self):
+        key = cv2.waitKey(1) & 0xFF
+
+        if key in [self.KEY_ESC, self.KEY_RIGHT, self.KEY_LEFT]:
+            if not self.done_published:
+                self.done_pub.publish(Float32(1.0))
+                rospy.loginfo("Published /done = 1")
+                self.done_published = True
+                # After a short delay, publish 0
+                rospy.Timer(rospy.Duration(0.1), self.publish_done_zero, oneshot=True)
+
+            if key == self.KEY_ESC:
+                self.exit_all = True
+                self.save_status = True 
+                print("用戶按下ESC，退出記錄")
+            elif key == self.KEY_RIGHT:
+                self.finish_current_episode = True
+                print("用戶按下右鍵，完成當前集")
+            elif key == self.KEY_LEFT:
+                self.reset_current_episode = True
+                print("用戶按下左鍵，重新開始當前集")
+
+            return True
+
+        return False
+
+    def publish_done_zero(self, event):
+        self.done_pub.publish(Float32(0.0))
+        rospy.loginfo("Published /done = 0")
+
+def main() -> None:
+    def parse_args() -> argparse.Namespace:
+        parser = argparse.ArgumentParser(
+            description="Record synthetic episodes into a LeRobot dataset with live monitoring and controls."
+        )
+        parser.add_argument(
+            "--repo_id",
+            type=str,
+            required=True,
+            help="Repository identifier, e.g. 'ethanCSL/test1'"
+        )
+        parser.add_argument(
+            "--num_episodes",
+            type=int,
+            default=150,
+            help="Total number of episodes to generate."
+        )
+        parser.add_argument(
+            "--fps",
+            type=int,
+            default=30,
+            help="Frames per second for both data and videos."
+        )
+        parser.add_argument(
+            "--chunk_size",
+            type=int,
+            default=100,
+            help="Number of episodes per chunk folder."
+        )
+        parser.add_argument(
+            "--episode_time_s",
+            type=float,
+            default=7200.0,
+            help="Each episode length in seconds."
+        )
+        parser.add_argument(
+            "--reset_time_s",
+            type=float,
+            default= 5.0,
+            help="Time in seconds to wait between episodes for reset."
+        )
+        parser.add_argument(
+            "--single_task",
+            dest="task_name",
+            type=str,
+            required=True,
+            help="Task description for tasks.jsonl and episodes.jsonl entries."
+        )
+        parser.add_argument(
+            "--output",
+            type=str,
+            default="franka_dataset",
+            help="Base name for output directories"
+        )
+        parser.add_argument(
+            "--resume",
+            action="store_true",
+            help="If set, will append new episodes to existing dataset instead of overwriting"
+        )
+        return parser.parse_args()
+
+    try:
+        args = parse_args()
+
+        recorder = DataRecorderNode(args)
+
+        phase_pub = rospy.Publisher("/recording_phase", String, queue_size=1)
+
+        episode_pub = rospy.Publisher('/episode_index', String, queue_size=1) 
+
+
+        dataset = FrankaDataset(
+            repo_id=args.repo_id,
+            fps=args.fps,
+            chunk_size=args.chunk_size,
+            task_name=args.task_name,
+            resume=args.resume
+        )
+
+            # —— 新增：如果要 resume，就讀出已存在的 episodes 數量，從下一集開始 —— #
+        if args.resume:
+            # 假設 FrankaDataset 有 episodes 屬性紀錄已加載的集數
+            try:
+                start_index = len(dataset.episodes)
+                print(f"Resume 模式：已偵測到 {start_index} 集，將從第 {start_index} 集開始接續錄製")
+            except Exception:
+                # 若 FrankaDataset 沒有 episodes 屬性，可改用檔案系統直接數目錄
+                data_root = Path(dataset.root)  # dataset.root 為儲存路徑
+                existing = [d for d in data_root.glob("chunk_*") for f in d.glob("episode_*.npz")]
+                start_index = len(existing)
+                print(f"Resume 模式（備援檢測）：已偵測到 {start_index} 集，將從第 {start_index} 集開始接續錄製")
+                
+            args.num_episodes += start_index
+            print(f"[自動補足] 目標總集數已更新為: {args.num_episodes}")
+        else:
+            start_index = 0
+
+        num_frames = int(args.episode_time_s * args.fps)
+        reset_time = args.reset_time_s
+
+        episode_index = start_index
+
+        while episode_index < args.num_episodes and not recorder.exit_all:
+
+            episode_pub.publish(String(f"Episode: {episode_index - 1}"))
+
+            recorder.records = []
+            recorder.frame_count = 0
+            recorder.reset_current_episode = False
+            recorder.finish_current_episode = False
+
+            # 清空上一集的影像快取
+            recorder.rear_eye_image = None
+            recorder.front_eye_image = None
+            recorder.agent_image = None
+            recorder.new_rear_eye = False
+            recorder.new_front_eye = False
+            recorder.new_agent = False
+            recorder.new_gripper = False
+
+            # 等待新的影像到來
+            timeout = 5.0
+            start = time.time()
+            while (recorder.rear_eye_image is None or recorder.front_eye_image is None or recorder.agent_image is None) and time.time() - start < timeout:
+
+                rospy.loginfo_throttle(1.0, "等待新的相機影像...")
+
+                time.sleep(0.05)
+
+            recorder.new_rear_eye = False
+            recorder.new_front_eye = False
+            recorder.new_agent = False
+            recorder.new_gripper = False
+
+            phase_pub.publish(String("start recording"))
+
+            print(f"\n準備記錄第 {episode_index} 集影像...")
+            print("按ESC退出整個記錄過程，按左鍵(←)重新記錄當前集，按右鍵(→)完成當前集")
+
+            cv2.namedWindow(recorder.win_rear_eye, cv2.WINDOW_NORMAL)
+            cv2.namedWindow(recorder.win_front_eye, cv2.WINDOW_NORMAL)
+            cv2.namedWindow(recorder.win_agent, cv2.WINDOW_NORMAL)
+
+            start_time = time.time()
+            with tqdm(total=num_frames, desc=f"Ep {episode_index:03d} Frame", ncols=80) as pbar:
+                while len(recorder.records) < num_frames:
+                    if recorder.try_record(episode_index):
+                        pbar.n = len(recorder.records)
+                        pbar.refresh()
+
+                    if recorder.rear_eye_image is not None and recorder.front_eye_image is not None and recorder.agent_image is not None:
+                        #cv2.imshow(recorder.win_rear_eye, recorder.rear_eye_image)
+                        #cv2.imshow(recorder.win_front_eye, recorder.front_eye_image)
+                        cv2.imshow(recorder.win_agent, recorder.agent_image)
+                    elif recorder.rear_eye_image is None or recorder.front_eye_image is None or recorder.agent_image is None:
+                        pass
+
+                    recorder.process_keyboard_input()
+
+                    if recorder.exit_all:
+                        break
+                    if recorder.finish_current_episode:
+                        recorder.finish_current_episode = False
+                        break
+                    if recorder.reset_current_episode:
+                        break
+
+                    time.sleep(0.01)
+                        
+                    if time.time() - start_time > args.episode_time_s * 1.5:
+                        print("記錄超時，跳過該集")
+                        break
+
+                cv2.destroyWindow(recorder.win_rear_eye)
+                cv2.destroyWindow(recorder.win_front_eye)
+                cv2.destroyWindow(recorder.win_agent)
+                recorder.active = 1
+
+            if recorder.exit_all:
+                break   
+
+            # 如果是按下左鍵 (重置要求)
+            if recorder.reset_current_episode:
+                print(f"捨棄第 {episode_index} 集的紀錄，準備重置後重新錄製。")
+                # 不做任何事，直接跳到下面的 reset_time 區塊
+                # 同時 episode_index 維持不變，下一輪就會重錄本集
+            
+            # 如果有錄到數據 (正常完成或按右鍵)
+            elif len(recorder.records) > 0:
+                joint_states, gripper_width, front_paths, rear_paths, agent_paths = recorder.convert_to_dataset_format(return_paths_only=True)
+
+                if front_paths is not None and len(front_paths) > 0:
+                    try:
+                        dataset.add_episode(episode_index, joint_states, gripper_width, front_paths, rear_paths, agent_paths)
+                        print(f"成功記錄第 {episode_index} 集 ({len(recorder.records)} 幀)")
+                        # 只有在成功儲存後，才將集數 +1
+                        episode_index += 1
+                    except Exception as e:
+                        print(f"添加集到數據集失敗: {e}。準備重試本集。")
+                        # 添加失敗，不增加 episode_index，稍後重試本集
+                else:
+                    print("警告: 轉換後無有效數據，準備重試本集。")
+                    # 轉換失敗，不增加 episode_index，稍後重試本集
+            else:
+                # 如果因為超時等原因跳出且沒錄到任何數據
+                print(f"警告: 第 {episode_index} 集無有效數據，準備重試本集。")
+                # 同樣不增加 episode_index
+
+            # 以下區塊現在會在「成功儲存」、「要求重置」或「錄製失敗」後執行
+            if reset_time > 0:
+                phase_pub.publish(String("reset"))
+                with tqdm(total=int(reset_time), desc=f"Ep {episode_index:03d} Reset", ncols=80) as pbar:
+                    start = time.time()
+                    while time.time() - start < reset_time:
+                        elapsed = time.time() - start
+                        pbar.n = int(elapsed)
+                        pbar.refresh()
+                        key = cv2.waitKey(100) & 0xFF
+                        if key == recorder.KEY_SKIP:
+                            print("用戶按下S，跳過等待時間")
+                            break
+                        time.sleep(0.1)
+                    pbar.n = int(reset_time)
+                    pbar.refresh()
+
+            recorder.done_published = False
+
+        print("完成所有記錄，生成最終數據集...")
+        print(f"[Debug] episodes accumulated: {len(dataset.episodes)}")
+        dataset.finalize()
+        print(f"數據集成功生成於: {dataset.root}")
+
+    except KeyboardInterrupt:
+        print("\n用戶中斷記錄過程")
+    except Exception as e:
+        print(f"發生錯誤: {e}")
+        import traceback
+        print(traceback.format_exc())
+    finally:
+        print("清理資源...")
+        if 'recorder' in locals():
+            recorder.running = False
+            if hasattr(recorder, 'ros_thread') and recorder.ros_thread:
+                recorder.ros_thread.join(timeout=1.0)
+        cv2.destroyAllWindows()
+        print("程序已安全退出")
+
+
+if __name__ == "__main__":
+    main()
+
