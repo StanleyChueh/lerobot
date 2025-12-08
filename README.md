@@ -59,10 +59,25 @@ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower 
 
 ### Franka emika panda
 
-Control PC(Client)
-```bash
+#### Control PC(Client)
 
+Setting ethernet
+```bash
+cd Control_PC/franka_ws/
+python connect_franka.py
 ```
+
+Launch franka_ros cartesian impedance control
+```bash
+roslaunch franka_example_controllers cartesian_impedance_example_controller.launch robot_ip:=172.16.0.2 load_gripper:=true launch_rviz:=false
+```
+
+Set to initial pose
+```bash
+cd Control_PC/franka_ws/
+python franka_ros.py 
+```
+
 ## Installation
 
 LeRobot works with Python 3.10+ and PyTorch 2.2+.
