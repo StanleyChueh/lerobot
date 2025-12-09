@@ -63,9 +63,42 @@ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower 
 
 Setting ethernet
 ```bash
-cd Control_PC/franka_ws/
+cd franka_ws/
 python connect_franka.py
 ```
+
+<h2 align="center">
+    <p><a href="https://huggingface.co/docs/lerobot/so101">
+        Record and Inference!</a></p>
+</h2>
+
+#### Record 
+
+Start joint impedance control
+```bash
+cd franka_ws/
+source devel/setup.bash
+roslaunch franka_example_controllers joint_impedance_example_controller.launch robot_ip:=172.16.0.2 load_gripper:=true 
+```
+
+Run Leading arm control node
+```bash
+cd gello_franka/
+python3 small_arm_to_franka.py
+```
+
+> **NOTE:**
+> You have to wait for a bit, it needs to initialize first before teleoperation.
+
+Run recording node
+```bash
+cd franka_record/
+python record_small_arm_three_cam_save_RAM.py --repo_id ethanCSL/test --single_task test
+```
+> **NOTE:**
+> right key to save, left key to discard episode.
+
+#### Model testing(Inference):
 
 Launch franka_ros cartesian impedance control
 ```bash
@@ -76,6 +109,46 @@ Set to initial pose
 ```bash
 cd Control_PC/franka_ws/
 python franka_ros.py 
+```
+> **NOTE:**
+> If you see Switched to cartesian impedance controller,you can shut this down.
+
+Publish camera topic
+```bash
+cd franka_record/
+python3 image_publisher_SA.py
+```
+
+##### Action Chunking Transformer(ACT)
+-------------------------------------------------
+
+Run server node(Inference PC)
+```bash
+cd Inference_PC/lerobot_franka_inference/
+python3 franka_socket_test_stability_test.py --ckpt-path /home/bruce/CSL/model_test/act_pick_n_place_100_top_view/pretrained_model
+```
+> **NOTE:**
+> Please make sure the server has been opened successfully before running the client node!
+
+Run client node(Control PC)
+```bash
+cd franka_record/tools/
+python evaluation.py
+```
+
+##### SmolVLA(Still testing)
+-------------------------------------------------
+
+Run server node(Inference PC)
+```bash
+cd Inference_PC/lerobot_franka_inference/
+python3 franka_socket_test_stability_test_smolvla.py --ckpt-path /home/bruce/CSL/model_test/pick_n_place_100_smolvla_40000/pretrained_model --eval-freq 10 --task "pick up the red cube and place it"
+```
+
+Run client node(Control PC)
+```bash
+cd franka_record/tools/
+python evaluation.py
 ```
 
 ## Installation
