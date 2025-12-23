@@ -111,7 +111,8 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
-
+import cv2
+import matplotlib.pyplot as plt
 
 @dataclass
 class DatasetRecordConfig:
@@ -172,6 +173,7 @@ class RecordConfig:
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
+        # --policy.path
         policy_path = parser.get_path_arg("policy")
         if policy_path:
             cli_overrides = parser.get_cli_overrides("policy")
@@ -199,9 +201,17 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
 ):
+    if not hasattr(robot, "debug_logs"):
+        robot.debug_logs = {
+            "timestamps": [],
+            "actions": [],
+            "states": [],
+        }
+
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
+    # --teleop.type=koch_leader, --teleop.port=/dev/ttyUSB_leader, --teleop.id=my_awesome_leader_arm  
     teleop_arm = teleop_keyboard = None
     if isinstance(teleop, list):
         teleop_keyboard = next((t for t in teleop if isinstance(t, KeyboardTeleop)), None)
@@ -232,18 +242,50 @@ def record_loop(
             events["exit_early"] = False
             break
 
+        # Get observation
+        # robot.get_observation only get camera observation,not joint states
         observation = robot.get_observation()
 
+        # Show observation in terminal 
+        print("observation",observation)
+        
+        # show camera view
+        if display_data:
+            for cam_name, cam in robot.cameras.items():
+                frame = cam.latest_frame   
+                if frame is not None:
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    cv2.imshow(cam_name, frame_bgr)
+            cv2.waitKey(1)
+
         if policy is not None or dataset is not None:
+            # Convert observation to dataset frame
+            '''
+                ✔ Normalizes joint states
+                ✔ Converts camera images to torch tensors
+                ✔ Resizes images to the model’s required input size
+                ✔ Packs everything into a single dictionary
+                ✔ Adds prefixes like observation/front, observation/top
+            '''
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
+        print("observation_frame:",observation_frame)
 
         if policy is not None:
+            # predict action 
             action_values = predict_action(
                 observation_frame,
                 policy,
+
+                # config.yaml in pretrained_mdodel:default=cuda
                 get_safe_torch_device(policy.config.device),
+
+                # default=false, true for full precision(FP32)
                 policy.config.use_amp,
+
+                # in argument: --dataset.single_task=
                 task=single_task,
+
+                # koch
                 robot_type=robot.robot_type,
             )
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
@@ -268,7 +310,24 @@ def record_loop(
 
         # Action can eventually be clipped using `max_relative_target`,
         # so action actually sent is saved in the dataset.
+
+        # log action in terminal
+        print("action:",action)
         sent_action = robot.send_action(action)
+
+        # === LOGGING: record timestamps, action and robot states ===
+        robot.debug_logs["timestamps"].append(time.time())
+
+        # Log the commanded action vector (ordered by action_features)
+        robot.debug_logs["actions"].append([
+            action[k] for k in robot.action_features
+        ])
+
+        # Log the actual robot joint states from observation
+        # Each motor returns observation like "<motor>.pos"
+        robot.debug_logs["states"].append([
+            observation[f"{motor}.pos"] for motor in robot.bus.motors.keys()
+        ])
 
         if dataset is not None:
             action_frame = build_dataset_frame(dataset.features, sent_action, prefix="action")
@@ -283,6 +342,36 @@ def record_loop(
 
         timestamp = time.perf_counter() - start_episode_t
 
+def save_robot_debug_logs(robot):
+    if not hasattr(robot, "debug_logs"):
+        logging.warning("No debug logs collected.")
+        return
+
+    import json
+    import matplotlib.pyplot as plt
+
+    # Save raw logs
+    with open("koch_follower_debug_log.json", "w") as f:
+        json.dump(robot.debug_logs, f, indent=2)
+
+    timestamps = robot.debug_logs["timestamps"]
+    actions = list(zip(*robot.debug_logs["actions"]))
+    states = list(zip(*robot.debug_logs["states"]))
+
+    joint_names = list(robot.bus.motors.keys())
+
+    plt.figure(figsize=(12, 10))
+    for i, name in enumerate(joint_names):
+        plt.subplot(3, 2, i+1)
+        plt.plot(timestamps, actions[i], label="command")
+        plt.plot(timestamps, states[i], label="actual")
+        plt.title(name)
+        plt.legend()
+        plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig("koch_follower_tracking_plot.png")
+    logging.info("Saved tracking plot to koch_follower_tracking_plot.png")
 
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
@@ -327,6 +416,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         )
 
     # Load pretrained policy
+    # Load config.json => make_policy
+    # in policy.factory,find make_policy_config
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
 
     robot.connect()
@@ -336,46 +427,52 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     listener, events = init_keyboard_listener()
 
     with VideoEncodingManager(dataset):
-        recorded_episodes = 0
-        while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-            log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-            record_loop(
-                robot=robot,
-                events=events,
-                fps=cfg.dataset.fps,
-                teleop=teleop,
-                policy=policy,
-                dataset=dataset,
-                control_time_s=cfg.dataset.episode_time_s,
-                single_task=cfg.dataset.single_task,
-                display_data=cfg.display_data,
-            )
-
-            # Execute a few seconds without recording to give time to manually reset the environment
-            # Skip reset for the last episode to be recorded
-            if not events["stop_recording"] and (
-                (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
-            ):
-                log_say("Reset the environment", cfg.play_sounds)
+        try:
+            recorded_episodes = 0
+            while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
+                log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
                     events=events,
                     fps=cfg.dataset.fps,
                     teleop=teleop,
-                    control_time_s=cfg.dataset.reset_time_s,
+                    policy=policy,
+                    dataset=dataset,
+                    control_time_s=cfg.dataset.episode_time_s,
                     single_task=cfg.dataset.single_task,
                     display_data=cfg.display_data,
                 )
 
-            if events["rerecord_episode"]:
-                log_say("Re-record episode", cfg.play_sounds)
-                events["rerecord_episode"] = False
-                events["exit_early"] = False
-                dataset.clear_episode_buffer()
-                continue
+                # Execute a few seconds without recording to give time to manually reset the environment
+                # Skip reset for the last episode to be recorded
+                if not events["stop_recording"] and (
+                    (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
+                ):
+                    log_say("Reset the environment", cfg.play_sounds)
+                    record_loop(
+                        robot=robot,
+                        events=events,
+                        fps=cfg.dataset.fps,
+                        teleop=teleop,
+                        control_time_s=cfg.dataset.reset_time_s,
+                        single_task=cfg.dataset.single_task,
+                        display_data=cfg.display_data,
+                    )
 
-            dataset.save_episode()
-            recorded_episodes += 1
+                if events["rerecord_episode"]:
+                    log_say("Re-record episode", cfg.play_sounds)
+                    events["rerecord_episode"] = False
+                    events["exit_early"] = False
+                    dataset.clear_episode_buffer()
+                    continue
+
+                dataset.save_episode()
+                recorded_episodes += 1
+
+        except KeyboardInterrupt:
+            logging.warning("KeyboardInterrupt received — stopping cleanly...")
+        finally:
+            save_robot_debug_logs(robot)
 
     log_say("Stop recording", cfg.play_sounds, blocking=True)
 
