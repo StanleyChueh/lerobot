@@ -111,6 +111,10 @@ python train.py   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCS
 
 ### Franka emika panda
 
+> **NOTE:**
+> Remember to set franka_ros environment if you have not.
+> https://github.com/frankarobotics/franka_ros
+
 #### Control PC(Client)
 
 Setting ethernet
@@ -157,8 +161,12 @@ Set to initial pose
 cd Control_PC/franka_ws/
 python franka_ros.py 
 ```
+
 > **NOTE:**
 > If you see Switched to cartesian impedance controller,you can shut this down.
+> You will see something like below
+> [INFO] [1766474178.275051]: Switched to cartesian impedance controller.
+
 
 Publish camera topic
 ```bash
