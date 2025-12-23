@@ -28,6 +28,7 @@
 
 Activate conda env
 ```bash
+cd ~/CSL/lerobot_nn/
 conda activate lerobot_nn
 ```
 
@@ -96,7 +97,7 @@ Add this argument in the back of the command to resume recording
 ```
 > **NOTE:**
 > In SmolVLA multi-task setup, you have to record one task first(e.g. "grip the green block and put into the box", and then resume recording to record another task(e.g. "grip the white block and put into the box"
-
+> You can see dataset in ~/.cache/huggingface/lerobot/ethanCSL
 #### Train
 ##### ACT
 
