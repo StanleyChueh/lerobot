@@ -26,6 +26,11 @@
 
 ## Model testing
 
+Activate conda env
+```bash
+conda activate lerobot_nn
+```
+
 ### Koch Robot:
 
 #### Task1: SmolVLA multi-blocks picking
@@ -57,6 +62,53 @@ Pick white block
 lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip white block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/model_test/koch/svla_color_complex/checkpoints/020000/pretrained_model
 ```
 
+<h2 align="center">
+    <p><a href="https://huggingface.co/docs/lerobot/so101">
+        Record -> Train -> Inference!</a></p>
+</h2>
+
+### Koch
+
+ACT and SmolVLA shares the same recording command,but SmolVLA needs to modify --dataset.single_task for prompt
+
+#### Activate conda env
+```bash
+conda activate lerobot_nn
+```
+
+#### Record episode
+##### ACT
+
+```bash
+python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=10     --dataset.reset_time_s=5     --dataset.single_task="test" 
+```
+
+##### SmolVLA
+```
+python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=10     --dataset.reset_time_s=5     --dataset.single_task="grip the green block and put into the box" 
+```
+
+Resume
+
+Add this argument in the back of the command to resume recording
+```
+--resume=True
+```
+> **NOTE:**
+> In SmolVLA multi-task setup, you have to record one task first(e.g. "grip the green block and put into the box", and then resume recording to record another task(e.g. "grip the white block and put into the box"
+
+#### Train
+##### ACT
+
+```
+python -m lerobot.scripts.train --policy.type=act --dataset.repo_id=user_name/repo_name --output_dir=outputs/train/your_task_name
+```
+
+##### SmolVLA
+```
+python train.py   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/smolvla_multiblock   --batch_size=16   --steps=20000   --output_dir=outputs/train/svla_multiblock   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false --policy.repo_id=svla_multiblock
+```
+
 ### Franka emika panda
 
 #### Control PC(Client)
@@ -66,11 +118,6 @@ Setting ethernet
 cd franka_ws/
 python connect_franka.py
 ```
-
-<h2 align="center">
-    <p><a href="https://huggingface.co/docs/lerobot/so101">
-        Record and Inference!</a></p>
-</h2>
 
 #### Record 
 
@@ -160,8 +207,8 @@ LeRobot works with Python 3.10+ and PyTorch 2.2+.
 Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
 
 ```bash
-conda create -y -n lerobot python=3.10
-conda activate lerobot
+conda create -y -n lerobot_nn python=3.10
+conda activate lerobot_nn
 ```
 
 When using `miniconda`, install `ffmpeg` in your environment:
