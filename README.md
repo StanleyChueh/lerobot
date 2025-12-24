@@ -1,5 +1,5 @@
 <p align="center">
-  <img alt="LeRobot, Hugging Face Robotics Library" src="https://raw.githubusercontent.com/huggingface/lerobot/main/media/lerobot-logo-thumbnail.png" width="100%">
+  <img alt="LeRobot, Hugging Face Robotics Library" src="https://cdn-uploads.huggingface.co/production/uploads/631ce4b244503b72277fc89f/MNkMdnJqyPvOAEg20Mafg.png" width="100%">
   <br/>
   <br/>
 </p>
@@ -98,6 +98,8 @@ Add this argument in the back of the command to resume recording
 > **NOTE:**
 > In SmolVLA multi-task setup, you have to record one task first(e.g. "grip the green block and put into the box", and then resume recording to record another task(e.g. "grip the white block and put into the box"
 > You can see dataset in ~/.cache/huggingface/lerobot/ethanCSL
+>
+>  Check video index before recording, make sure top and front camera is correct
 #### Train
 ##### ACT
 
