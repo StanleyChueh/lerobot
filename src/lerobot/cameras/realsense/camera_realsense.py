@@ -21,15 +21,16 @@ import time
 from threading import Event, Lock, Thread
 from typing import Any
 
-import cv2
-import numpy as np
+import cv2  # type: ignore  # TODO: add type stubs for OpenCV
+import numpy as np  # type: ignore  # TODO: add type stubs for numpy
+from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
 
 try:
-    import pyrealsense2 as rs
+    import pyrealsense2 as rs  # type: ignore  # TODO: add type stubs for pyrealsense2
 except Exception as e:
     logging.info(f"Could not import realsense: {e}")
 
-from lerobot.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..camera import Camera
 from ..configs import ColorMode
@@ -132,7 +133,7 @@ class RealSenseCamera(Camera):
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
-        self.latest_frame: np.ndarray | None = None
+        self.latest_frame: NDArray[Any] | None = None
         self.new_frame_event: Event = Event()
 
         self.rotation: int | None = get_cv2_rotation(config.rotation)
@@ -150,7 +151,7 @@ class RealSenseCamera(Camera):
         """Checks if the camera pipeline is started and streams are active."""
         return self.rs_pipeline is not None and self.rs_profile is not None
 
-    def connect(self, warmup: bool = True):
+    def connect(self, warmup: bool = True) -> None:
         """
         Connects to the RealSense camera specified in the configuration.
 
@@ -168,7 +169,6 @@ class RealSenseCamera(Camera):
 
         self.rs_pipeline = rs.pipeline()
         rs_config = rs.config()
-        self.align = rs.align(rs.stream.color)
         self._configure_rs_pipeline_config(rs_config)
 
         try:
@@ -265,7 +265,7 @@ class RealSenseCamera(Camera):
         serial_number = str(found_devices[0]["serial_number"])
         return serial_number
 
-    def _configure_rs_pipeline_config(self, rs_config):
+    def _configure_rs_pipeline_config(self, rs_config: Any) -> None:
         """Creates and configures the RealSense pipeline configuration object."""
         rs.config.enable_device(rs_config, self.serial_number)
 
@@ -294,6 +294,9 @@ class RealSenseCamera(Camera):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"Cannot validate settings for {self} as it is not connected.")
 
+        if self.rs_profile is None:
+            raise RuntimeError(f"{self}: rs_profile must be initialized before use.")
+
         stream = self.rs_profile.get_stream(rs.stream.color).as_video_stream_profile()
 
         if self.fps is None:
@@ -309,7 +312,7 @@ class RealSenseCamera(Camera):
                 self.width, self.height = actual_width, actual_height
                 self.capture_width, self.capture_height = actual_width, actual_height
 
-    def read_depth(self, timeout_ms: int = 200) -> np.ndarray:
+    def read_depth(self, timeout_ms: int = 200) -> NDArray[Any]:
         """
         Reads a single frame (depth) synchronously from the camera.
 
@@ -337,8 +340,10 @@ class RealSenseCamera(Camera):
 
         start_time = time.perf_counter()
 
+        if self.rs_pipeline is None:
+            raise RuntimeError(f"{self}: rs_pipeline must be initialized before use.")
+
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
-        frame = self.align.process(frame)
 
         if not ret or frame is None:
             raise RuntimeError(f"{self} read_depth failed (status={ret}).")
@@ -353,7 +358,7 @@ class RealSenseCamera(Camera):
 
         return depth_map_processed
 
-    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> np.ndarray:
+    def read(self, color_mode: ColorMode | None = None, timeout_ms: int = 200) -> NDArray[Any]:
         """
         Reads a single frame (color) synchronously from the camera.
 
@@ -378,8 +383,10 @@ class RealSenseCamera(Camera):
 
         start_time = time.perf_counter()
 
+        if self.rs_pipeline is None:
+            raise RuntimeError(f"{self}: rs_pipeline must be initialized before use.")
+
         ret, frame = self.rs_pipeline.try_wait_for_frames(timeout_ms=timeout_ms)
-        frame = self.align.process(frame)
 
         if not ret or frame is None:
             raise RuntimeError(f"{self} read failed (status={ret}).")
@@ -395,8 +402,8 @@ class RealSenseCamera(Camera):
         return color_image_processed
 
     def _postprocess_image(
-        self, image: np.ndarray, color_mode: ColorMode | None = None, depth_frame: bool = False
-    ) -> np.ndarray:
+        self, image: NDArray[Any], color_mode: ColorMode | None = None, depth_frame: bool = False
+    ) -> NDArray[Any]:
         """
         Applies color conversion, dimension validation, and rotation to a raw color frame.
 
@@ -441,19 +448,7 @@ class RealSenseCamera(Camera):
 
         return processed_image
 
-    def _image_combine(self, limit_depth=1500, min_depth=0, max_depth=100):
-        color_frame = self.read(timeout_ms=500)
-        depth_map = self.read_depth(timeout_ms=500)
-
-        # 映射到 0-255
-        depth_map[depth_map>limit_depth] = max_depth
-        depth_norm = ((depth_map - min_depth) / (max_depth - min_depth) * 255).astype(np.uint8)
-        depth_rgb = np.zeros((depth_norm.shape[0], depth_norm.shape[1], 3), dtype=np.uint8)
-        depth_rgb[..., 1] = depth_norm
-        combined = np.vstack((color_frame, depth_rgb))
-        return combined
-
-    def _read_loop(self):
+    def _read_loop(self) -> None:
         """
         Internal loop run by the background thread for asynchronous reading.
 
@@ -464,14 +459,15 @@ class RealSenseCamera(Camera):
 
         Stops on DeviceNotConnectedError, logs other errors and continues.
         """
+        if self.stop_event is None:
+            raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
+
         while not self.stop_event.is_set():
             try:
-                # color_image = self.read(timeout_ms=500)
-                combined = self._image_combine()
+                color_image = self.read(timeout_ms=500)
 
                 with self.frame_lock:
-                    # self.latest_frame = color_image
-                    self.latest_frame = combined
+                    self.latest_frame = color_image
                 self.new_frame_event.set()
 
             except DeviceNotConnectedError:
@@ -491,7 +487,7 @@ class RealSenseCamera(Camera):
         self.thread.daemon = True
         self.thread.start()
 
-    def _stop_read_thread(self):
+    def _stop_read_thread(self) -> None:
         """Signals the background read thread to stop and waits for it to join."""
         if self.stop_event is not None:
             self.stop_event.set()
@@ -503,7 +499,7 @@ class RealSenseCamera(Camera):
         self.stop_event = None
 
     # NOTE(Steven): Missing implementation for depth for now
-    def async_read(self, timeout_ms: float = 200) -> np.ndarray:
+    def async_read(self, timeout_ms: float = 200) -> NDArray[Any]:
         """
         Reads the latest available frame data (color) asynchronously.
 
@@ -546,7 +542,7 @@ class RealSenseCamera(Camera):
 
         return frame
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """
         Disconnects from the camera, stops the pipeline, and cleans up resources.
 

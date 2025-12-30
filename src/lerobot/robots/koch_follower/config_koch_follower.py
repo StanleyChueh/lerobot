@@ -25,47 +25,15 @@ class KochFollowerConfig(RobotConfig):
     # Port to connect to the arm
     port: str
 
-    #urdf_path: str | None = "/home/bruce/lerobot/low_cost_robot/simulation/low_cost_robot/low-cost-arm.urdf"
     disable_torque_on_disconnect: bool = True
-    #target_frame_name: str = "gripper-moving-part-dumb_v2_1"
 
     # `max_relative_target` limits the magnitude of the relative positional target vector for safety purposes.
-    # Set this to a positive scalar to have the same value for all motors, or a list that is the same length as
-    # the number of motors in your follower arms.
-    max_relative_target: int | None = None
+    # Set this to a positive scalar to have the same value for all motors, or a dictionary that maps motor
+    # names to the max_relative_target value for that motor.
+    max_relative_target: float | dict[str, float] | None = None
 
     # cameras
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     # Set to `True` for backward compatibility with previous policies/dataset
     use_degrees: bool = False
-
-@RobotConfig.register_subclass("koch_follower_end_effector")
-@dataclass
-class KochFollowerEndEffectorConfig(KochFollowerConfig):
-    """Configuration for Koch follower with end-effector/URDF support."""
-
-    # Path to URDF file for kinematics
-    urdf_path: str | None = "/home/bruce/lerobot/koch-v1-1/simulation/follower.urdf"
-    # End-effector frame name in the URDF
-    target_frame_name: str = "joint_6"
-
-    # Default bounds for the end-effector position (in meters)
-    end_effector_bounds: dict[str, list[float]] = field(
-        default_factory=lambda: {
-            "max": [10.0396, 10.0169, 10.1353],  # min x, y, z
-            "min": [-10.0396, -10.0169, -10.1353],     # max x, y, z
-        }
-    )
-
-    # Max gripper “position” scaling used by wrappers (同 SO100 命名，便於 EE & gripper wrapper 共用)
-    max_gripper_pos: float = 50
-
-    # Step sizes for EE delta control (m/step)
-    end_effector_step_sizes: dict[str, float] = field(
-        default_factory=lambda: {
-            "x": 0.02,
-            "y": 0.02,
-            "z": 0.02,
-        }
-    )
