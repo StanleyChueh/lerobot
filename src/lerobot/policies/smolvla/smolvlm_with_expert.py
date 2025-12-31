@@ -72,6 +72,11 @@ class SmolVLMWithExpertModel(nn.Module):
         expert_width_multiplier: float = 0.5,
     ):
         super().__init__()
+
+        # debug for attention heap map
+        self.debug_attn = False
+        self.last_attn: dict[str, torch.Tensor] = {}
+
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(
@@ -189,6 +194,9 @@ class SmolVLMWithExpertModel(nn.Module):
         )
         # Modality projection & resampling
         image_hidden_states = self.get_vlm_model().connector(image_hidden_states)
+
+        self.last_attn["num_image_tokens"] = image_hidden_states.shape[1]
+
         return image_hidden_states
 
     def embed_language_tokens(self, tokens: torch.Tensor):
@@ -539,6 +547,10 @@ class SmolVLMWithExpertModel(nn.Module):
         masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
         probs = probs.to(dtype=value_states.dtype)
+
+        # add this for attention heap map visualization
+        if self.debug_attn:
+            self.last_attn["attn"] = probs.detach().cpu()
 
         att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
 
