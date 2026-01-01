@@ -57,80 +57,33 @@ lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follo
 > **Note**
 > You don't have to specify policy type in recording, this is just for separating different type of datasets
 
-#### Task1: SmolVLA multi-blocks picking
+##### Train
 
-> **Dataset**Dataset: https://huggingface.co/ethanCSL/svla_color_test_green
+```bash
+ accelerate launch   $(which lerobot-train)   --output_dir=outputs/train_groot   --save_checkpoint=true   --batch_size=16   --steps=20000   --save_freq=20000   --log_freq=200   --policy.type=groot   --policy.repo_id=multi_block_picking_new_lerobot_gr00t   --policy.tune_diffusion_model=false   --dataset.repo_id=ethanCSL/multi_block_picking_new_lerobot_gr00t   --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=groot
+```
+> **Note**
+> RTX5090 LeRobot installation solution
 > 
-> Dataset visualization:https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2FethanCSL%2Fcolor_test_green%2Fepisode_0
-> <img width="975" height="387" alt="image" src="https://github.com/user-attachments/assets/2d58a1f2-bb79-4ce8-8170-b111a4cf0f9c" />
-> <img width="970" height="396" alt="image" src="https://github.com/user-attachments/assets/12e391cd-cb61-41c9-bc69-8839ad1916a0" />
-
-Pick green block:
-```bash
-lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip green block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/model_test/koch/svla_multi_blocks_picking/checkpoints/020000/pretrained_model
-```
-
-Pick white block:
-```bash
-lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip white block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/model_test/koch/svla_multi_blocks_picking/checkpoints/020000/pretrained_model
-```
-#### Task2: Complex environment picking
-<img width="973" height="383" alt="image" src="https://github.com/user-attachments/assets/ace726d2-6c41-4196-b575-e2ee1955a49c" />
-
-> **Dataset**Dataset: [https://huggingface.co/ethanCSL/color_complex](https://huggingface.co/ethanCSL/svla_color_complex)
-> 
-> Dataset visualization:https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2FethanCSL%2Fcolor_complex%2Fepisode_0
-
-Pick white block
-```bash
-lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip white block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/model_test/koch/svla_color_complex/checkpoints/020000/pretrained_model
-```
-
-<h2 align="center">
-    <p><a href="https://huggingface.co/docs/lerobot/so101">
-        Record -> Train -> Inference!</a></p>
-</h2>
-
-### Koch
-
-ACT and SmolVLA shares the same recording command,but SmolVLA needs to modify --dataset.single_task for prompt
-
-#### Activate conda env
-```bash
-conda activate lerobot_nn
-```
-
-#### Record episode
-##### ACT
-
-```bash
-python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=10     --dataset.reset_time_s=5     --dataset.single_task="test" 
-```
-
-##### SmolVLA
-```
-python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=10     --dataset.reset_time_s=5     --dataset.single_task="grip the green block and put into the box" 
-```
-
-Resume
-
-Add this argument in the back of the command to resume recording
-```
---resume=True
-```
-> **NOTE:**
-> In SmolVLA multi-task setup, you have to record one task first(e.g. "grip the green block and put into the box", and then resume recording to record another task(e.g. "grip the white block and put into the box"
-> You can see dataset in ~/.cache/huggingface/lerobot/ethanCSL
+> https://docs.google.com/document/d/1a7i0UfWbSUTbJk_9MFXW-8Dd742hih3A2z61CJjXPG4/edit?usp=sharing
 >
->  Check video index before recording, make sure top and front camera is correct
-#### Train
-##### ACT
+> In this command, it needs at least 20GB GPU VRAM to start it, it still needs ~12GB of VRAM to run if lower batch size to 2 or 4
 
-```
-python -m lerobot.scripts.train --policy.type=act --dataset.repo_id=user_name/repo_name --output_dir=outputs/train/your_task_name
+
+#### Task1: GR00T multi-block pick and place task
+
+<img width="979" height="553" alt="image" src="https://github.com/user-attachments/assets/504f5afa-6bcf-4795-b2fc-a5dd405f6d83" />
+
+```bash
+lerobot-record   --robot.type=koch_follower  --robot.port=/dev/ttyUSB_follower    --robot.id=my_awesome_follower_arm  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm   --robot.cameras='{ 
+    front: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
+    top: {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 30},
+  }'   --display_data=true   --dataset.repo_id=ethanCSL/eval_multi_block_picking_new_lerobot_gr00t   --dataset.num_episodes=10   --dataset.single_task="pick up the green block and put into the box" --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/multi_block_picking_new_lerobot_gr00t/020000/pretrained_model
 ```
 
-##### SmolVLA
-```
-python train.py   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/smolvla_multiblock   --batch_size=16   --steps=20000   --output_dir=outputs/train/svla_multiblock   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false --policy.repo_id=svla_multiblock
-```
+> **Note**
+> In this testing, the GPU usage for evaluation is still high, 7.4GB of VRAM in this case
+>
+> Dataset visualization:
+> 
+> https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2FethanCSL%2Fmulti_block_picking_new_lerobot_gr00t%2Fepisode_0
