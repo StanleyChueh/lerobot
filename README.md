@@ -66,6 +66,10 @@ lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follo
 > RTX5090 LeRobot installation solution
 > 
 > https://docs.google.com/document/d/1a7i0UfWbSUTbJk_9MFXW-8Dd742hih3A2z61CJjXPG4/edit?usp=sharing
+>
+> In this command, it needs at least 20GB GPU VRAM to start it, it still needs ~12GB of VRAM to run if lower batch size to 2 or 4
+
+
 
 
 #### Task1: SmolVLA multi-blocks picking
