@@ -75,10 +75,10 @@ lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follo
 <img width="979" height="553" alt="image" src="https://github.com/user-attachments/assets/504f5afa-6bcf-4795-b2fc-a5dd405f6d83" />
 
 ```bash
-lerobot-record   --robot.type=koch_follower  --robot.port=/dev/ttyUSB_follower    --robot.id=my_awesome_follower_arm  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm   --robot.cameras='{ 
+ lerobot-record   --robot.type=koch_follower  --robot.port=/dev/ttyUSB_follower    --robot.id=my_awesome_follower_arm  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm   --robot.cameras='{ 
     front: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
     top: {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 30},
-  }'   --display_data=true   --dataset.repo_id=ethanCSL/eval_multi_block_picking_new_lerobot_gr00t   --dataset.num_episodes=10   --dataset.single_task="pick up the green block and put into the box" --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/multi_block_picking_new_lerobot_gr00t/020000/pretrained_model
+  }'   --display_data=true   --dataset.repo_id=ethanCSL/eval_multi_block_picking_new_lerobot_gr00t   --dataset.num_episodes=10   --dataset.single_task="pick up the green block and put into the box" --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/multi_block_picking_new_lerobot_gr00t/checkpoints/020000/pretrained_model
 ```
 
 > **Note**
