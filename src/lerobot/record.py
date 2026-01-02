@@ -325,9 +325,7 @@ from lerobot.utils.utils import (
     log_say,
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
-import cv2
-import numpy as np
-import rerun as rr
+
 
 @dataclass
 class DatasetRecordConfig:
@@ -445,15 +443,11 @@ def record_loop(
     while timestamp < control_time_s:
         start_loop_t = time.perf_counter()
 
-        frame_idx = int(timestamp * fps)
-        rr.set_time_sequence("frame_idx", frame_idx)
-
         if events["exit_early"]:
             events["exit_early"] = False
             break
 
         observation = robot.get_observation()
-        print("OBS KEYS:", observation.keys())
 
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
@@ -467,49 +461,6 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
-
-            # ===== Attention heatmap (READ-ONLY) =====
-            model = policy.model
-            if hasattr(model, "vlm_with_expert"):
-                v = model.vlm_with_expert
-
-                rr.log("debug/has_last_attn", rr.Scalar(float(hasattr(v, "last_attn"))))
-                rr.log("debug/last_attn_keys", rr.AnyValues(keys=str(list(v.last_attn.keys()))))
-
-                if hasattr(v, "last_attn") and "attn" in v.last_attn and "num_image_tokens" in v.last_attn:
-                    attn = v.last_attn["attn"]          # [B, H, Q, K]
-                    attn = attn[0]                      # first batch
-                    attn_head = attn[0]                 # head 0
-
-                    num_img = v.last_attn["num_image_tokens"]
-
-                    # assume: text tokens first, image tokens last
-                    text_to_image = attn_head[:-num_img, -num_img:]
-                    heatmap_1d = text_to_image.mean(dim=0)
-
-                    heatmap_2d = (
-                        heatmap_1d
-                        .reshape(int(num_img**0.5), int(num_img**0.5))
-                        .detach()
-                        .cpu()
-                        .numpy()
-                    )
-
-                    heatmap_2d -= heatmap_2d.min()
-                    heatmap_2d /= (heatmap_2d.max() + 1e-6)
-
-                    front_img = observation["front"]
-                    H, W = front_img.shape[:2]
-                    heatmap = cv2.resize(heatmap_2d, (W, H))
-                    heatmap = np.uint8(255 * heatmap)
-                    heatmap_color = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-                    front_bgr = cv2.cvtColor(front_img, cv2.COLOR_RGB2BGR)
-                    overlay = cv2.addWeighted(front_bgr, 0.6, heatmap_color, 0.4, 0)
-
-                    rr.log("observation.front", rr.Image(overlay, color_model="BGR"))
-            # =========================================
-
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
@@ -592,9 +543,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
-
-    if policy is not None and hasattr(policy.model, "vlm_with_expert"):
-        policy.model.vlm_with_expert.debug_attn = True
 
     robot.connect()
     if teleop is not None:
