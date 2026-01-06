@@ -80,13 +80,18 @@ conda activate lerobot_nn
 #### Record episode
 ##### ACT
 
+Right key to save episode, left key to discard episode
+
 ```bash
-python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=10     --dataset.reset_time_s=5     --dataset.single_task="test" 
+python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=10000     --dataset.reset_time_s=5     --dataset.single_task="test" 
 ```
 
 ##### SmolVLA
+
+Right key to save episode, left key to discard episode
+
 ```
-python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=10     --dataset.reset_time_s=5     --dataset.single_task="grip the green block and put into the box" 
+ python -m lerobot.record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm     --display_data=true     --dataset.repo_id=ethanCSL/test     --dataset.num_episodes=25          --dataset.episode_time_s=100000     --dataset.reset_time_s=5     --dataset.single_task="grip the green block and put into the box" 
 ```
 
 Resume
