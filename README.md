@@ -34,6 +34,13 @@ conda activate lerobot_nn
 
 ### Koch Robot:
 
+> **NOTE:**
+>
+> Model test with reset and teleop arm
+> 
+> lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip green block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=10000   --dataset.num_episodes=10000   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Ting_grip_box_svla/checkpoints/020000/pretrained_model --display_data=True  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm  --dataset.reset_time_s=5
+
+
 #### Task1: SmolVLA multi-blocks picking
 
 > **Dataset**Dataset: https://huggingface.co/ethanCSL/svla_color_test_green
@@ -49,8 +56,9 @@ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower 
 
 Pick white block:
 ```bash
-lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip white block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/model_test/koch/svla_multi_blocks_picking/checkpoints/020000/pretrained_model
+lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip white block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/model_test/koch/svla_multi_blocks_picking/checkpoints/020000/
 ```
+
 #### Task2: Complex environment picking
 <img width="973" height="383" alt="image" src="https://github.com/user-attachments/assets/ace726d2-6c41-4196-b575-e2ee1955a49c" />
 
