@@ -67,6 +67,9 @@ from lerobot.utils.utils import (
 )
 from lerobot.utils.visualization_utils import _init_rerun, log_rerun_data
 
+# Attention visualization map
+import torch
+import os
 
 @dataclass
 class DatasetRecordConfig:
@@ -202,6 +205,18 @@ def record_loop(
                 task=single_task,
                 robot_type=robot.robot_type,
             )
+
+            # Visualize attention heat map
+            # if policy is not None and policy.name == "smolvla":
+            #     attn = policy.model.vlm_with_expert.last_attn.get("attn", None)
+            #     if attn is not None:
+            #         # save only first batch(avoid race condition)
+            #         tmp_path = "/tmp/smolvla_attn.pt.tmp"
+            #         final_path = "/tmp/smolvla_attn.pt"
+
+            #         torch.save(attn[0], tmp_path)
+            #         os.replace(tmp_path, final_path) 
+
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         elif policy is None and isinstance(teleop, Teleoperator):
             action = teleop.get_action()
@@ -284,6 +299,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Load pretrained policy
     policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
+
+    # Debug smolvla attention
+    if policy is not None and policy.name == "smolvla":
+        policy.model.vlm_with_expert.debug_attn = True
 
     robot.connect()
     if teleop is not None:
