@@ -15,8 +15,10 @@ import copy  # 用於 deepcopy
 # =========================
 # 1. 初始化設定
 # =========================
-DATASET_REPO_ID = "ethanCSL/Ting_grip_box_svla" 
+DATASET_REPO_ID = "ethanCSL/Ting_grip_box_svla"
+#DATASET_REPO_ID = "ethanCSL/color_test_green"
 CKPT_PATH = "/home/bruce/CSL/lerobot_nn/outputs/train/Ting_grip_box_svla/checkpoints/020000/pretrained_model"
+#CKPT_PATH = "/home/bruce/CSL/lerobot_nn/model_test/koch/svla_color_complex/checkpoints/020000/pretrained_model"
 
 policy_cfg = PreTrainedConfig.from_pretrained(CKPT_PATH)
 
@@ -33,52 +35,38 @@ policy.reset()
 policy.model.vlm_with_expert.debug_attn = True
 
 # =========================
-# 2. 自動尋找有效的集數 (Length > 50)
+# 2. 指定特定的集數 (Specify Episode Index)
 # =========================
-target_episode_idx = -1
-min_length = 50
 
-print(f"\n[INFO] Searching for an episode with length > {min_length}...")
+# [MODIFICATION] Change this number to the episode you want to watch
+target_episode_idx = 40  
 
-# 遍歷前 20 集尋找
-for i in range(len(dataset.meta.episodes)):
-    ep_meta = dataset.meta.episodes[i]
-    # 安全取得長度，避免 KeyError
-    length = ep_meta.get('length', 0)
-    
-    print(f" - Episode {i}: length={length}")
-    
-    if length > min_length:
-        target_episode_idx = i
-        print(f" -> FOUND! Using Episode {i}")
-        break
+# Check if the index is valid
+total_episodes = len(dataset.meta.episodes)
+if target_episode_idx < 0 or target_episode_idx >= total_episodes:
+    raise ValueError(f"Episode index {target_episode_idx} is out of range (0 to {total_episodes-1})")
 
-if target_episode_idx == -1:
-    raise ValueError("找不到任何長度足夠的集數，請檢查 Dataset 是否損壞。")
-
-# 載入目標集數
+# Load metadata for this specific episode
 ep_meta = dataset.meta.episodes[target_episode_idx]
 ep_length = ep_meta['length']
 
-# 手動累加計算 start_idx (因為舊版 meta 沒有 episode_data_index)
+# Calculate global start index by summing lengths of all previous episodes
+# (This is required because LeRobotDataset flattens all frames)
 start_idx = 0
 for i in range(target_episode_idx):
     start_idx += dataset.meta.episodes[i]['length']
 
 end_idx = start_idx + ep_length
 
-print(f"[INFO] Processing Episode {target_episode_idx}")
+print(f"\n[INFO] Processing Specific Episode: {target_episode_idx}")
+print(f"       Total Episodes available: {total_episodes}")
 print(f"       Length: {ep_length} frames")
 print(f"       Global Range: {start_idx} to {end_idx}")
+
 
 # =========================
 # 3. 輔助函數
 # =========================
-PROMPTS = {
-    "red":   "grip the red block and put it into box",
-    "green": "grip the green block and put it into box",
-    "white": "grip the white block and put it into box",
-}
 
 def find_token_index(processor, prompt, target_word):
     tokens = processor.tokenizer(prompt, return_tensors="pt")
@@ -168,7 +156,7 @@ for global_idx in range(start_idx, end_idx):
     for k, v in item.items():
         if k.startswith("observation."):
             # 這裡不要 replace，直接用原始的 k (例如 "observation.images.front")
-            key_name = k 
+            key_name = k
             val = v
             
             # 如果是 Tensor，轉回 Numpy (解決 TypeError)
@@ -181,7 +169,7 @@ for global_idx in range(start_idx, end_idx):
                 val = np.transpose(val, (1, 2, 0)) # CHW -> HWC
                 
                 # [重要] 還原數值範圍 [0, 1] -> [0, 255]
-                if val.max() <= 1.5: 
+                if val.max() <= 1.5:
                     val = (val * 255).astype(np.uint8)
             
             observation_batch[key_name] = val
@@ -197,19 +185,75 @@ for global_idx in range(start_idx, end_idx):
             robot_type=None,
         )
 
-    # 4. 提取 Attention (跟原本一樣)
+    # 4. 提取 Attention
     heat = extract_attention(policy, txt_idx)
-    heat_2d = reshape_heat(heat).cpu().numpy()
+    
+    # ==========================================
+    # [修正核心] 解決垂直條紋與分割問題
+    # ==========================================
+    
+    # 1. 計算視覺 Tokens 總數
+    # SmolVLM 的 Attention 通常包含 Text + Image。
+    # 視覺 Tokens 數量通常非常大 (例如 2400)，而 Text 很少。
+    # 我們假設 Attention 向量中，主要的長度都是視覺 Tokens。
+    num_total_tokens = heat.numel()
+    
+    # 2. 強制對半切分 (Front / Top)
+    # 因為兩張圖輸入大小一樣 (480x640)，模型產生的 Token 數一定一樣。
+    tokens_per_image = num_total_tokens // 2
+    
+    heat_front_1d = heat[:tokens_per_image]
+    heat_top_1d = heat[tokens_per_image:]
 
-    # 5. [修改] 取得雙鏡頭 RGB 原圖 (Front & Top)
-    # 取得 Front Image
+    # 3. [關鍵演算法] 強制依據 4:3 比例重塑 (修復垂直條紋)
+    def reshape_to_4_3_ratio(heat_tensor):
+        n = heat_tensor.numel()
+        if n == 0: return np.zeros((1, 1))
+        
+        # 數學推導：h * w ≈ n 且 w / h ≈ 1.33 (4:3)
+        # h * 1.33h ≈ n  =>  h ≈ sqrt(n / 1.33)
+        h_est = int(math.sqrt(n * 0.75))
+        
+        # 為了保險，我們從估計值開始往下找，直到找到一個合理的矩形
+        # 這裡我們放寬標準：只要丟棄的 tokens 不超過 20% 就可以接受
+        best_h = 1
+        best_w = n
+        min_waste = n
+        
+        # 搜尋範圍：從 h_est 到 1
+        for h in range(h_est, 0, -1):
+            w = int(h * 4 / 3) # 強制 4:3 比例
+            if w == 0: w = 1
+            
+            used = h * w
+            if used <= n:
+                waste = n - used
+                if waste < min_waste:
+                    min_waste = waste
+                    best_h = h
+                    best_w = w
+                
+                # 如果浪費很少 (例如少於 10 個 token)，就直接採用
+                if waste < 15: 
+                    break
+        
+        # [核心修正] 自動裁切多餘的 tokens
+        # 例如：輸入 89，最佳形狀 9x9 (81)，我們只取 heat_tensor[:81]
+        valid_len = best_h * best_w
+        heat_trimmed = heat_tensor[:valid_len]
+        
+        return heat_trimmed.reshape(best_h, best_w).cpu().numpy()
+
+    # 重塑為 2D (Height, Width)
+    heat_2d_front = reshape_to_4_3_ratio(heat_front_1d)
+    heat_2d_top = reshape_to_4_3_ratio(heat_top_1d)
+
+    # 5. 取得雙鏡頭 RGB 原圖
     rgb_front = item["observation.images.front"].permute(1, 2, 0).cpu().numpy()
     
-    # 取得 Top Image (假設 Dataset 有這個 key，根據 Log 應該有)
     if "observation.images.top" in item:
         rgb_top = item["observation.images.top"].permute(1, 2, 0).cpu().numpy()
     else:
-        # 如果沒有 Top，就用全黑代替，避免報錯
         rgb_top = np.zeros_like(rgb_front)
 
     # 數值還原 [0, 1] -> [0, 255]
@@ -220,39 +264,47 @@ for global_idx in range(start_idx, end_idx):
         rgb_front = rgb_front.astype(np.uint8)
         rgb_top = rgb_top.astype(np.uint8)
 
-    # [關鍵步驟] 將兩張圖合併 (Side-by-Side)
-    # 形狀變為 (480, 1280, 3)
-    combined_rgb = np.hstack((rgb_front, rgb_top))
+    # ---- 視覺化疊合 ----
+    
+    def apply_heatmap_overlay(rgb_img, heat_map_2d):
+        # Resize 到跟原圖一樣大 (使用 Cubic 插值會比較平滑)
+        heat_resized = cv2.resize(heat_map_2d, (rgb_img.shape[1], rgb_img.shape[0]), interpolation=cv2.INTER_CUBIC)
+        
+        # Normalize 到 0-255
+        h_min, h_max = heat_resized.min(), heat_resized.max()
+        if h_max - h_min > 1e-6:
+            heat_norm = (heat_resized - h_min) / (h_max - h_min)
+        else:
+            heat_norm = heat_resized
+            
+        heatmap_color = cv2.applyColorMap(np.uint8(255 * heat_norm), cv2.COLORMAP_JET)
+        
+        # 轉成 BGR 給 OpenCV 寫入影片
+        rgb_bgr = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR)
+        
+        # 疊合
+        return cv2.addWeighted(rgb_bgr, 0.6, heatmap_color, 0.4, 0)
 
-    # ---- 視覺化 Attention on Combined Image ----
-    
-    # 將 Attention Map Resize 到「合併後」的大圖尺寸
-    # 這樣如果 Attention 分佈在兩張圖上，就會正確顯示在各自的位置
-    heat_img = cv2.resize(heat_2d, (combined_rgb.shape[1], combined_rgb.shape[0]), interpolation=cv2.INTER_CUBIC)
-    
-    # Normalize Heatmap
-    heat_min, heat_max = heat_img.min(), heat_img.max()
-    if heat_max - heat_min > 1e-6:
-        heat_norm = (heat_img - heat_min) / (heat_max - heat_min)
-    else:
-        heat_norm = heat_img
+    # 分別疊加
+    vis_front = apply_heatmap_overlay(rgb_front, heat_2d_front)
+    vis_top = apply_heatmap_overlay(rgb_top, heat_2d_top)
 
-    # Overlay
-    heatmap_color = cv2.applyColorMap(np.uint8(255 * heat_norm), cv2.COLORMAP_JET)
-    rgb_bgr = cv2.cvtColor(combined_rgb, cv2.COLOR_RGB2BGR) # OpenCV uses BGR
+    # 左右合併 (Side-by-Side)
+    overlay = np.hstack((vis_front, vis_top))
     
-    # 疊合 (0.6 原圖 + 0.4 Heatmap)
-    overlay = cv2.addWeighted(rgb_bgr, 0.6, heatmap_color, 0.4, 0)
-    
-    # 畫一條分隔線 (Optional)
-    h, w, _ = rgb_front.shape
+    # 畫中間分隔線 (白色)
+    h, w, _ = vis_front.shape
     cv2.line(overlay, (w, 0), (w, h), (255, 255, 255), 2)
+    
+    # 標示文字 (Front / Top)
+    cv2.putText(overlay, "Front", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+    cv2.putText(overlay, "Top", (w + 10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
     # 寫入影片
     if video_writer is None:
-        H, W = overlay.shape[:2]
-        print(f"[INFO] Initializing Side-by-Side Video: {W}x{H} @ {fps}fps")
-        video_writer = cv2.VideoWriter(output_video_path, fourcc, fps, (W, H))
+        H_out, W_out = overlay.shape[:2]
+        print(f"[INFO] Initializing Side-by-Side Video: {W_out}x{H_out} @ {fps}fps")
+        video_writer = cv2.VideoWriter(output_video_path, fourcc, fps, (W_out, H_out))
     
     if current_frame % 30 == 0:
         print(f"Processing Frame {current_frame}/{ep_length}")
@@ -260,8 +312,9 @@ for global_idx in range(start_idx, end_idx):
     video_writer.write(overlay)
     current_frame += 1
 
+# 迴圈結束
 if video_writer is not None:
     video_writer.release()
-    print(f"\n[DONE] Saved to {output_video_path}")
+    print(f"\n[DONE] Saved to {os.path.abspath(output_video_path)}")
 else:
     print("\n[WARN] Failed to create video.")
