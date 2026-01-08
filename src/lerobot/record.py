@@ -193,6 +193,11 @@ def record_loop(
 
         observation = robot.get_observation()
 
+        # DEBUG: save one frozen frame
+        if not os.path.exists("/tmp/frozen_obs.pt"):
+            torch.save(observation, "/tmp/frozen_obs.pt")
+            print("[DEBUG] Saved frozen observation")
+
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, observation, prefix="observation")
 
@@ -207,15 +212,15 @@ def record_loop(
             )
 
             # Visualize attention heat map
-            # if policy is not None and policy.name == "smolvla":
-            #     attn = policy.model.vlm_with_expert.last_attn.get("attn", None)
-            #     if attn is not None:
-            #         # save only first batch(avoid race condition)
-            #         tmp_path = "/tmp/smolvla_attn.pt.tmp"
-            #         final_path = "/tmp/smolvla_attn.pt"
+            if policy is not None and policy.name == "smolvla":
+                attn = policy.model.vlm_with_expert.last_attn.get("attn", None)
+                if attn is not None:
+                    # save only first batch(avoid race condition)
+                    tmp_path = "/tmp/smolvla_attn.pt.tmp"
+                    final_path = "/tmp/smolvla_attn.pt"
 
-            #         torch.save(attn[0], tmp_path)
-            #         os.replace(tmp_path, final_path) 
+                    torch.save(attn[0], tmp_path)
+                    os.replace(tmp_path, final_path) 
 
             action = {key: action_values[i].item() for i, key in enumerate(robot.action_features)}
         elif policy is None and isinstance(teleop, Teleoperator):
