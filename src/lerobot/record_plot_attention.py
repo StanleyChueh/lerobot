@@ -10,14 +10,14 @@ from lerobot.datasets.utils import build_dataset_frame
 import numpy as np
 import cv2
 import os
-import copy  # 用於 deepcopy
+import copy  
 
 # =========================
 # 1. 初始化設定
 # =========================
-DATASET_REPO_ID = "ethanCSL/Ting_grip_box_svla"
+DATASET_REPO_ID = "lerobot/svla_so100_pickplace"
 #DATASET_REPO_ID = "ethanCSL/color_test_green"
-CKPT_PATH = "/home/bruce/CSL/lerobot_nn/outputs/train/Ting_grip_box_svla/checkpoints/020000/pretrained_model"
+CKPT_PATH = "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper"
 #CKPT_PATH = "/home/bruce/CSL/lerobot_nn/model_test/koch/svla_color_complex/checkpoints/020000/pretrained_model"
 
 policy_cfg = PreTrainedConfig.from_pretrained(CKPT_PATH)
@@ -39,7 +39,7 @@ policy.model.vlm_with_expert.debug_attn = True
 # =========================
 
 # [MODIFICATION] Change this number to the episode you want to watch
-target_episode_idx = 40  
+target_episode_idx = 10
 
 # Check if the index is valid
 total_episodes = len(dataset.meta.episodes)
@@ -133,9 +133,9 @@ def get_timestep_step(episode: dict, t: int):
 # 4. 主執行迴圈
 # =========================
 
-prompt = "grip the red block and put it into box"
+prompt = "grip the green block and put it into box"
 processor = policy.model.vlm_with_expert.processor
-txt_idx = find_token_index(processor, prompt, "red")
+txt_idx = find_token_index(processor, prompt, "green")
 
 # 初始化 Video Writer
 output_video_path = "attention_vis.mp4"
@@ -249,7 +249,7 @@ for global_idx in range(start_idx, end_idx):
     heat_2d_top = reshape_to_4_3_ratio(heat_top_1d)
 
     # 5. 取得雙鏡頭 RGB 原圖
-    rgb_front = item["observation.images.front"].permute(1, 2, 0).cpu().numpy()
+    rgb_front = item["observation.images.wrist"].permute(1, 2, 0).cpu().numpy()
     
     if "observation.images.top" in item:
         rgb_top = item["observation.images.top"].permute(1, 2, 0).cpu().numpy()
