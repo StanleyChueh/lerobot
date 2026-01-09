@@ -1,7 +1,5 @@
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="https://cdn-uploads.huggingface.co/production/uploads/631ce4b244503b72277fc89f/MNkMdnJqyPvOAEg20Mafg.png" width="100%">
-  <br/>
-  <br/>
 </p>
 
 <div align="center">
@@ -13,33 +11,51 @@
 [![Version](https://img.shields.io/pypi/v/lerobot)](https://pypi.org/project/lerobot/)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v2.1-ff69b4.svg)](https://github.com/huggingface/lerobot/blob/main/CODE_OF_CONDUCT.md)
 
-<!-- [![Coverage](https://codecov.io/gh/huggingface/lerobot/branch/main/graph/badge.svg?token=TODO)](https://codecov.io/gh/huggingface/lerobot) -->
-
 </div>
 
-<br/>
-
 <h2 align="center">
-    <p><a href="https://huggingface.co/docs/lerobot/so101">
-        Test your robot with LeRobot!</a></p>
+    <a href="https://huggingface.co/docs/lerobot/so101">Test your robot with LeRobot!</a>
 </h2>
 
-## Model testing
+---
+
+## 📋 Table of Contents
+
+- [Installation](#-installation)
+- [Koch Robot Workflow](#-koch-robot-workflow)
+  - [Model Testing (Inference)](#model-testing-inference)
+  - [Recording Episodes](#recording-episodes)
+  - [Training](#training)
+- [Franka Emika Panda Workflow](#-franka-emika-panda-workflow)
+  - [Control PC Setup](#control-pc-client)
+  - [Recording](#record)
+  - [Inference](#model-testing-inference-1)
+- [Citation](#-citation)
+
+---
+
+## 🛠 Installation
+
+LeRobot works with **Python 3.10+** and **PyTorch 2.2+**.
+
+### 1. Environment Setup
+Create a virtual environment with Python 3.10 and activate it:
+
+```bash
+conda create -y -n lerobot_nn python=3.10
+conda activate lerobot_nn
+pip install -e .
+```
+
+## 🤖 Koch Robot Workflow
+
+### Model Testing (Inference)
 
 Activate conda env
 ```bash
 cd ~/CSL/lerobot_nn/
 conda activate lerobot_nn
 ```
-
-### Koch Robot:
-
-> **NOTE:**
->
-> Model test with reset and teleop arm
-> 
-> lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip green block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=10000   --dataset.num_episodes=10000   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Ting_grip_box_svla/checkpoints/020000/pretrained_model --display_data=True  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm  --dataset.reset_time_s=5
-
 
 #### Task1: SmolVLA multi-blocks picking
 
@@ -71,21 +87,8 @@ Pick white block
 lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video4, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}}"   --dataset.single_task="grip white block and put into box"   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/model_test/koch/svla_color_complex/checkpoints/020000/pretrained_model --display_data=True  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm  --dataset.reset_time_s=5
 ```
 
-<h2 align="center">
-    <p><a href="https://huggingface.co/docs/lerobot/so101">
-        Record -> Train -> Inference!</a></p>
-</h2>
+### Recording Episodes
 
-### Koch
-
-ACT and SmolVLA shares the same recording command,but SmolVLA needs to modify --dataset.single_task for prompt
-
-#### Activate conda env
-```bash
-conda activate lerobot_nn
-```
-
-#### Record episode
 ##### ACT
 
 Right key to save episode, left key to discard episode
@@ -113,7 +116,7 @@ Add this argument in the back of the command to resume recording
 > You can see dataset in ~/.cache/huggingface/lerobot/ethanCSL
 >
 >  Check video index before recording, make sure top and front camera is correct
-#### Train
+### Training
 ##### ACT
 
 ```
