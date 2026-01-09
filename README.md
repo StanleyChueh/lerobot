@@ -128,13 +128,9 @@ python -m lerobot.scripts.train --policy.type=act --dataset.repo_id=user_name/re
 python -m lerobot.scripts.train  --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/smolvla_multiblock   --batch_size=16   --steps=20000   --output_dir=outputs/train/svla_multiblock   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false --policy.repo_id=svla_multiblock
 ```
 
-### Franka emika panda
+## 📋 Franka Emika Panda Workflow
 
-> **NOTE:**
-> Remember to set franka_ros environment if you have not.
-> https://github.com/frankarobotics/franka_ros
-
-#### Control PC(Client)
+### Control PC Setup
 
 Setting ethernet
 ```bash
@@ -142,7 +138,7 @@ cd franka_ws/
 python connect_franka.py
 ```
 
-#### Record 
+### Recording
 
 Start joint impedance control
 ```bash
@@ -168,7 +164,7 @@ python record_small_arm_three_cam_save_RAM.py --repo_id ethanCSL/test --single_t
 > **NOTE:**
 > right key to save, left key to discard episode.
 
-#### Model testing(Inference):
+### Inference
 
 Launch franka_ros cartesian impedance control
 ```bash
@@ -223,67 +219,6 @@ Run client node(Control PC)
 ```bash
 cd franka_record/tools/
 python evaluation.py
-```
-
-## Installation
-
-LeRobot works with Python 3.10+ and PyTorch 2.2+.
-
-### Environment Setup
-
-Create a virtual environment with Python 3.10 and activate it, e.g. with [`miniconda`](https://docs.anaconda.com/free/miniconda/index.html):
-
-```bash
-conda create -y -n lerobot_nn python=3.10
-conda activate lerobot_nn
-```
-
-When using `miniconda`, install `ffmpeg` in your environment:
-
-```bash
-conda install ffmpeg -c conda-forge
-```
-
-> **NOTE:** This usually installs `ffmpeg 7.X` for your platform compiled with the `libsvtav1` encoder. If `libsvtav1` is not supported (check supported encoders with `ffmpeg -encoders`), you can:
->
-> - _[On any platform]_ Explicitly install `ffmpeg 7.X` using:
->
-> ```bash
-> conda install ffmpeg=7.1.1 -c conda-forge
-> ```
->
-> - _[On Linux only]_ Install [ffmpeg build dependencies](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#GettheDependencies) and [compile ffmpeg from source with libsvtav1](https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu#libsvtav1), and make sure you use the corresponding ffmpeg binary to your install with `which ffmpeg`.
-
-### Install LeRobot 🤗
-
-#### From Source
-
-First, clone the repository and navigate into the directory:
-
-```bash
-git clone https://github.com/huggingface/lerobot.git
-cd lerobot
-```
-
-Then, install the library in editable mode. This is useful if you plan to contribute to the code.
-
-```bash
-pip install -e .
-```
-
-> **NOTE:** If you encounter build errors, you may need to install additional dependencies (`cmake`, `build-essential`, and `ffmpeg libs`). On Linux, run:
-> `sudo apt-get install cmake build-essential python3-dev pkg-config libavformat-dev libavcodec-dev libavdevice-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev`. For other systems, see: [Compiling PyAV](https://pyav.org/docs/develop/overview/installation.html#bring-your-own-ffmpeg)
-
-For simulations, 🤗 LeRobot comes with gymnasium environments that can be installed as extras:
-
-- [aloha](https://github.com/huggingface/gym-aloha)
-- [xarm](https://github.com/huggingface/gym-xarm)
-- [pusht](https://github.com/huggingface/gym-pusht)
-
-For instance, to install 🤗 LeRobot with aloha and pusht, use:
-
-```bash
-pip install -e ".[aloha, pusht]"
 ```
 
 ## Citation
