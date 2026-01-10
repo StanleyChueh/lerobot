@@ -27,9 +27,9 @@
   - [Recording Episodes](#recording-episodes)
   - [Training](#training)
 - [Franka Emika Panda Workflow](#-franka-emika-panda-workflow)
-  - [Control PC Setup](#control-pc-client)
-  - [Recording](#record)
-  - [Inference](#model-testing-inference-1)
+  - [Control PC Setup](#control-pc-setup)
+  - [Recording](#recording)
+  - [Inference](#inference)
 - [Citation](#-citation)
 
 ---
