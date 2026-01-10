@@ -30,7 +30,7 @@
   - [Control PC Setup](#control-pc-setup)
   - [Recording](#recording)
   - [Inference](#inference)
-- [Debugging](#-debugging)
+- [Debugging](#debugging)
 
 ---
 
