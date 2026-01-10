@@ -222,3 +222,11 @@ python evaluation.py
 ```
 
 ## Debugging
+
+```bash
+ python record_plot_attention.py  --repo_id "lerobot/svla_so100_pickplace"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper/pretrained_model"   --episode 0   --prompt "Pick up the cube and place it in the box"   --use_state
+```
+
+```bash
+ python record_plot_attention.py  --repo_id "ethanCSL/Ting_grip_box_svla"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper/pretrained_model"   --episode 0   --prompt "Pick up the cube and place it in the box"   --use_state
+```
