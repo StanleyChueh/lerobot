@@ -1,3 +1,15 @@
+'''
+[ Image tokens | Language tokens | (State tokens) ]
+            ↓
+      Transformer Encoder
+            ↓
+     Self-attention matrices
+
+[ Prefix KV cache ]
+            ↓
+[ Action tokens ] → Cross-attention → Denoising → Actions
+'''
+
 import torch
 import math
 import matplotlib.pyplot as plt
@@ -12,9 +24,7 @@ import os
 import argparse
 import torch.nn.functional as F
 
-# =========================
 # 1. Initialization & Argument Parsing
-# =========================
 parser = argparse.ArgumentParser(description="Visualize Attention Maps for SmolVLA")
 parser.add_argument("--repo_id", type=str, default="lerobot/svla_so100_pickplace", help="HuggingFace Dataset Repo ID")
 parser.add_argument("--ckpt", type=str, default="/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper", help="Path to model checkpoint")
@@ -44,9 +54,7 @@ device = get_safe_torch_device(policy.config.device)
 policy.reset()
 policy.model.vlm_with_expert.debug_attn = True
 
-# =========================
 # 2. Episode Selection
-# =========================
 target_episode_idx = args.episode
 
 total_episodes = len(dataset.meta.episodes)
@@ -65,7 +73,7 @@ print(f"\n[INFO] Processing Episode: {target_episode_idx}")
 print(f"       Range: {start_idx} to {end_idx}")
 
 # =========================
-# 3. Helper Functions (CORRECTED)
+# 3. Helper Functions 
 # =========================
 
 def get_token_indices(processor, prompt, specific_word=None):
@@ -107,8 +115,19 @@ def extract_aggregated_attention(policy, token_indices):
     # This prevents the "Text/State tokens leakage" bug
     num_img_tokens = policy.model.vlm_with_expert.last_attn["num_image_tokens"]
     
-    # 4. Slice correctly
-    # Sequence: [Image_Front, Image_Top, Text..., State...]
+    # two cams
+    total_img_tokens = num_img_tokens * 2 
+    
+    # Shift text indices to point to the actual text part of the sequence
+    corrected_indices = [idx + total_img_tokens for idx in token_indices]
+    
+    # 2. Select specific rows using CORRECTED indices
+    if len(corrected_indices) == 1:
+        attn_1d = attn_matrix[corrected_indices[0]]
+    else:
+        attn_1d = attn_matrix[corrected_indices].mean(0)
+
+    # 4. Slice correctly (No changes needed here)
     heat_front = attn_1d[:num_img_tokens]
     heat_top = attn_1d[num_img_tokens : 2 * num_img_tokens]
     
