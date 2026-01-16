@@ -94,7 +94,7 @@ class SmolVLAConfig(PreTrainedConfig):
     pad_language_to: str = "longest"  # "max_length"
 
     num_expert_layers: int = -1  # Less or equal to 0 is the default where the action expert has the same number of layers of VLM. Otherwise the expert have less layers.
-    num_vlm_layers: int = 16  # Number of layers used in the VLM (first num_vlm_layers layers)
+    num_vlm_layers: int = 16  # Number of layers used in the VLM (first num_vlm_layers layers) 16
     self_attn_every_n_layers: int = 2  # Interleave SA layers each self_attn_every_n_layers
     expert_width_multiplier: float = 0.75  # The action expert hidden size (wrt to the VLM)
 
