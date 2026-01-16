@@ -25,6 +25,7 @@
 - [Koch Robot Workflow](#-koch-robot-workflow)
   - [Model Testing (Inference)](#model-testing-inference)
   - [Recording Episodes](#recording-episodes)
+  - [Replaying Episodes](#replaying-episodes)
   - [Training](#training)
 - [Franka Emika Panda Workflow](#-franka-emika-panda-workflow)
   - [Control PC Setup](#control-pc-setup)
@@ -116,6 +117,20 @@ Add this argument in the back of the command to resume recording
 > You can see dataset in ~/.cache/huggingface/lerobot/ethanCSL
 >
 >  Check video index before recording, make sure top and front camera is correct
+
+### Replaying Episodes
+
+Replay recorded episode
+```
+cd ~/CSL/lerobot_nn/src/lerobot/
+lerobot-replay \
+    --robot.type=koch_follower \
+    --robot.port=/dev/ttyUSB_follower \
+    --robot.id=my_awesome_follower_arm \
+    --dataset.repo_id=ethanCSL/Ting_grip_box_svla \
+    --dataset.episode=0
+```
+
 ### Training
 ##### ACT
 
