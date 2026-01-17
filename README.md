@@ -255,6 +255,9 @@ With the episode index and trained model, it can use user's prompt, camera view,
  python src/lerobot/record_plot_attention.py  --repo_id "ethanCSL/Ting_grip_box_svla"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper/pretrained_model"   --episode 0   --prompt "Pick up the cube and place it in the box"   --use_state
 ```
 
+![attention_vis_with_state](https://github.com/user-attachments/assets/4a32759a-31f6-4bdc-8a88-bb1d0f0ebfd5)
+
+
 ## Reference
 
 ```
