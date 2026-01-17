@@ -32,6 +32,7 @@
   - [Recording](#recording)
   - [Inference](#inference)
 - [Debugging](#debugging)
+- [Reference](#reference)
 
 ---
 
@@ -238,10 +239,31 @@ python evaluation.py
 
 ## Debugging
 
-```bash
- python record_plot_attention.py  --repo_id "lerobot/svla_so100_pickplace"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper/pretrained_model"   --episode 0   --prompt "Pick up the cube and place it in the box"   --use_state
-```
+This is the tool to visualize your attention heat map on your dataset!!
+
+<img width="1148" height="436" alt="image" src="https://github.com/user-attachments/assets/09399748-6aad-41a6-9d2d-87cc2d50141e" />
+
+With the episode index and trained model, it can use user's prompt, camera view, and joint states in your dataset to visualize the attention(self attention) of SmolVLM-2, it can help us understand how model view the environment better!
 
 ```bash
- python record_plot_attention.py  --repo_id "ethanCSL/Ting_grip_box_svla"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper/pretrained_model"   --episode 0   --prompt "Pick up the cube and place it in the box"   --use_state
+ python src/lerobot/record_plot_attention.py  --repo_id "ethanCSL/4c_command_change_related_test"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/4c_command_change_related_test/checkpoints/020000/pretrained_model"   --episode 0   --prompt "grip the green box and put into the box"   --use_state
 ```
+
+![pickplace_attention_visualization](https://github.com/user-attachments/assets/c1440157-c26a-4230-a365-07dd00c1e536)
+
+```bash
+ python src/lerobot/record_plot_attention.py  --repo_id "ethanCSL/Ting_grip_box_svla"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper/pretrained_model"   --episode 0   --prompt "Pick up the cube and place it in the box"   --use_state
+```
+
+## Reference
+
+```
+@misc{cadene2024lerobot,
+    author = {Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec, Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi, Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and Moss, Jess and Wolf, Thomas},
+    title = {LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
+    howpublished = "\url{https://github.com/huggingface/lerobot}",
+    year = {2024}
+}
+```
+
+
