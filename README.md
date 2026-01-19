@@ -32,6 +32,7 @@
   - [Recording](#recording)
   - [Inference](#inference)
 - [Debugging](#debugging)
+- [Hardware_Debugging](#hardware-debugging)
 - [Reference](#reference)
 
 ---
@@ -278,6 +279,41 @@ With the episode index and trained model, it can use user's prompt, camera view,
 
 ![attention_vis_with_state](https://github.com/user-attachments/assets/4a32759a-31f6-4bdc-8a88-bb1d0f0ebfd5)
 
+## Hardware Debugging
+
+If you see this message as below, pls run 
+
+```
+sudo setserial /dev/ttyUSB_follower low_latency
+sudo setserial /dev/ttyUSB_leader low_latency
+```
+
+Error messages
+
+```
+Traceback (most recent call last):
+  File "/home/bruce/anaconda3/envs/lerobot_nn/bin/lerobot-record", line 8, in <module>
+    sys.exit(main())
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/record.py", line 377, in main
+    record()
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/configs/parser.py", line 225, in wrapper_inner
+    response = fn(cfg, *args, **kwargs)
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/record.py", line 322, in record
+    record_loop(
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/datasets/image_writer.py", line 36, in wrapper
+    raise e
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/datasets/image_writer.py", line 29, in wrapper
+    return func(*args, **kwargs)
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/record.py", line 194, in record_loop
+    observation = robot.get_observation()
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/robots/koch_follower/koch_follower.py", line 205, in get_observation
+    obs_dict = self.bus.sync_read("Present_Position")
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/motors/motors_bus.py", line 1092, in sync_read
+    ids_values, _ = self._sync_read(
+  File "/home/bruce/CSL/lerobot_nn/src/lerobot/motors/motors_bus.py", line 1124, in _sync_read
+    raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
+ConnectionError: Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 1 tries. [TxRxResult] There is no status packet!
+```
 
 ## Reference
 
