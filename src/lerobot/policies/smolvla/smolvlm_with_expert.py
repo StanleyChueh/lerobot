@@ -73,7 +73,7 @@ class SmolVLMWithExpertModel(nn.Module):
     ):
         super().__init__()
 
-        # debug for attention heap map
+        # debug for attention heap mapsudo fuser -v /dev/video0
         self.debug_attn = False
         self.last_attn: dict[str, torch.Tensor] = {}
 

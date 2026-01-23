@@ -1,0 +1,5 @@
+datasets==3.6.0
+pyarrow==23.0.0
+torch==2.7.1
+torchcodec==0.5
+torchvision==0.22.1

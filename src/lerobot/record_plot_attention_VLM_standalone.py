@@ -9,9 +9,7 @@
             ↓
 [ Action tokens ] → Cross-attention → Denoising → Actions
 
-Usage:
-
-python src/lerobot/record_plot_attention.py  --repo_id "ethanCSL/Ting_grip_box_svla"   --ckpt "/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper/pretrained_model"   --episode 0   --prompt "Pick up the cube and place it in the box"   --use_state
+This is the standalone VLM self attention visualization test, as record_plot_attention.py will use trained model,and smolvla will fine-tune vision encoder
 '''
 
 import torch
@@ -26,12 +24,16 @@ import numpy as np
 import cv2
 import os
 import argparse
+from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
+from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
+from lerobot.constants import OBS_STATE
+from lerobot.configs.types import PolicyFeature, FeatureType
+from lerobot.configs.types import NormalizationMode
 import torch.nn.functional as F
 
 # 1. Initialization & Argument Parsing
 parser = argparse.ArgumentParser(description="Visualize Attention Maps for SmolVLA")
 parser.add_argument("--repo_id", type=str, default="lerobot/svla_so100_pickplace", help="HuggingFace Dataset Repo ID")
-parser.add_argument("--ckpt", type=str, default="/home/bruce/CSL/lerobot_nn/outputs/train/svla_so100_pickplace_paper", help="Path to model checkpoint")
 parser.add_argument("--episode", type=int, default=10, help="Episode index to visualize")
 parser.add_argument("--prompt", type=str, default="grip the green block and put it into box", help="Task prompt")
 parser.add_argument("--token", type=str, default=None, help="(Optional) Specific word to visualize.")
@@ -40,10 +42,26 @@ parser.add_argument("--use_state", action="store_true", help="Condition attentio
 args = parser.parse_args()
 
 DATASET_REPO_ID = args.repo_id
-CKPT_PATH = args.ckpt
 
 # Load Config
-policy_cfg = PreTrainedConfig.from_pretrained(CKPT_PATH)
+policy_cfg = SmolVLAConfig(
+    vlm_model_name="HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
+    load_vlm_weights=True,
+    freeze_vision_encoder=True,
+    train_expert_only=True,
+    train_state_proj=False,
+    attention_mode="self_attn",
+    device="cuda",
+    empty_cameras=0,
+    num_vlm_layers=32,
+)
+
+policy_cfg.normalization_mapping["STATE"] = NormalizationMode.IDENTITY
+
+policy_cfg.input_features.update({
+    "observation.images.front": PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
+    "observation.images.top":   PolicyFeature(type=FeatureType.VISUAL, shape=(3, 480, 640)),
+})
 
 print("[INFO] Loading Dataset...")
 dataset = LeRobotDataset(
@@ -53,8 +71,13 @@ dataset = LeRobotDataset(
 )
 
 # Load Policy
-policy = make_policy(policy_cfg, ds_meta=dataset.meta)
-device = get_safe_torch_device(policy.config.device)
+policy = SmolVLAPolicy(
+    config=policy_cfg,
+    dataset_stats=None,
+)
+device = torch.device(policy_cfg.device)
+
+policy = policy.to(device)
 policy.reset()
 policy.model.vlm_with_expert.debug_attn = True
 
@@ -193,7 +216,6 @@ def compute_deterministic_attention(policy, batch, device):
             batch[k] = v.to(device)
             
     # Normalize images and prepare masks
-    batch = policy.normalize_inputs(batch)
     images, img_masks = policy.prepare_images(batch)
     lang_tokens, lang_masks = policy.prepare_language(batch)
     state = policy.prepare_state(batch)
@@ -246,30 +268,23 @@ current_frame = 0
 for global_idx in range(start_idx, end_idx):
     item = dataset[global_idx]
 
-    # --- [FIX START] Correctly Build the Batch ---
     observation_batch = {}
-    
-    # 1. Copy data from the Dataset Item
-    for k, v in item.items():
-        # We only care about observation keys (images, state)
-        if k.startswith("observation."):
-            val = v
-            
-            # Ensure it is a Torch Tensor (Dataset might return Numpy)
-            if isinstance(val, np.ndarray):
-                val = torch.from_numpy(val)
-            
-            # Add Batch Dimension: (C, H, W) -> (1, C, H, W)
-            # and move to GPU
-            if isinstance(val, torch.Tensor):
-                val = val.unsqueeze(0).to(device)
-            
-            observation_batch[k] = val
 
-    # 2. Add the Task (Prompt)
-    # The attention function needs the text prompt to compute text embeddings
+    for k, v in item.items():
+        if k in ("observation.images.front", "observation.images.top"):
+            if isinstance(v, np.ndarray):
+                v = torch.from_numpy(v)
+            observation_batch[k] = v.unsqueeze(0).to(device)
+
+        elif k == "observation.state" and args.use_state:
+            if isinstance(v, np.ndarray):
+                v = torch.from_numpy(v)
+            observation_batch[OBS_STATE] = v.unsqueeze(0).to(device)
+
     observation_batch["task"] = prompt
-    # --- [FIX END] ---
+
+    # print("Batch keys:", observation_batch.keys())
+    # print("Expected image features:", policy.config.image_features)
 
     # Predict (Using the new Deterministic Function)
     compute_deterministic_attention(policy, observation_batch, device)

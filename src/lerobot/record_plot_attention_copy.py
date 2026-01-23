@@ -99,43 +99,59 @@ def get_token_indices(processor, prompt, specific_word=None):
         raise ValueError(f"Token '{specific_word}' not found in prompt tokens: {words}")
     return indices
 
-def extract_aggregated_attention(policy, token_indices):
+def extract_trajectory_attention(policy):
     """
-    Aggregates attention over the provided token indices and splits 
-    it correctly into Front and Top camera heatmaps using exact token counts.
+    從 Action Expert 中提取交叉注意力權重。
+    這代表了 '動作決策' 對 '視覺特徵' 的依賴程度。
     """
-    # 1. Get raw attention matrix [Queries, Keys]
-    # We take the mean over Heads (dim 0)
-    attn_matrix = policy.model.vlm_with_expert.last_attn["attn"][0].mean(0) 
-    
-    # 2. Select specific rows (tokens) we want to visualize and average them
-    # result shape: [Keys] (1D tensor)
-    if len(token_indices) == 1:
-        attn_1d = attn_matrix[token_indices[0]]
-    else:
-        attn_1d = attn_matrix[token_indices].mean(0)
+    # 1. 獲取 Expert 的交叉注意力 (通常在最後一次反饋中記錄)
+    # 注意：具體屬性名取決於 SmolVLA 的實現，通常是在 Expert Transformer 的層中
+    # 這裡假設 policy 已經運行了 select_action 並且緩存了注意力
+    if not hasattr(policy.model.action_expert, "last_cross_attn"):
+        raise RuntimeError("請確保 policy 已經運行了完整的 select_action 並開啟了 debug_attn")
 
-    # 3. Retrieve exact image token count
-    # This prevents the "Text/State tokens leakage" bug
+    # shape: [Batch, Heads, Action_Tokens, Visual_Tokens]
+    cross_attn = policy.model.action_expert.last_cross_attn
+    
+    # 2. 對 Heads 和 Action Steps (預測的未來軌跡步數) 取平均
+    # 我們想知道這一段軌跡整體在看哪裡
+    avg_attn = cross_attn[0].mean(dim=(0, 1)) # shape: [Visual_Tokens]
+
+    # 3. 獲取視覺 Token 的數量
     num_img_tokens = policy.model.vlm_with_expert.last_attn["num_image_tokens"]
     
-    # two cams
-    total_img_tokens = num_img_tokens * 2 
-    
-    # Shift text indices to point to the actual text part of the sequence
-    corrected_indices = [idx + total_img_tokens for idx in token_indices]
-    
-    # 2. Select specific rows using CORRECTED indices
-    if len(corrected_indices) == 1:
-        attn_1d = attn_matrix[corrected_indices[0]]
-    else:
-        attn_1d = attn_matrix[corrected_indices].mean(0)
-
-    # 4. Slice correctly (No changes needed here)
-    heat_front = attn_1d[:num_img_tokens]
-    heat_top = attn_1d[num_img_tokens : 2 * num_img_tokens]
+    # 拆分前後攝像頭
+    heat_front = avg_attn[:num_img_tokens]
+    heat_top = avg_attn[num_img_tokens : 2 * num_img_tokens]
     
     return heat_front, heat_top
+
+# =========================
+# 修改後的 Main Loop
+# =========================
+
+for global_idx in range(start_idx, end_idx):
+    item = dataset[global_idx]
+    
+    # 構造 Batch (與之前相同)
+    observation_batch = {k: v.unsqueeze(0).to(device) if isinstance(v, torch.Tensor) else v 
+                         for k, v in item.items() if k.startswith("observation.")}
+    observation_batch["task"] = prompt
+
+    # --- [關鍵修改] 執行真正的動作預測 ---
+    with torch.no_grad():
+        # 這會觸發 Action Expert 並生成未來軌跡
+        # 確保你的 policy 或 model 內部實現了對 Cross-Attention 的記錄
+        actions = policy.select_action(observation_batch)
+
+    # --- 提取動作決策的注意力 ---
+    heat_front_1d, heat_top_1d = extract_trajectory_attention(policy)
+    
+    # 後續的 process_heatmap 和 apply_heatmap_overlay 邏輯不變
+    heat_2d_front = process_heatmap(heat_front_1d)
+    heat_2d_top = process_heatmap(heat_top_1d)
+    
+    # ... (其餘繪圖與保存影片邏輯相同)
 
 def process_heatmap(heat_1d, original_image_size=(480, 640), model_input_size=(512, 512)):
     """
