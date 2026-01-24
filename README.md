@@ -69,6 +69,30 @@ lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follo
 >
 > In this command, it needs at least 20GB GPU VRAM to start it, it still needs ~12GB of VRAM to run if lower batch size to 2 or 4
 
+For user with no GPU usage limitation 🙋:
+> **Note**
+> Tune diffusion model, Eagle-2 VLM, increase batch size
+> It will need around 84 GB of GPU VRAM 🥶
+```
+CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train) \
+  --output_dir=outputs/train_groot_unfrozen \
+  --save_checkpoint=true \
+  --batch_size=32 \
+  --steps=20000 \
+  --save_freq=5000 \
+  --log_freq=200 \
+  --policy.type=groot \
+  --policy.repo_id=multi_block_picking_new_lerobot_gr00t_unfrozen \
+  --policy.tune_diffusion_model=true \
+  --policy.tune_visual=true \
+  --policy.tune_llm=true \
+  --dataset.repo_id=ethanCSL/multi_block_picking_new_lerobot_gr00t \
+  --dataset.video_backend=pyav \
+  --wandb.enable=false \
+  --wandb.disable_artifact=true \
+  --job_name=groot_tuned
+
+```
 
 #### Task1: GR00T multi-block pick and place task
 
