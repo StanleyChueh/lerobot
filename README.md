@@ -61,6 +61,7 @@ lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follo
 
 Single GPU training
 
+Train only projector and encoder(Action head DiT and Eagle-2(GR00T N1.5 VLM) are frozen), poor in new robot and new environment
 ```bash
 CUDA_VISIBLE_DEVICES=0  accelerate launch   $(which lerobot-train)   --output_dir=outputs/train_groot_test   --save_checkpoint=true   --batch_size=16   --steps=20000   --save_freq=20000   --log_freq=200   --policy.type=groot   --policy.repo_id=multi_block_picking_new_lerobot_gr00t   --policy.tune_diffusion_model=false   --dataset.repo_id=ethanCSL/multi_block_picking_new_lerobot_gr00t   --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=groot
 ```
@@ -73,7 +74,13 @@ CUDA_VISIBLE_DEVICES=0  accelerate launch   $(which lerobot-train)   --output_di
 
 For user with no GPU usage limitation 🙋:
 > **Note**
-> Tune diffusion model, Eagle-2 VLM, increase batch size
+> Tune Action head DiT(Eagle-2 VLM frozen) it can learn new robot better.
+> It will need around 27 GB of GPU VRAM 
+```
+ CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train)   --output_dir=outputs/Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --save_checkpoint=true   --batch_size=32   --steps=20000   --save_freq=5000   --log_freq=200   --policy.type=groot   --policy.repo_id=Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --policy.tune_diffusion_model=true   --policy.tune_visual=false   --policy.tune_llm=false   --dataset.repo_id=ethanCSL/Ting_grip_block_2color_new   --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=groot_tuned
+```
+
+> Tune diffusion model, Eagle-2 VLM, increase batch size, for 
 > It will need around 84 GB of GPU VRAM 🥶
 ```
 CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train) \
