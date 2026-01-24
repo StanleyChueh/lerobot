@@ -171,6 +171,7 @@ python -m lerobot.scripts.train  --policy.path=lerobot/smolvla_base   --dataset.
 > ```
 >  CUDA_VISIBLE_DEVICES=0 python -m lerobot.scripts.train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Ting_grip_block_2color_new   --dataset.video_backend=pyav   --batch_size=16   --steps=20000   --output_dir=outputs/train/Ting_grip_block_2color_new_unfrozen   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false   --policy.repo_id=Ting_grip_2color_new_unfrozen   --policy.train_expert_only=false   --policy.freeze_vision_encoder=false   --policy.optimizer_lr=2e-5
 > ```
+> It will takes around 17 GB of VRAM to run it!!
 
 ## 📋 Franka Emika Panda Workflow
 
