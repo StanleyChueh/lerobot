@@ -115,7 +115,6 @@ Prompt: Put the green cube on top of the red cube.
 lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"   --dataset.single_task="Put the green cube on top of the red cube."   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/4c_command_change_related_test_svla_paper/checkpoints/020000/pretrained_model  --display_data=True  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm  --dataset.reset_time_s=5 
 ```
 
-
 ### Recording Episodes
 
 ##### ACT
@@ -168,7 +167,7 @@ python -m lerobot.scripts.train --policy.type=act --dataset.repo_id=user_name/re
 
 ##### SmolVLA
 ```
-python -m lerobot.scripts.train  --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/smolvla_multiblock   --batch_size=16   --steps=20000   --output_dir=outputs/train/svla_multiblock   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false --policy.repo_id=svla_multiblock
+python -m lerobot.scripts.train  --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/smolvla_multiblock   --batch_size=16   --steps=20000   --output_dir=outputs/train/svla_multiblock   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false --policy.repo_id=svla_multiblock  --dataset.video_backend=pyav
 ```
 
 > **NOTE:**
