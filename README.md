@@ -19,6 +19,11 @@
 
 ---
 
+## Branch explanation
+🙆 Main branch is for LeRobot dataset format: v2.1 and with more stable functionality in recording and training.
+
+🧑‍💻 Dev branch is for LeRobot dataset format: v3.0 and provide SOTA model,such as GR00T N1.5, PI 0.5, XVLA...
+
 ## 📋 Table of Contents
 
 - [Installation](#-installation)
