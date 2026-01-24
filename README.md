@@ -281,6 +281,7 @@ With the episode index and trained model, it can use user's prompt, camera view,
 
 ## Hardware Debugging
 
+### 1. Leader & Follower arm problem 
 If you see this message as below, pls run 
 
 ```
@@ -313,6 +314,15 @@ Traceback (most recent call last):
   File "/home/bruce/CSL/lerobot_nn/src/lerobot/motors/motors_bus.py", line 1124, in _sync_read
     raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
 ConnectionError: Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 1 tries. [TxRxResult] There is no status packet!
+```
+
+### 2. Camera problem 
+
+Reset camera resolution and encoding method
+
+```
+v4l2-ctl -d /dev/video0 --set-fmt-video=width=640,height=480,pixelformat=MJPG
+v4l2-ctl -d /dev/video6 --set-fmt-video=width=640,height=480,pixelformat=MJPG
 ```
 
 ## Reference
