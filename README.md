@@ -19,6 +19,11 @@
 
 ---
 
+## Branch explanation
+🙆 Main branch is for LeRobot dataset format: v2.1 and with more stable functionality in recording and training, and focus on more ACT, SmolVLA and pi0 policy.
+
+🧑‍💻 Dev branch is for LeRobot dataset format: v3.0 and provide SOTA model,such as GR00T N1.5, PI 0.5, XVLA...
+
 ## 📋 Table of Contents
 
 - [Installation](#-installation)
@@ -110,7 +115,6 @@ Prompt: Put the green cube on top of the red cube.
 lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"   --dataset.single_task="Put the green cube on top of the red cube."   --dataset.repo_id=ethanCSL/eval_svla_multi_blocks_picking   --dataset.episode_time_s=5000   --dataset.num_episodes=10   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/4c_command_change_related_test_svla_paper/checkpoints/020000/pretrained_model  --display_data=True  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm  --dataset.reset_time_s=5 
 ```
 
-
 ### Recording Episodes
 
 ##### ACT
@@ -163,8 +167,15 @@ python -m lerobot.scripts.train --policy.type=act --dataset.repo_id=user_name/re
 
 ##### SmolVLA
 ```
-python -m lerobot.scripts.train  --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/smolvla_multiblock   --batch_size=16   --steps=20000   --output_dir=outputs/train/svla_multiblock   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false --policy.repo_id=svla_multiblock
+python -m lerobot.scripts.train  --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/smolvla_multiblock   --batch_size=16   --steps=20000   --output_dir=outputs/train/svla_multiblock   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false --policy.repo_id=svla_multiblock  --dataset.video_backend=pyav
 ```
+
+> **NOTE:**
+> If you want to fine-tune smolvlm also in training,plz follow the following instruction
+> ```
+>  CUDA_VISIBLE_DEVICES=0 python -m lerobot.scripts.train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Ting_grip_block_2color_new   --dataset.video_backend=pyav   --batch_size=16   --steps=20000   --output_dir=outputs/train/Ting_grip_block_2color_new_unfrozen   --job_name=my_smolvla_training   --policy.device=cuda   --wandb.enable=false   --policy.repo_id=Ting_grip_2color_new_unfrozen   --policy.train_expert_only=false   --policy.freeze_vision_encoder=false   --policy.optimizer_lr=2e-5
+> ```
+> It will takes around 17 GB of VRAM to run it!!
 
 ## 📋 Franka Emika Panda Workflow
 
@@ -281,6 +292,7 @@ With the episode index and trained model, it can use user's prompt, camera view,
 
 ## Hardware Debugging
 
+### 1. Leader & Follower arm problem 
 If you see this message as below, pls run 
 
 ```
@@ -313,6 +325,15 @@ Traceback (most recent call last):
   File "/home/bruce/CSL/lerobot_nn/src/lerobot/motors/motors_bus.py", line 1124, in _sync_read
     raise ConnectionError(f"{err_msg} {self.packet_handler.getTxRxResult(comm)}")
 ConnectionError: Failed to sync read 'Present_Position' on ids=[1, 2, 3, 4, 5, 6] after 1 tries. [TxRxResult] There is no status packet!
+```
+
+### 2. Camera problem 
+
+Reset camera resolution and encoding method
+
+```
+v4l2-ctl -d /dev/video0 --set-fmt-video=width=640,height=480,pixelformat=MJPG
+v4l2-ctl -d /dev/video6 --set-fmt-video=width=640,height=480,pixelformat=MJPG
 ```
 
 ## Reference
