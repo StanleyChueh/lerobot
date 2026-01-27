@@ -103,6 +103,14 @@ CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train
 
 ```
 
+```
+ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.id=my_awesome_follower_arm   --robot.port=/dev/ttyUSB_follower   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30} }"   --task="Put the green cube in the box."   --server_address=10.100.4.125:8080   --policy_type=groot   --pretrained_name_or_path=ethanCSL/Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --policy_device=cuda   --client_device=cuda   --actions_per_chunk=50    
+
+
+python -m lerobot.async_inference.policy_server   --host=0.0.0.0   --port=8080   --fps=30   --inference_latency=0.033   --obs_queue_timeout=1
+
+```
+
 #### Task1: GR00T multi-block pick and place task
 
 <img width="979" height="553" alt="image" src="https://github.com/user-attachments/assets/504f5afa-6bcf-4795-b2fc-a5dd405f6d83" />
