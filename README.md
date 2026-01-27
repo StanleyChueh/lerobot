@@ -48,6 +48,27 @@ Code version:commit- **6d0d65a** -2025-12-28
 
 3. Test XVLA ⏹️
 
+
+
+> **Note**
+> Plese make sure git-lfs has installed before training any policy
+> If it fails to train because connection refused by huggingface like :
+>  Failed to connect to github.com port 443
+> Please use rsync to send dataset
+> 
+```
+rsync -avzP ~/.cache/huggingface/lerobot/ethanCSL/XXX target_name@target_ip:~/.cache/huggingface/lerobot/ethanCSL/XXX
+```
+
+```
+sudo apt update
+sudo apt install git-lfs
+```
+
+```
+git lfs install
+```
+
 #### SmolVLA
 
 Record
