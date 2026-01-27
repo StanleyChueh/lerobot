@@ -50,6 +50,28 @@ Code version:commit- **6d0d65a** -2025-12-28
 
 #### SmolVLA
 
+Record
+
+```bash
+lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/Stanley_grip_block_2color     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the green cube in the box."
+```
+
+resume
+```bash
+lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/Stanley_grip_block_2color     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the green cube in the box." --resume=True
+```
+
+Train
+
+If dataset has only two cameras, set one to empty, and remap to fit dev branch smolvla_base
+```
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color   --batch_size=16   --steps=20000   --output_dir=outputs/train/Stanley_grip_block_2color   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color   --wandb.enable=true   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.top":   "observation.images.camera2"
+  }'   --policy.empty_cameras=1
+
+```
+
 Eval
 ```bash
 lerobot-record \
