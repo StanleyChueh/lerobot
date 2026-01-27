@@ -40,11 +40,36 @@ In this dev branch, we use the latest LeRobot code to test performance
 
 Code version:commit- **6d0d65a** -2025-12-28
 
+0. Test New SmolVLA
+
 1. Test GR00T N1.5 ⏹️
 
 2. Test PI0.5 ⏹️
 
 3. Test XVLA ⏹️
+
+#### SmolVLA
+
+Eval
+```bash
+lerobot-record \
+  --robot.type=koch_follower \
+  --robot.port=/dev/ttyUSB_follower \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30},
+    camera2: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}
+  }' \
+  --dataset.single_task="Put the green cube in the box." \
+  --dataset.repo_id=ethanCSL/eval_Ting_grip_block \
+  --dataset.episode_time_s=500000 \
+  --dataset.num_episodes=10 \
+  --teleop.type=koch_leader \
+  --teleop.port=/dev/ttyUSB_leader \
+  --teleop.id=my_awesome_follower_arm \
+  --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Ting_grip_block_2color_new_v3_0/checkpoints/020000/pretrained_model \
+  --policy.empty_cameras=1
+```
 
 #### GR00T N1.5
 
@@ -103,12 +128,17 @@ CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train
 
 ```
 
+### Async inference
+
+Client:
 ```
- python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.id=my_awesome_follower_arm   --robot.port=/dev/ttyUSB_follower   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30} }"   --task="Put the green cube in the box."   --server_address=10.100.4.125:8080   --policy_type=groot   --pretrained_name_or_path=ethanCSL/Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --policy_device=cuda   --client_device=cuda   --actions_per_chunk=50    
+python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.id=my_awesome_follower_arm   --robot.port=/dev/ttyUSB_follower   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30} }"   --task="Put the green cube in the box."   --server_address=10.100.4.125:8080   --policy_type=groot   --pretrained_name_or_path=ethanCSL/Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --policy_device=cuda   --client_device=cuda   --actions_per_chunk=50    
+```
 
+Server:
 
+```
 python -m lerobot.async_inference.policy_server   --host=0.0.0.0   --port=8080   --fps=30   --inference_latency=0.033   --obs_queue_timeout=1
-
 ```
 
 #### Task1: GR00T multi-block pick and place task
