@@ -179,7 +179,7 @@ class DatasetRecordConfig:
 class RecordConfig:
     robot: RobotConfig
     dataset: DatasetRecordConfig
-    # Whether to control the robot with a teleoperator
+    # Whether to controlRobotClient the robot with a teleoperator
     teleop: TeleoperatorConfig | None = None
     # Whether to control the robot with a policy
     policy: PreTrainedConfig | None = None
@@ -260,6 +260,10 @@ def record_loop(
     single_task: str | None = None,
     display_data: bool = False,
 ):
+    if policy:
+        print("record loop, policy is not None:")
+    else:
+        print("record loop, policy is None:")
     if dataset is not None and dataset.fps != fps:
         raise ValueError(f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps}).")
 
@@ -327,12 +331,14 @@ def record_loop(
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
+        # always enter this loop in recording,and only enter it when resetting(left key is pressed) in eval.
         elif policy is None and isinstance(teleop, Teleoperator):
             act = teleop.get_action()
 
             # Applies a pipeline to the raw teleop action, default is IdentityProcessor
             act_processed_teleop = teleop_action_processor((act, obs))
 
+        # Only trigger when it is bimanual robot
         elif policy is None and isinstance(teleop, list):
             arm_action = teleop_arm.get_action()
             arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
@@ -484,6 +490,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     (recorded_episodes < cfg.dataset.num_episodes - 1) or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
+                    if policy:
+                        print("before record loop,policy is not None")
                     record_loop(
                         robot=robot,
                         events=events,
@@ -502,6 +510,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     events["rerecord_episode"] = False
                     events["exit_early"] = False
                     dataset.clear_episode_buffer()
+                    if policy:
+                        print("record,policy is not None")
                     continue
 
                 dataset.save_episode()
