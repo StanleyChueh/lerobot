@@ -90,7 +90,15 @@ If dataset has only two cameras, set one to empty, and remap to fit dev branch s
     "observation.images.front": "observation.images.camera1",
     "observation.images.top":   "observation.images.camera2"
   }'   --policy.empty_cameras=1
+```
 
+Resume training:
+
+```
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color   --batch_size=16   --steps=20000   --output_dir=outputs/train/Stanley_grip_block_2color   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color   --wandb.enable=true   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.top":   "observation.images.camera2"
+  }'   --policy.empty_cameras=1 --resume=true --config_path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model/train_config.json
 ```
 
 Eval
