@@ -103,23 +103,10 @@ Resume training:
 
 Eval
 ```bash
-lerobot-record \
-  --robot.type=koch_follower \
-  --robot.port=/dev/ttyUSB_follower \
-  --robot.id=my_awesome_follower_arm \
-  --robot.cameras='{
+lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
     camera1: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30},
     camera2: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}
-  }' \
-  --dataset.single_task="Put the green cube in the box." \
-  --dataset.repo_id=ethanCSL/eval_Ting_grip_block \
-  --dataset.episode_time_s=500000 \
-  --dataset.num_episodes=10 \
-  --teleop.type=koch_leader \
-  --teleop.port=/dev/ttyUSB_leader \
-  --teleop.id=my_awesome_follower_arm \
-  --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Ting_grip_block_2color_new_v3_0/checkpoints/020000/pretrained_model \
-  --policy.empty_cameras=1
+  }'   --dataset.single_task="Put the red cube in the box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model   --policy.empty_cameras=1
 ```
 
 #### GR00T N1.5
