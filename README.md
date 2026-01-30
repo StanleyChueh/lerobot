@@ -90,28 +90,23 @@ If dataset has only two cameras, set one to empty, and remap to fit dev branch s
     "observation.images.front": "observation.images.camera1",
     "observation.images.top":   "observation.images.camera2"
   }'   --policy.empty_cameras=1
+```
 
+Resume training:
+
+```
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color   --batch_size=16   --steps=20000   --output_dir=outputs/train/Stanley_grip_block_2color   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color   --wandb.enable=true   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.top":   "observation.images.camera2"
+  }'   --policy.empty_cameras=1 --resume=true --config_path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model/train_config.json
 ```
 
 Eval
 ```bash
-lerobot-record \
-  --robot.type=koch_follower \
-  --robot.port=/dev/ttyUSB_follower \
-  --robot.id=my_awesome_follower_arm \
-  --robot.cameras='{
+lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
     camera1: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30},
     camera2: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}
-  }' \
-  --dataset.single_task="Put the green cube in the box." \
-  --dataset.repo_id=ethanCSL/eval_Ting_grip_block \
-  --dataset.episode_time_s=500000 \
-  --dataset.num_episodes=10 \
-  --teleop.type=koch_leader \
-  --teleop.port=/dev/ttyUSB_leader \
-  --teleop.id=my_awesome_follower_arm \
-  --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Ting_grip_block_2color_new_v3_0/checkpoints/020000/pretrained_model \
-  --policy.empty_cameras=1
+  }'   --dataset.single_task="Put the green cube in the box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model   --policy.empty_cameras=1 --dataset.reset_time_s=5  
 ```
 
 #### GR00T N1.5
@@ -175,7 +170,7 @@ CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train
 
 Client:
 ```
-python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.id=my_awesome_follower_arm   --robot.port=/dev/ttyUSB_follower   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30} }"   --task="Put the green cube in the box."   --server_address=10.100.4.125:8080   --policy_type=groot   --pretrained_name_or_path=ethanCSL/Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --policy_device=cuda   --client_device=cuda   --actions_per_chunk=50    
+python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.id=my_awesome_follower_arm   --robot.port=/dev/ttyUSB_follower   --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30} }"   --task="Put the red cube in the box."   --server_address=10.100.4.125:8080   --policy_type=groot   --pretrained_name_or_path=ethanCSL/Stanley_grip_block_2color_gr00t_DiT_unfrozen   --policy_device=cuda   --client_device=cuda   --actions_per_chunk=50     
 ```
 
 Server:
