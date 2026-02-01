@@ -300,6 +300,33 @@ for fidx, global_idx in enumerate(range(start_idx, end_idx)):
     # Map prompt token indices into the full sequence
     full_input_ids = backbone.last_eagle_input_ids
 
+    # ================= DEBUG: inspect image tokens =================
+    from collections import Counter
+
+    ids = full_input_ids[0].tolist()
+
+    # image token id（來自 processor / tokenizer）
+    image_token_id = getattr(
+        policy._groot_model.backbone.eagle_model.config,
+        "image_token_id",
+        None,
+    )
+
+    print("\n[DEBUG] eagle_input_ids shape:", full_input_ids.shape)
+
+    if image_token_id is not None:
+        img_pos = [i for i, t in enumerate(ids) if t == image_token_id]
+        print("[DEBUG] image_token_id:", image_token_id)
+        print("[DEBUG] num image tokens:", len(img_pos))
+        print("[DEBUG] first 20 image token positions:", img_pos[:20])
+        print("[DEBUG] last 20 image token positions:", img_pos[-20:])
+    else:
+        print("[DEBUG] image_token_id not found in config")
+
+    # also show token id histogram (top few)
+    print("[DEBUG] top token id counts:", Counter(ids).most_common(5))
+    print("====================================================\n")
+
     if full_input_ids is None:
         raise RuntimeError("Could not access Eagle input_ids; cannot locate prompt tokens in the sequence.")
 
