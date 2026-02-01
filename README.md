@@ -166,6 +166,24 @@ CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train
 
 ```
 
+SmolVLA domain randomization
+```
+lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color_resume_30_30   --batch_size=32   --steps=40000   --output_dir=outputs/train/Stanley_grip_block_2color_resume_30_30_domain_randomization   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color_resume_30_30_domain_randomization   --wandb.enable=true   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.top":   "observation.images.camera2"
+  }'   --policy.empty_cameras=1 --dataset.image_transforms.enable=true --dataset.image_transforms.random_order=true --dataset.image_transforms.max_num_transforms=6 --save_freq=20000 --wandb.enable=false --dataset.video_backend=pyav 
+
+```
+
+SmolVLA paper-like sorting task
+```
+ CUDA_VISIBLE_DEVICES=2  accelerate launch   $(which lerobot-train)   --output_dir=outputs/svla_koch_sorting_resume_50   --save_checkpoint=true   --batch_size=32   --steps=20000   --save_freq=20000   --log_freq=200   --policy.path=lerobot/smolvla_base  --dataset.repo_id=ethanCSL/svla_koch_sorting_resume_50  --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=smolvla --policy.repo_id=svla_koch_sorting_resume_50  --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.top":   "observation.images.camera2"
+  }'   --policy.empty_cameras=1
+
+```
+
 ### Async inference
 
 Client:
