@@ -79,21 +79,6 @@ from .helpers import (
     visualize_action_queue_size,
 )
 
-# Add keyboard control
-from lerobot.utils.control_utils import init_keyboard_listener
-
-from lerobot.teleoperators import (  # noqa: F401
-    Teleoperator,
-    TeleoperatorConfig,
-    bi_so100_leader,
-    homunculus,
-    koch_leader,
-    make_teleoperator_from_config,
-    omx_leader,
-    so100_leader,
-    so101_leader,
-)
-from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
 
 class RobotClient:
     prefix = "robot_client"
@@ -150,14 +135,6 @@ class RobotClient:
         # Use an event for thread-safe coordination
         self.must_go = threading.Event()
         self.must_go.set()  # Initially set - observations qualify for direct processing
-
-        # --- Non-official --- #
-        # Keyboard listener
-        self.listener, self.events = init_keyboard_listener()
-        self.logger.info("Keyboard listener started. Press Left Arrow / R to reset.")
-
-        # Set manual flag
-        self.manual_mode = False
 
     @property
     def running(self):
@@ -297,11 +274,6 @@ class RobotClient:
 
         while self.running:
             try:
-                # Switch to leading arm
-                if self.manual_mode:
-                    time.sleep(0.1)
-                    continue
-                    
                 # Use StreamActions to get a stream of actions from the server
                 actions_chunk = self.stub.GetActions(services_pb2.Empty())
                 if len(actions_chunk.data) == 0:
@@ -492,28 +464,7 @@ class RobotClient:
         _performed_action = None
         _captured_observation = None
 
-        # Add keyboard event
         while self.running:
-            if self.events.get("rerecord_episode"):
-                self.logger.info("Reset triggered by user!")
-
-                # switch to leading arm control
-                self.manual_mode = True
-                
-                # 1. clear queue
-                with self.action_queue_lock:
-                    while not self.action_queue.empty():
-                        self.action_queue.get()
-                
-                self.logger.info("Queue cleared. Environment ready for reset.")
-                self.events["rerecord_episode"] = False 
-            
-            # --- non-official --- #
-            if self.manual_mode:
-                with self.action_queue_lock:
-                    while not self.action_queue.empty():
-                        self.action_queue.get()
-
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""
             if self.actions_available():

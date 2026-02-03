@@ -136,6 +136,10 @@ def init_keyboard_listener():
     events["rerecord_episode"] = False
     events["stop_recording"] = False
 
+    # Task switching
+    events["change_task"] = False
+    events["in_task_input"] = False
+
     if is_headless():
         logging.warning(
             "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
@@ -148,6 +152,9 @@ def init_keyboard_listener():
 
     def on_press(key):
         try:
+            if events.get("in_task_input", False):
+                return
+
             if key == keyboard.Key.right:
                 print("Right arrow key pressed. Exiting loop...")
                 events["exit_early"] = True
@@ -159,6 +166,9 @@ def init_keyboard_listener():
                 print("Escape key pressed. Stopping data recording...")
                 events["stop_recording"] = True
                 events["exit_early"] = True
+            elif hasattr(key, "char") and key.char == "t":
+                print("Task change key pressed. Entering task switch mode...")
+                events["change_task"] = True
         except Exception as e:
             print(f"Error handling key press: {e}")
 

@@ -94,16 +94,6 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop
-from lerobot.teleoperators.koch_leader import KochLeaderConfig
-
-from lerobot.processor import (
-    PolicyAction,
-    PolicyProcessorPipeline,
-    RobotAction,
-    RobotObservation,
-    RobotProcessorPipeline,
-    make_default_processors,
-)
 
 class RobotClient:
     prefix = "robot_client"
@@ -168,14 +158,6 @@ class RobotClient:
 
         # Set manual flag
         self.manual_mode = False
-
-        # leading arm       
-        self.teleop = make_teleoperator_from_config(
-            KochLeaderConfig(
-                port="/dev/ttyUSB_leader"  
-            )
-        )
-        self.teleop.connect()
 
     @property
     def running(self):
@@ -416,15 +398,10 @@ class RobotClient:
     def control_loop_action(self, verbose: bool = False) -> dict[str, Any]:
         """Reading and performing actions in local queue"""
 
-        # stop getting action(left key pressed => self.manual_mode=true)
-        if self.manual_mode:
-            return None
-
         # Lock only for queue operations
         get_start = time.perf_counter()
         with self.action_queue_lock:
             self.action_queue_size.append(self.action_queue.qsize())
-
             # Get action from queue
             timed_action = self.action_queue.get_nowait()
         get_end = time.perf_counter() - get_start
@@ -432,8 +409,6 @@ class RobotClient:
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
         )
-
-
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
 
@@ -517,48 +492,27 @@ class RobotClient:
         _performed_action = None
         _captured_observation = None
 
-        self.teleop_action_processor = RobotProcessorPipeline[tuple[RobotAction, RobotObservation], RobotAction]
-
         # Add keyboard event
         while self.running:
-
-            # ===== MANUAL MODE: leading arm control =====
-            if self.manual_mode:
-                act = self.teleop.get_action()
-                self.robot.send_action(act)
-
-                time.sleep(self.config.environment_dt)
-                continue
-
             if self.events.get("rerecord_episode"):
                 self.logger.info("Reset triggered by user!")
 
                 # switch to leading arm control
                 self.manual_mode = True
-
-                # act = teleop.get_action()
-                obs = robot.get_observation()
-
-                # # Applies a pipeline to the raw teleop action, default is IdentityProcessor
-                # act_processed_teleop = teleop_action_processor((act, obs))
-
-                # robot_action_to_send = robot_action_processor((act_processed_teleop, obs))
                 
                 # 1. clear queue
                 with self.action_queue_lock:
                     while not self.action_queue.empty():
                         self.action_queue.get()
-
-                # 2) press enter to break
-                input("Queue cleared. Press Enter to resume policy control...")
-
-                # resume eval
-                self.must_go.set()
-
-                self.manual_mode = False
                 
                 self.logger.info("Queue cleared. Environment ready for reset.")
                 self.events["rerecord_episode"] = False 
+            
+            # --- non-official --- #
+            if self.manual_mode:
+                with self.action_queue_lock:
+                    while not self.action_queue.empty():
+                        self.action_queue.get()
 
             control_loop_start = time.perf_counter()
             """Control loop: (1) Performing actions, when available"""

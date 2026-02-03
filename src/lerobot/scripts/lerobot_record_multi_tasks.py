@@ -84,13 +84,6 @@ from lerobot.utils.utils import (
 )
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
-# Strip ANSI escape sequences and control characters from terminal input
-# to prevent keyboard/terminal artifacts (e.g. arrow keys, hotkeys)
-# from polluting language prompts passed to the policy.
-import re
-
-_ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
-_CONTROL_RE = re.compile(r"[\x00-\x1F\x7F]")
 
 @dataclass
 class DatasetRecordConfig:
@@ -220,7 +213,6 @@ def record_loop(
     control_time_s: int | None = None,
     task_holder: dict | None = None, 
     display_data: bool = False,
-    listener = None
 ):
     if policy:
         print("record loop, policy is not None:")
@@ -256,7 +248,6 @@ def record_loop(
 
     # Reset policy and processor if they are provided
     if policy is not None and preprocessor is not None and postprocessor is not None:
-        print("policy is not None and preprocessor is not None and postprocessor is not None")
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
@@ -264,32 +255,25 @@ def record_loop(
     timestamp = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
-
-        # Keyboard 't' to switch task in real-time!
-        # USe events["change_task"],events["in_task_input"]
-        if events["change_task"]  == True:
-            print("enter if confition")
+        if events.get("change_task", True):
             events["change_task"] = False
             events["in_task_input"] = True
             try:
                 print("\n=== TASK SWITCH MODE ===")
                 print("Type new task prompt and press Enter:")
-                raw = input(">> ")
+                new_task = input(">> ").strip()
             finally:
                 events["in_task_input"] = False
-            
-            raw = _ANSI_ESCAPE_RE.sub("", raw)
-            raw = _CONTROL_RE.sub("", raw)
-            new_task = " ".join(raw.strip().split())
-
-            if new_task.startswith("t"):
-                new_task = new_task[1:].lstrip()
-
-            print("[DEBUG][SANITIZED] task repr:", repr(new_task), "len:", len(new_task))
 
             if len(new_task) > 0:
                 task_holder["text"] = new_task
                 print(f"[INFO] Task updated to: {new_task}")
+
+                # Reset policy state so it doesn't carry old context
+                if policy is not None and preprocessor and postprocessor:
+                    policy.reset()
+                    preprocessor.reset()
+                    postprocessor.reset()
                 events["exit_early"] = True
                 events["rerecord_episode"] = True
             else:
@@ -312,15 +296,6 @@ def record_loop(
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
-            
-            # Check the prompt, to see if there any incorrect char
-            print(
-                "[DEBUG] task repr:",
-                repr(task_holder["text"]),
-                "len:",
-                len(task_holder["text"]),
-            )
-
             action_values = predict_action(
                 observation=observation_frame,
                 policy=policy,
@@ -388,16 +363,7 @@ def record_loop(
 
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
-
-    # Check the prompt, to see if there any incorrect char
     current_task = {"text": cfg.dataset.single_task}
-
-    print(
-        "[DEBUG][CLI] task repr:",
-        repr(cfg.dataset.single_task),
-        "len:",
-        len(cfg.dataset.single_task),
-    )
 
     init_logging()
     logging.info(pformat(asdict(cfg)))
@@ -480,13 +446,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         with VideoEncodingManager(dataset):
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
-                
-                # Add reset in the front to keep same for right,left esc,and t key
-                if policy is not None and preprocessor is not None and postprocessor is not None:
-                    policy.reset()
-                    preprocessor.reset()
-                    postprocessor.reset()
-
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
                 record_loop(
                     robot=robot,
@@ -503,7 +462,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.episode_time_s,
                     task_holder=current_task,
                     display_data=cfg.display_data,
-                    listener=listener,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
@@ -525,7 +483,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         control_time_s=cfg.dataset.reset_time_s,
                         task_holder=current_task, 
                         display_data=cfg.display_data,
-                        listener=listener,
                     )
 
                 if events["rerecord_episode"]:
