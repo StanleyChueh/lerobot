@@ -40,57 +40,60 @@ In this dev branch, we use the latest LeRobot code to test performance
 
 Code version:commit- **6d0d65a** -2025-12-28
 
-0. Test New SmolVLA
+0. Test New SmolVLA ✅
 
-1. Test GR00T N1.5 ⏹️
+1. Test GR00T N1.5 ✅
 
 2. Test PI0.5 ⏹️
 
 3. Test XVLA ⏹️
 
-
-
-> **Note**
-> Plese make sure git-lfs has installed before training any policy
-> If it fails to train because connection refused by huggingface like :
->  Failed to connect to github.com port 443
-> Please use rsync to send dataset
-> 
-```
-rsync -avzP ~/.cache/huggingface/lerobot/ethanCSL/XXX target_name@target_ip:~/.cache/huggingface/lerobot/ethanCSL/XXX
-```
-
-```
-sudo apt update
-sudo apt install git-lfs
-```
-
-```
-git lfs install
-```
-
 #### SmolVLA
 
 Record
 
+Right key to save episode, left key to discard episode
+
 ```bash
 lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/Stanley_grip_block_2color     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the green cube in the box."
 ```
+> **Note**
+> Remember to check camera id before recording, use the following command to check camera id, and use ffplay to test it!
+> ```
+> ls /dev/ttyvideo*
+> ```
+>
+> ```
+> ffplay /dev/video*
+> ```
 
-resume
+resume recording
 ```bash
 lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/Stanley_grip_block_2color     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the green cube in the box." --resume=True
 ```
 
+> **Note**
+> Add --resume=true flag to resume recording
+> ```
+> --resume=True
+> ```
+
 Train
 
-If dataset has only two cameras, set one to empty, and remap to fit dev branch smolvla_base
+If dataset has only two cameras, set one to empty, and remap to fit the format of smolvla_base in dev branch
+
 ```
  lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color   --batch_size=16   --steps=20000   --output_dir=outputs/train/Stanley_grip_block_2color   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color   --wandb.enable=true   --rename_map='{
     "observation.images.front": "observation.images.camera1",
     "observation.images.top":   "observation.images.camera2"
-  }'   --policy.empty_cameras=1
+  }'   --policy.empty_cameras=1 --dataset.video_backend=pyav
 ```
+
+> **Note**
+> Use remap flag,and add
+> ```
+>  --policy.empty_cameras=1
+> ```
 
 Resume training:
 
@@ -98,16 +101,41 @@ Resume training:
  lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color   --batch_size=16   --steps=20000   --output_dir=outputs/train/Stanley_grip_block_2color   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color   --wandb.enable=true   --rename_map='{
     "observation.images.front": "observation.images.camera1",
     "observation.images.top":   "observation.images.camera2"
-  }'   --policy.empty_cameras=1 --resume=true --config_path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model/train_config.json
+  }'   --policy.empty_cameras=1 --resume=true --config_path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model/train_config.json --dataset.video_backend=pyav
 ```
 
-Eval
+> **Note**
+> Add
+> ```
+> --resume=true
+> ```
+> and
+> ```
+> --config_path=
+> ```
+
+Domain randomization:
+
+It will randomize hue,saturation,constract, brightness,affine,sharpness in training stage for better handling color sensitive task like color-picing task!!!
+
+```
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color   --batch_size=16   --steps=20000   --output_dir=outputs/train/Stanley_grip_block_2color   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color   --wandb.enable=true   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.top":   "observation.images.camera2"
+  }'   --policy.empty_cameras=1 --dataset.image_transforms.enable=true --dataset.image_transforms.random_order=true --dataset.image_transforms.max_num_transforms=6 --dataset.video_backend=pyav
+```
+
+Evaluation:
+
 ```bash
 lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
     camera1: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30},
     camera2: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}
   }'   --dataset.single_task="Put the green cube in the box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model   --policy.empty_cameras=1 --dataset.reset_time_s=5  
 ```
+
+> **Note**
+> Remember to add --remap flag,if you used in training
 
 #### GR00T N1.5
 
@@ -125,6 +153,7 @@ lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follo
 Single GPU training
 
 Train only projector and encoder(Action head DiT and Eagle-2(GR00T N1.5 VLM) are frozen), poor in new robot and new environment
+
 ```bash
 CUDA_VISIBLE_DEVICES=0  accelerate launch   $(which lerobot-train)   --output_dir=outputs/train_groot_test   --save_checkpoint=true   --batch_size=16   --steps=20000   --save_freq=20000   --log_freq=200   --policy.type=groot   --policy.repo_id=multi_block_picking_new_lerobot_gr00t   --policy.tune_diffusion_model=false   --dataset.repo_id=ethanCSL/multi_block_picking_new_lerobot_gr00t   --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=groot
 ```
@@ -133,15 +162,16 @@ CUDA_VISIBLE_DEVICES=0  accelerate launch   $(which lerobot-train)   --output_di
 > 
 > https://docs.google.com/document/d/1a7i0UfWbSUTbJk_9MFXW-8Dd742hih3A2z61CJjXPG4/edit?usp=sharing
 >
-> In this command, it needs at least 20GB GPU VRAM to start it, it still needs ~12GB of VRAM to run if lower batch size to 2 or 4
+> With this command, it needs at least 20GB GPU VRAM to start it, it still needs ~12GB of VRAM to run if lower batch size to 2 or 4
 
 For user with no GPU usage limitation 🙋:
 > **Note**
 > Tune Action head DiT(Eagle-2 VLM frozen) it can learn new robot better.
-> It will need around 27 GB of GPU VRAM 
-```
- CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train)   --output_dir=outputs/Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --save_checkpoint=true   --batch_size=32   --steps=20000   --save_freq=5000   --log_freq=200   --policy.type=groot   --policy.repo_id=Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --policy.tune_diffusion_model=true   --policy.tune_visual=false   --policy.tune_llm=false   --dataset.repo_id=ethanCSL/Ting_grip_block_2color_new   --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=groot_tuned
-```
+> It will need around 27 GB of GPU VRAM
+> ```
+>  CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train)   --output_dir=outputs/Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --save_checkpoint=true   --batch_size=32   --steps=20000   --save_freq=5000   --log_freq=200   --policy.type=groot   --policy.repo_id=Ting_grip_block_2color_new_gr00t_unfrozen_DiT   --policy.tune_diffusion_model=true   --policy.tune_visual=false   --policy.tune_llm=false   --dataset.repo_id=ethanCSL/Ting_grip_block_2color_new   --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=groot_tuned
+> ```
+
 
 > Tune diffusion model, Eagle-2 VLM, increase batch size, for 
 > It will need around 84 GB of GPU VRAM 🥶
@@ -166,25 +196,9 @@ CUDA_VISIBLE_DEVICES=0 accelerate launch --num_processes=1 $(which lerobot-train
 
 ```
 
-SmolVLA domain randomization
-```
-lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color_resume_30_30   --batch_size=32   --steps=40000   --output_dir=outputs/train/Stanley_grip_block_2color_resume_30_30_domain_randomization   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color_resume_30_30_domain_randomization   --wandb.enable=true   --rename_map='{
-    "observation.images.front": "observation.images.camera1",
-    "observation.images.top":   "observation.images.camera2"
-  }'   --policy.empty_cameras=1 --dataset.image_transforms.enable=true --dataset.image_transforms.random_order=true --dataset.image_transforms.max_num_transforms=6 --save_freq=20000 --wandb.enable=false --dataset.video_backend=pyav 
-
-```
-
-SmolVLA paper-like sorting task
-```
- CUDA_VISIBLE_DEVICES=2  accelerate launch   $(which lerobot-train)   --output_dir=outputs/svla_koch_sorting_resume_50   --save_checkpoint=true   --batch_size=32   --steps=20000   --save_freq=20000   --log_freq=200   --policy.path=lerobot/smolvla_base  --dataset.repo_id=ethanCSL/svla_koch_sorting_resume_50  --dataset.video_backend=pyav   --wandb.enable=false   --wandb.disable_artifact=true   --job_name=smolvla --policy.repo_id=svla_koch_sorting_resume_50  --rename_map='{
-    "observation.images.front": "observation.images.camera1",
-    "observation.images.top":   "observation.images.camera2"
-  }'   --policy.empty_cameras=1
-
-```
-
 ### Async inference
+
+The following command is for GR00T N1.5 async inference, but it can sure apply on all policy😄
 
 Client:
 ```
@@ -197,20 +211,51 @@ Server:
 python -m lerobot.async_inference.policy_server   --host=0.0.0.0   --port=8080   --fps=30   --inference_latency=0.033   --obs_queue_timeout=1
 ```
 
-#### Task1: GR00T multi-block pick and place task
+#### Model evaluation:
+##### SmolVLA
 
-<img width="979" height="553" alt="image" src="https://github.com/user-attachments/assets/504f5afa-6bcf-4795-b2fc-a5dd405f6d83" />
+Task1: Cube picking task with color-based prompt by SmolVLA
+
+Dataset(100+60=160 episodes):
+
+<img width="1172" height="622" alt="image" src="https://github.com/user-attachments/assets/830ee9d3-c80f-4fae-ba39-c608048c2027" />
+<img width="1162" height="633" alt="image" src="https://github.com/user-attachments/assets/429517a2-f804-4249-8187-27b02f2c51ba" />
+
+Dataset link: https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2FethanCSL%2FStanley_grip_block_2color_resume_30_30%2Fepisode_0
+
+Green cube picking
+```bash
+ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30},
+    camera2: {type: opencv, index_or_path: 9, width: 640, height: 480, fps: 30}
+  }'   --dataset.single_task="Put the green cube in the box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color_resume_30_30_domain_randomization/checkpoints/040000/pretrained_model   --policy.empty_cameras=1 --dataset.reset_time_s=5 --display_data=True
+```
+
+Red cube picking
 
 ```bash
- lerobot-record   --robot.type=koch_follower  --robot.port=/dev/ttyUSB_follower    --robot.id=my_awesome_follower_arm  --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm   --robot.cameras='{ 
-    front: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    top: {"type": "opencv", "index_or_path": 6, "width": 640, "height": 480, "fps": 30},
-  }'   --display_data=true   --dataset.repo_id=ethanCSL/eval_multi_block_picking_new_lerobot_gr00t   --dataset.num_episodes=10   --dataset.single_task="pick up the green block and put into the box" --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/multi_block_picking_new_lerobot_gr00t/checkpoints/020000/pretrained_model
+ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30},
+    camera2: {type: opencv, index_or_path: 9, width: 640, height: 480, fps: 30}
+  }'   --dataset.single_task="Put the red cube in the box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color_resume_30_30_domain_randomization/checkpoints/040000/pretrained_model   --policy.empty_cameras=1 --dataset.reset_time_s=5 --display_data=True
 ```
 
 > **Note**
-> In this testing, the GPU usage for evaluation is still high, 7.4GB of VRAM in this case
->
-> Dataset visualization:
-> 
-> https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2FethanCSL%2Fmulti_block_picking_new_lerobot_gr00t%2Fepisode_0
+> Feel free to change the prompt during evaluation, you can test with several prompts to see the difference😎
+
+Task2: Cube sorting task with only one prompt(SmolVLA-paper alike method)
+
+Dataset(100 episodes):
+
+<img width="1152" height="605" alt="image" src="https://github.com/user-attachments/assets/23c3569d-c4ed-4684-a630-9dbcdd396841" />
+
+Dataset link: https://huggingface.co/spaces/lerobot/visualize_dataset?path=%2FethanCSL%2Fsvla_koch_sorting%2Fepisode_0%3Ft%3D2
+
+Sorting green cube,red cube in right and left box.
+
+```bash
+ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30},
+    camera2: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}
+  }'   --dataset.single_task="put the red cube in the right box,green cube in the left box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=ethanCSL/svla_koch_sorting_n_stacking   --policy.empty_cameras=1 --dataset.reset_time_s=5
+```
