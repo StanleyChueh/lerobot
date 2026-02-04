@@ -481,7 +481,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             recorded_episodes = 0
             while recorded_episodes < cfg.dataset.num_episodes and not events["stop_recording"]:
                 
-                # Add reset in the front to keep same for right,left esc,and t key
+                # Add reset in the front to keep same behaviour for right,left esc,and t key
                 if policy is not None and preprocessor is not None and postprocessor is not None:
                     policy.reset()
                     preprocessor.reset()
