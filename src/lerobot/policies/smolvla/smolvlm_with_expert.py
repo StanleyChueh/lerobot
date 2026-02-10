@@ -195,6 +195,9 @@ class SmolVLMWithExpertModel(nn.Module):
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.get_vlm_model().text_model.get_input_embeddings()(tokens)
 
+    '''
+        Mixed Multi-modal Self-Attention:
+    '''
     def forward_attn_layer(
         self,
         model_layers,
@@ -221,6 +224,7 @@ class SmolVLMWithExpertModel(nn.Module):
             hidden_shape = (*input_shape, -1, layer.self_attn.head_dim)
 
             hidden_states = hidden_states.to(dtype=layer.self_attn.q_proj.weight.dtype)
+
             query_state = layer.self_attn.q_proj(hidden_states).view(hidden_shape)
             key_state = layer.self_attn.k_proj(hidden_states).view(hidden_shape)
             value_state = layer.self_attn.v_proj(hidden_states).view(hidden_shape)
@@ -234,6 +238,7 @@ class SmolVLMWithExpertModel(nn.Module):
         query_states = torch.cat(query_states, dim=1)
         key_states = torch.cat(key_states, dim=1)
         value_states = torch.cat(value_states, dim=1)
+
         seq_len = query_states.shape[1]
         if seq_len < position_ids.shape[1]:
             _position_ids = position_ids[:, :seq_len]
@@ -292,6 +297,10 @@ class SmolVLMWithExpertModel(nn.Module):
             f"Both len(inputs_embeds) == {len(inputs_embeds)} and past_key_values is {past_key_values}"
         )
 
+        # Self attention:Attn(X)
+        # Cross attention:Attn(X,Y) 
+        # X=> VLM,Y=> Action
+        # in cross attention, it has two inputs(X,Y) => len(inputs_embeds) == 2 
         if len(inputs_embeds) == 2 and not past_key_values:
             # Prefix attention
             seq_len = inputs_embeds[0].shape[1]
@@ -401,6 +410,8 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_layers.append(expert_layer)
         return [vlm_layers, expert_layers]
 
+    # forward is to switch self attention and cross attention,and attention_mode will always be set to cross attention
+    # attention_mode is set to cross_attn in configuration_smolvla,and will be used in modeling_smolvla.py
     def forward(
         self,
         attention_mask: torch.Tensor | None = None,
@@ -498,10 +509,12 @@ class SmolVLMWithExpertModel(nn.Module):
                 outputs_embeds.append(None)
         return outputs_embeds, past_key_values
 
+    # help eager_attention_forward 
     def get_attention_interface(self):
         attention_interface = self.eager_attention_forward
         return attention_interface
 
+    # Both self and cross attention will need it to compute attention
     def eager_attention_forward(
         self, attention_mask, batch_size, head_dim, query_states, key_states, value_states
     ):
@@ -539,6 +552,7 @@ class SmolVLMWithExpertModel(nn.Module):
         big_neg = torch.finfo(att_weights.dtype).min  # -2.3819763e38  # See gemma/modules.py
         masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
+        self.last_attn_weights = probs.detach().cpu()
         probs = probs.to(dtype=value_states.dtype)
 
         att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
