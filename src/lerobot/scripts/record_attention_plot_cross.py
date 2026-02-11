@@ -123,12 +123,13 @@ def main():
     parser.add_argument("--prompt", type=str, default="Put the green cube in the box.")
     parser.add_argument("--output_path", type=str, default="attention_video.mp4")
     parser.add_argument("--rename_map", type=str, default='{"observation.images.front": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}')
+    parser.add_argument("--video_backend", type=str, default="pyav")
     args = parser.parse_args()
 
     device = get_safe_torch_device("cuda")
     rename_map = json.loads(args.rename_map)
 
-    dataset = LeRobotDataset(args.repo_id, batch_encoding_size=1)
+    dataset = LeRobotDataset(args.repo_id, batch_encoding_size=1,video_backend=args.video_backend)
     policy_cfg = PreTrainedConfig.from_pretrained(args.ckpt)
     policy = make_policy(policy_cfg, ds_meta=dataset.meta, rename_map=rename_map)
     policy.to(device)
