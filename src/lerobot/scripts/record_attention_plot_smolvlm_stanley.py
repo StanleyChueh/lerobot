@@ -131,41 +131,18 @@ def get_token_indices(processor, prompt, specific_word=None):
         raise ValueError(f"Token '{specific_word}' not found in prompt tokens: {words}")
     return indices
 
-def extract_aggregated_attention(policy, token_indices):
-    """
-    Aggregate self-attention for selected LANGUAGE token indices (from tokenizer output),
-    and slice out image-token attention for front/top cameras.
-
-    Assumptions (match SmolVLA embed_prefix):
-      sequence = [image tokens ...][language tokens][state tokens]
-      (no image special tokens by default; see SmolVLAConfig.add_image_special_tokens)
-    """
+def extract_full_attention(policy):
     attn = getattr(policy.model.vlm_with_expert, "last_attn_weights", None)
     if attn is None:
-        raise RuntimeError("No attention captured. Ensure compute_deterministic_attention() ran successfully.")
+        raise RuntimeError("No attention captured.")
 
-    # [B, Heads, Q, K] -> take batch 0, mean over heads => [Q, K]
-    attn_matrix = attn[0].mean(0)
+    attn_matrix = attn[0].mean(0)  # [Q, K]
 
-    num_img_tokens = getattr(policy.model.vlm_with_expert, "_debug_num_img_tokens", None)
-    num_images = getattr(policy.model.vlm_with_expert, "_debug_num_images", None)
-    if num_img_tokens is None or num_images is None:
-        raise RuntimeError("Missing cached image token metadata. Run compute_deterministic_attention() first.")
+    num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
+    num_images = policy.model.vlm_with_expert._debug_num_images
+    total_img_tokens = num_img_tokens * num_images
 
-    total_img_tokens = int(num_img_tokens) * int(num_images)
-
-    # Shift language token indices into the full prefix sequence indexing
-    corrected_indices = [int(idx) + total_img_tokens for idx in token_indices]
-
-    if len(corrected_indices) == 1:
-        attn_1d = attn_matrix[corrected_indices[0]]
-    else:
-        attn_1d = attn_matrix[corrected_indices].mean(0)
-
-    # Slice image-token keys for the first two images (front, top)
-    heat_front = attn_1d[:num_img_tokens]
-    heat_top = attn_1d[num_img_tokens: 2 * num_img_tokens]
-    return heat_front, heat_top
+    return attn_matrix, total_img_tokens
 
 def process_heatmap(heat_1d, original_image_size=(480, 640), model_input_size=(512, 512)):
     """
@@ -258,9 +235,13 @@ def compute_deterministic_attention(policy, batch, device):
     # State (optional)
     if OBS_STATE in batch:
         state = policy.prepare_state(batch)
+
+        # ====== 強制放大 state（測試用） ======
+        state = state * 1000.0
     else:
         bsize = batch[OBS_LANGUAGE_TOKENS].shape[0]
-        state = torch.zeros((bsize, policy.config.max_state_dim), device=device, dtype=torch.float32)
+        state = torch.zeros((bsize, policy.config.max_state_dim),
+                            device=device, dtype=torch.float32)
 
     # Embed prefix
     prefix_embs, prefix_pad_masks, prefix_att_masks = policy.model.embed_prefix(
@@ -299,6 +280,10 @@ video_writer = None
 print(f"[INFO] Start processing Frames...")
 current_frame = 0
 
+# ===== Create output folder =====
+block_dir = "attn_block_every30"
+os.makedirs(block_dir, exist_ok=True)
+
 for global_idx in range(start_idx, end_idx):
     item = dataset[global_idx]
 
@@ -324,8 +309,97 @@ for global_idx in range(start_idx, end_idx):
     compute_deterministic_attention(policy, observation_batch, device)
 
     # --- ATTENTION EXTRACTION ---
-    heat_front_1d, heat_top_1d = extract_aggregated_attention(policy, target_indices)
-    
+    attn_matrix, total_img_tokens = extract_full_attention(policy)
+
+    # ===== Token boundary calculation =====
+    num_lang_tokens = observation_batch[OBS_LANGUAGE_TOKENS].shape[1]
+
+    if OBS_STATE in observation_batch:
+        num_state_tokens = observation_batch[OBS_STATE].shape[1]
+    else:
+        num_state_tokens = 0
+
+    img_start = 0
+    img_end = total_img_tokens
+
+    lang_start = img_end
+    lang_end = lang_start + num_lang_tokens
+
+    state_start = lang_end
+    state_end = state_start + num_state_tokens
+
+    # ===== Generate block-level attention every 30 frames =====
+    if current_frame % 30 == 0 and num_state_tokens > 0:
+
+        attn_np = attn_matrix.detach().cpu().numpy()
+
+        def block_mean(r0, r1, c0, c1):
+            if r1 <= r0 or c1 <= c0:
+                return 0.0
+            return attn_np[r0:r1, c0:c1].mean()
+
+        block_mat = np.array([
+            [
+                block_mean(img_start, img_end, img_start, img_end),
+                block_mean(img_start, img_end, lang_start, lang_end),
+                block_mean(img_start, img_end, state_start, state_end)
+            ],
+            [
+                block_mean(lang_start, lang_end, img_start, img_end),
+                block_mean(lang_start, lang_end, lang_start, lang_end),
+                block_mean(lang_start, lang_end, state_start, state_end)
+            ],
+            [
+                block_mean(state_start, state_end, img_start, img_end),
+                block_mean(state_start, state_end, lang_start, lang_end),
+                block_mean(state_start, state_end, state_start, state_end)
+            ]
+        ])
+
+        plt.figure(figsize=(6,6))
+        plt.imshow(block_mat, cmap="viridis", vmin=0.0, vmax=0.1)
+        plt.colorbar(label="Attention Weight")
+
+        plt.xticks([0,1,2], ["Key:Image","Key:Language","Key:State"])
+        plt.yticks([0,1,2], ["Query:Image","Query:Language","Query:State"])
+
+        plt.xlabel("Key (What is being attended to)")
+        plt.ylabel("Query (Who is attending)")
+        plt.title(f"Block-Level Self-Attention (Frame {current_frame})")
+
+        plt.tight_layout()
+
+        save_path = os.path.join(block_dir,
+                                f"block_attention_frame_{current_frame}.png")
+        plt.savefig(save_path)
+        plt.close()
+
+        print(f"[INFO] Saved block attention at frame {current_frame}")
+
+    # ===== Print modality interaction statistics =====
+    if num_state_tokens > 0:
+
+        # prompt as query, img and prompt as key,value
+        lang_to_img = attn_matrix[lang_start:lang_end, img_start:img_end]
+        lang_to_state = attn_matrix[lang_start:lang_end, state_start:state_end]
+
+        # state action as query, img or prompt as key,value
+        state_to_img = attn_matrix[state_start:state_end, img_start:img_end] 
+        state_to_lang = attn_matrix[state_start:state_end, lang_start:lang_end]
+
+        # print("Language → Image mean:", lang_to_img.mean().item())
+        # print("Language → State mean:", lang_to_state.mean().item())
+        # print("State → Image mean:", state_to_img.mean().item())
+        # print("State → Language mean:", state_to_lang.mean().item())
+
+    # ===== Slice language→image attention for heatmap =====
+    lang_query = attn_matrix[lang_start:lang_end].mean(0)
+
+    num_img_tokens_single = policy.model.vlm_with_expert._debug_num_img_tokens
+
+    heat_front_1d = lang_query[img_start : img_start + num_img_tokens_single]
+    heat_top_1d = lang_query[img_start + num_img_tokens_single : img_end]
+
     heat_2d_front = process_heatmap(heat_front_1d)
     heat_2d_top = process_heatmap(heat_top_1d)
 

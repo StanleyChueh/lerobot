@@ -1,5 +1,5 @@
 '''
- python src/lerobot/scripts/record_attention_plot_cross.py     --repo_id "ethanCSL/svla_koch_sorting_n_stacking"     --ckpt "ethanCSL/svla_koch_sorting_n_stacking"     --episode 0     --prompt "Put the green cube in the box." --rename_map='{
+ python src/lerobot/scripts/record_attention_plot_cross.py     --repo_id "ethanCSL/svla_koch_sorting_n_stacking"     --ckpt "ethanCSL/svla_koch_sorting_n_stacking"     --episode 0     --prompt "Put the red cube in the right box,the green cube in the left box." --rename_map='{
     "observation.images.front": "observation.images.camera1",
     "observation.images.top":   "observation.images.camera2"
   }' 
