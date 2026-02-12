@@ -19,6 +19,7 @@ from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.factory import make_policy
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
+from lerobot.utils.constants import OBS_LANGUAGE_TOKENS
 
 import matplotlib.pyplot as plt
 
@@ -172,9 +173,6 @@ def main():
             # ---- SAFE prefix split (only Image vs Rest) ----
             num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
 
-            # ---- SAFE prefix split (only Image vs Rest) ----
-            num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
-
             img_start = 0
             img_end = 2 * num_img_tokens
 
@@ -191,27 +189,15 @@ def main():
             print("\n===== Cross Attention (Safe Split) =====")
             print(f"Action → Image : {action_to_img:.6f}")
             print(f"Action → Rest  : {action_to_rest:.6f}")
+
+            num_lang_tokens = batch_pp[OBS_LANGUAGE_TOKENS].shape[1] if OBS_LANGUAGE_TOKENS in batch_pp else 0
+            if num_lang_tokens > 0:
+                lang_start = img_end
+                lang_end = min(lang_start + num_lang_tokens, K)
+                action_to_lang = attn_m[:, lang_start:lang_end].mean().item() if lang_end > lang_start else 0.0
+                print(f"Action → Language: {action_to_lang:.6f}")
+
             print("========================================\n")
-
-            img_start = 0
-            img_end = 2 * num_img_tokens
-
-            lang_start = img_end
-            lang_end = lang_start + num_lang_tokens
-
-            state_start = lang_end
-            state_end = K
-
-            # ---- compute means ----
-            action_to_img = attn_m[:, img_start:img_end].max().item()
-            action_to_lang = attn_m[:, lang_start:lang_end].max().item() if lang_end > lang_start else 0.0
-            action_to_state = 0.0
-
-            print("\n===== Cross Attention Block Mean =====")
-            print(f"Action → Image   : {action_to_img:.6f}")
-            print(f"Action → Language: {action_to_lang:.6f}")
-            print(f"Action → State   : {action_to_state:.6f}")
-            print("======================================\n")
 
             # mean over heads
             attn_m = attn.mean(dim=1)[0]   # [Q, K]
