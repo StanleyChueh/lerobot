@@ -4,6 +4,7 @@ import textwrap
 from PIL import Image
 from transformers import AutoProcessor, AutoModelForImageTextToText
 import numpy as np
+import os 
 
 # Configuration
 IMAGE_PATH = "single_cam_sorting_front.png"
@@ -42,6 +43,17 @@ if frame is None:
 
 with torch.inference_mode():
     resized = cv2.resize(frame, (384, 384))
+    save_dir = "debug_images"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    # 使用 prompt 作為檔名的一部分（移除特殊字元），方便比對
+    safe_prompt = "".join(x for x in prompt_text[:20] if x.isalnum())
+    save_path = os.path.join(save_dir, f"input_{safe_prompt}.png")
+    
+    cv2.imwrite(save_path, resized)
+    print(f"處理後的圖片已儲存至: {save_path}")
+    
     rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
     pil_image = Image.fromarray(rgb)
 

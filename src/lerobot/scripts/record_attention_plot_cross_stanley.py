@@ -1,9 +1,16 @@
 '''
- python src/lerobot/scripts/record_attention_plot_cross_stanley.py     --repo_id "ethanCSL/svla_koch_sorting_n_stacking"     --ckpt "ethanCSL/svla_koch_sorting_n_stacking"     --episode 0     --prompt "Put the red cube in the right box,the green cube in the left box." --rename_map='{                                                      
+Usage:
+python src/lerobot/scripts/record_attention_plot_cross_stanley.py     --repo_id "ethanCSL/svla_koch_sorting_n_stacking"     --ckpt "ethanCSL/svla_koch_sorting_n_stacking"     --episode 0     --prompt "Put the red cube in the right box,the green cube in the left box." --rename_map='{                                                      
     "observation.images.front": "observation.images.camera1",
     "observation.images.top":   "observation.images.camera2"
-  }' 
+}' 
 '''
+
+'''
+Cross attention block in action expert 
+
+'''
+
 import os
 import math
 import json
@@ -21,39 +28,25 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
 from lerobot.utils.constants import OBS_LANGUAGE_TOKENS
 
+# plot tool
 import matplotlib.pyplot as plt
 
-def extract_cross_attention_maps(model):
+def extract_cross_attention_maps(attn_matrix, num_img_tokens, t=0):
+    """
+    attn_matrix: [Q, K] (已經 mean over heads & batch)
+    t: 取哪一個 action query token 的 attention。要跟當下動作同步，通常用 t=0。
+    """
+    Q, K = attn_matrix.shape
+    t = max(0, min(t, Q - 1))  # clamp
 
-    if not hasattr(model, "last_attn_weights") or model.last_attn_weights is None:
-        print("[錯誤] 模型中找不到 last_attn_weights。")
+    attn_1d = attn_matrix[t]   # [K]
+
+    if 2 * num_img_tokens > K:
+        print(f"[錯誤] 2*num_img_tokens={2*num_img_tokens} > K={K}，切分一定錯。")
         return None, None
 
-    # [B, Heads, Query_Len, Key_Len]
-    attn = model.last_attn_weights
-
-    # 1️⃣ 平均所有 head
-    attn_mean_heads = attn.mean(dim=1)   # [B, Q, K]
-
-    # 2️⃣ 取 batch 0
-    attn_mean_heads = attn_mean_heads[0] # [Q, K]
-
-    # 3️⃣ 平均所有 action tokens (Query 維度)
-    mean_action_attn = attn_mean_heads[0]
-    print("Cross K length:", mean_action_attn.shape[0])
-
-    # 4️⃣ 自動取得 image token 數量
-    num_img_tokens = model._debug_num_img_tokens
-
-    heat_cam1_1d = mean_action_attn[:num_img_tokens]
-    heat_cam2_1d = mean_action_attn[num_img_tokens:2*num_img_tokens]
-
-    print("sum cam1 =", float(mean_action_attn[:num_img_tokens].sum()))
-    print("sum cam2 =", float(mean_action_attn[num_img_tokens:2*num_img_tokens].sum()))
-    print("sum rest =", float(mean_action_attn[2*num_img_tokens:].sum()))
-
-    print(f"DEBUG: max={mean_action_attn.max()}, min={mean_action_attn.min()}")
-
+    heat_cam1_1d = attn_1d[:num_img_tokens]
+    heat_cam2_1d = attn_1d[num_img_tokens:2 * num_img_tokens]
     return heat_cam1_1d, heat_cam2_1d
 
 def process_heatmap(heat_1d, original_size=(480, 640)):
@@ -109,6 +102,8 @@ def main():
     policy = make_policy(policy_cfg, ds_meta=dataset.meta, rename_map=rename_map)
     policy.to(device)
     policy.eval()
+
+    # cross attention
     policy.model.vlm_with_expert.attention_mode = "cross_attn"
 
     preprocessor, _ = make_smolvla_pre_post_processors(policy.config, dataset.meta.stats)
@@ -128,6 +123,9 @@ def main():
     video_writer = None
 
     for i in range(start_idx, end_idx):
+        if i % 4 != 0:
+            continue
+
         item = dataset[i]
         observation_batch = {}
         for k, v in item.items():
@@ -143,87 +141,42 @@ def main():
 
         observation_batch["task"] = args.prompt
         batch_pp = preprocessor(observation_batch)
+
+        # ---- Enable cross-attention recording ----
+        model = policy.model.vlm_with_expert
+        model.record_attn = True
+        model.attn_records = {}
+
         with torch.no_grad():
             policy.predict_action_chunk(batch_pp)
-        
-        if hasattr(policy.model.vlm_with_expert, "last_attn_weights"):
-            attn = policy.model.vlm_with_expert.last_attn_weights
-            print("last_attn_weights shape:", attn.shape)
-        
-        # ===== 正確 debug：用 policy.prepare_images 取得 VLM 真正吃的 pixel_values =====
-        images_list, img_masks = policy.prepare_images(batch_pp)   # images_list: list[tensor]，通常每個 camera 一個
-        img_emb0 = policy.model.vlm_with_expert.embed_image(images_list[0])
-        print("DEBUG embed_image(images_list[0]) shape:", img_emb0.shape)  # [B, num_img_tokens, hidden]
-
-        # 將 num_img_tokens 存起來給 extract_cross_attention_maps 用
-        policy.model.vlm_with_expert._debug_num_img_tokens = int(img_emb0.shape[1])
-
-        h1_1d, h2_1d = extract_cross_attention_maps(policy.model.vlm_with_expert)
 
         if hasattr(policy.model.vlm_with_expert, "last_attn_weights"):
-
-            # ===== Block-level Cross Attention Statistics =====
             attn = policy.model.vlm_with_expert.last_attn_weights
+            # print("last_attn_weights shape:", attn.shape)
 
-            # mean over heads
-            attn_m = attn.mean(dim=1)[0]   # [Q, K]
+        model = policy.model.vlm_with_expert
 
-            Q, K = attn_m.shape
+        layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
+        if len(layer_ids) == 0:
+            continue
 
-            # ---- SAFE prefix split (only Image vs Rest) ----
-            num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
+        final_layer = max(layer_ids)
+        attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
+        if len(attn_list) == 0:
+            continue
 
-            img_start = 0
-            img_end = 2 * num_img_tokens
+        attn = attn_list[-1]
 
-            rest_start = img_end
-            rest_end = K
+        attn_matrix = attn.mean(dim=1)[0]   # [Q, K]
 
-            action_to_img = attn_m[:, img_start:img_end].mean().item()
+        t = 0
 
-            if rest_end > rest_start:
-                action_to_rest = attn_m[:, rest_start:rest_end].mean().item()
-            else:
-                action_to_rest = 0.0
+        num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
 
-            print("\n===== Cross Attention (Safe Split) =====")
-            print(f"Action → Image : {action_to_img:.6f}")
-            print(f"Action → Rest  : {action_to_rest:.6f}")
-
-            num_lang_tokens = batch_pp[OBS_LANGUAGE_TOKENS].shape[1] if OBS_LANGUAGE_TOKENS in batch_pp else 0
-            if num_lang_tokens > 0:
-                lang_start = img_end
-                lang_end = min(lang_start + num_lang_tokens, K)
-                action_to_lang = attn_m[:, lang_start:lang_end].mean().item() if lang_end > lang_start else 0.0
-                print(f"Action → Language: {action_to_lang:.6f}")
-
-            print("========================================\n")
-
-            # mean over heads
-            attn_m = attn.mean(dim=1)[0]   # [Q, K]
-
-            plt.figure(figsize=(6,6))
-            plt.imshow(
-                attn_m.detach().cpu().numpy(),
-                cmap="viridis",
-                vmin=0,
-                vmax=attn_m.max().item()
-            )
-
-            plt.colorbar()
-            plt.title("Cross Attention Matrix (Action → Prefix)")
-            plt.xlabel("Key (Image | Language | State)")
-            plt.ylabel("Query (Action tokens)")
-            plt.tight_layout()
-
-            if (i - start_idx) % 30 == 0:
-                save_path = os.path.join(
-                    block_dir,
-                    f"cross_block_frame_{i - start_idx}.png"
-                )
-                plt.savefig(save_path)
-
-            plt.close()
+        h1_1d, h2_1d = extract_cross_attention_maps(
+            attn_matrix,
+            num_img_tokens
+        )
 
         if h1_1d is not None:
             img_front = item["observation.images.front"].permute(1, 2, 0).numpy()

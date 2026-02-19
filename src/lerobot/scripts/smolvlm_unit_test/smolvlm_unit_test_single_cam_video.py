@@ -49,7 +49,7 @@ fps = cap.get(cv2.CAP_PROP_FPS)
 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
 out = cv2.VideoWriter(OUTPUT_VIDEO_PATH, fourcc, fps, (frame_width, frame_height))
 
-frame_interval = 10 #1  # Process every Nth frame
+frame_interval = 1 #1  # Process every Nth frame
 current_frame = 0
 last_text = ""
 
@@ -83,7 +83,7 @@ with torch.inference_mode():
                 return_tensors="pt"
             ).to(DEVICE, dtype=torch.bfloat16)
 
-            generated_ids = model.generate(**inputs, max_new_tokens=30)
+            generated_ids = model.generate(**inputs, max_new_tokens=30,do_sample=False)
             last_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
             print(f"\rAI Says: {last_text}", end=" " * 20)
@@ -98,8 +98,8 @@ with torch.inference_mode():
         font = cv2.FONT_HERSHEY_SIMPLEX
 
         # Change these values:
-        font_scale = 0.8  # Increase for larger text (e.g., 1.0, 1.2), decrease for smaller (e.g., 0.5, 0.6)
-        thickness = 2     # Increase for bolder text (e.g., 3, 4)
+        font_scale = 0.5  # Increase for larger text (e.g., 1.0, 1.2), decrease for smaller (e.g., 0.5, 0.6)
+        thickness = 1     # Increase for bolder text (e.g., 3, 4)
         line_spacing = 35 # Increase for more space between lines if using larger font
 
         for i, line in enumerate(wrapped):

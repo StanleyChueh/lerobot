@@ -73,6 +73,15 @@ class SmolVLMWithExpertModel(nn.Module):
         device: str = "auto",
     ):
         super().__init__()
+
+        # Debug
+        self.record_attn = False
+        self.attn_records = {}  # {(layer_idx, tag): probs}
+        self._attn_record_tag = None
+        self._attn_record_layer_idx = None
+        self._debug_prefix_len = None
+        self._debug_action_len = None
+
         if load_vlm_weights:
             print(f"Loading  {model_id} weights ...")
             self.vlm = AutoModelForImageTextToText.from_pretrained(
@@ -323,6 +332,11 @@ class SmolVLMWithExpertModel(nn.Module):
             query_states = apply_rope(query_state, position_id)
             key_states = apply_rope(key_state, position_id)
 
+            # Debug
+            if getattr(self, "record_attn", False):
+                self._attn_record_tag = "prefix_self"
+                self._attn_record_layer_idx = layer_idx
+
             att_output = attention_interface(
                 prefix_attention_mask, batch_size, head_dim, query_states, key_states, value_states
             )
@@ -346,7 +360,7 @@ class SmolVLMWithExpertModel(nn.Module):
                 # in `transformers`. (molbap)
                 key_states = past_key_values[layer_idx]["key_states"]
                 value_states = past_key_values[layer_idx]["value_states"]
-
+            
         # Expert
         expert_layer = model_layers[1][layer_idx]
         if expert_layer is not None:
@@ -371,6 +385,13 @@ class SmolVLMWithExpertModel(nn.Module):
             expert_value_states = expert_layer.self_attn.v_proj(_value_states).view(
                 *_value_states.shape[:-1], -1, expert_layer.self_attn.head_dim
             )
+
+            # Debug
+            if self.record_attn:
+                self._attn_record_tag = "expert_cross"
+                self._attn_record_layer_idx = layer_idx
+                self._debug_prefix_len = expert_key_states.shape[1]
+                self._debug_action_len = inputs_embeds[1].shape[1]
 
             expert_position_id = (
                 expert_position_id - torch.min(expert_position_id, dim=1, keepdim=True).values
@@ -553,6 +574,19 @@ class SmolVLMWithExpertModel(nn.Module):
         masked_att_weights = torch.where(attention_mask[:, None, :, :], att_weights, big_neg)
         probs = nn.functional.softmax(masked_att_weights, dim=-1)
         self.last_attn_weights = probs.detach().cpu()
+
+        # Debug
+        if self.record_attn:
+            tag = self._attn_record_tag
+            lidx = self._attn_record_layer_idx
+            if tag is not None and lidx is not None:
+                self.attn_records.setdefault((lidx, tag), []).append(
+                    probs.detach().cpu()
+                )
+            
+            self._attn_record_tag = None
+            self._attn_record_layer_idx = None
+                
         probs = probs.to(dtype=value_states.dtype)
 
         att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
