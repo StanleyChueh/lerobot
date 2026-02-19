@@ -24,8 +24,6 @@
         Test your robot with LeRobot!</a></p>
 </h2>
 
-## Model testing
-
 Activate conda env
 ```bash
 cd ~/CSL/lerobot_nn/
@@ -47,6 +45,8 @@ Code version:commit- **6d0d65a** -2025-12-28
 2. Test PI0.5 ⏹️
 
 3. Test XVLA ⏹️
+
+4. Attention heat map visualization with SmolVLA and GR00T N1.5(On going...)
 
 #### SmolVLA
 
@@ -267,4 +267,23 @@ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower 
     camera1: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30}, 
     camera2: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30}
   }'   --dataset.single_task="put the red cube in the right box,green cube in the left box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=ethanCSL/svla_koch_sorting_n_stacking_screw_nut_resume_50   --policy.empty_cameras=1 --dataset.reset_time_s=5
+```
+
+Attention heat map visualization
+
+SmolVLA
+
+Self attention
+
+```
+python src/lerobot/scripts/record_attention_plot_smolvlm_stanley.py     --repo_id "ethanCSL/svla_koch_sorting_n_stacking"          --episode 0     --prompt "Put the red cube in the right box,green cube in the left box." --use_state
+```
+
+Cross attention
+
+```
+python src/lerobot/scripts/record_attention_plot_cross_stanley.py     --repo_id "ethanCSL/svla_koch_sorting_n_stacking"     --ckpt "ethanCSL/svla_koch_sorting_n_stacking"     --episode 0     --prompt "Put the red cube in the right box,the green cube in the left box." --rename_map='{                                                      
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.top":   "observation.images.camera2"
+}' 
 ```
