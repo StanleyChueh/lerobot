@@ -31,22 +31,19 @@ from lerobot.utils.constants import OBS_LANGUAGE_TOKENS
 # plot tool
 import matplotlib.pyplot as plt
 
-def extract_cross_attention_maps(attn_matrix, num_img_tokens, t=0):
-    """
-    attn_matrix: [Q, K] (已經 mean over heads & batch)
-    t: 取哪一個 action query token 的 attention。要跟當下動作同步，通常用 t=0。
-    """
-    Q, K = attn_matrix.shape
-    t = max(0, min(t, Q - 1))  # clamp
+def extract_cross_attention_maps(attn_matrix, num_img_tokens):
+    mean_action_attn = attn_matrix.mean(dim=0)
 
-    attn_1d = attn_matrix[t]   # [K]
+    # print("Cross K length:", mean_action_attn.shape[0])
 
+    K = mean_action_attn.shape[0]
     if 2 * num_img_tokens > K:
         print(f"[錯誤] 2*num_img_tokens={2*num_img_tokens} > K={K}，切分一定錯。")
         return None, None
 
-    heat_cam1_1d = attn_1d[:num_img_tokens]
-    heat_cam2_1d = attn_1d[num_img_tokens:2 * num_img_tokens]
+    heat_cam1_1d = mean_action_attn[:num_img_tokens]
+    heat_cam2_1d = mean_action_attn[num_img_tokens:2*num_img_tokens]
+
     return heat_cam1_1d, heat_cam2_1d
 
 def process_heatmap(heat_1d, original_size=(480, 640)):
@@ -153,6 +150,13 @@ def main():
         if hasattr(policy.model.vlm_with_expert, "last_attn_weights"):
             attn = policy.model.vlm_with_expert.last_attn_weights
             # print("last_attn_weights shape:", attn.shape)
+        
+        images_list, img_masks = policy.prepare_images(batch_pp)   # images_list: list[tensor]，通常每個 camera 一個
+        img_emb0 = policy.model.vlm_with_expert.embed_image(images_list[0])
+        #print("DEBUG embed_image(images_list[0]) shape:", img_emb0.shape)  # [B, num_img_tokens, hidden]
+
+        # 將 num_img_tokens 存起來給 extract_cross_attention_maps 用
+        policy.model.vlm_with_expert._debug_num_img_tokens = int(img_emb0.shape[1])
 
         model = policy.model.vlm_with_expert
 
