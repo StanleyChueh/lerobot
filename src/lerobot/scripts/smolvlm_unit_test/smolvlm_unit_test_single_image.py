@@ -7,7 +7,7 @@ import numpy as np
 import os 
 
 # Configuration
-IMAGE_PATH = "single_cam_sorting_front.png"
+IMAGE_PATH = "single_cam_sorting_top_block_only.png"
 
 MODEL_ID = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -75,7 +75,7 @@ with torch.inference_mode():
         return_tensors="pt"
     ).to(DEVICE, dtype=torch.bfloat16)
 
-    generated_ids = model.generate(**inputs, max_new_tokens=30)
+    generated_ids = model.generate(**inputs, max_new_tokens=50)
     last_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
     print(f"AI Says: {last_text}")
