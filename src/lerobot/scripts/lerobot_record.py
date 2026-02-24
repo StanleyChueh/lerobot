@@ -304,6 +304,46 @@ def record_loop(
         # Get robot observation
         obs = robot.get_observation()
 
+        # 建議使用 dataset.features 的 key 來確保完全匹配
+        top_cam_key = "top" 
+        
+        if top_cam_key in obs:
+            import cv2
+            import numpy as np
+
+            img = obs[top_cam_key] 
+            
+            # 1. 確保轉為 OpenCV 格式 [H, W, C]
+            # 如果 img 是 [3, 480, 640]，轉為 [480, 640, 3]
+            if img.shape[0] == 3:
+                img_hwc = np.transpose(img, (1, 2, 0))
+            else:
+                img_hwc = img # 已經是 HWC 格式
+
+            h, w, c = img_hwc.shape
+
+            # 2. 執行中心裁切 (從 640 寬度中取中間 480)
+            target_size = 480
+            start_x = (w - target_size) // 2
+            end_x = start_x + target_size
+            
+            # 這裡 y 維度保持 0:480，x 維度取 80:560
+            img_cropped = img_hwc[0:target_size, start_x:end_x]
+
+            # 3. Resize 回原本 Dataset 預期的解析度 (640x480)
+            # cv2.resize 接受的格式是 (Width, Height)
+            img_resized_hwc = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
+
+            # 4. 關鍵：轉回 LeRobot 要求的 [C, H, W] 格式
+            # 從 [480, 640, 3] 轉回 [3, 480, 640]
+            img_chw = np.transpose(img_resized_hwc, (1, 2, 0))
+            
+            obs[top_cam_key] = img_chw
+
+            # cv2.imshow("Top Camera View", img_resized_hwc)
+
+            # cv2.waitKey(1)
+
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
 

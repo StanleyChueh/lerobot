@@ -1,7 +1,7 @@
 import cv2
 
 def main():
-    cap = cv2.VideoCapture(5)  # Change to your camera index
+    cap = cv2.VideoCapture(4)  # Change to your camera index
 
     if not cap.isOpened():
         print("Error: Cannot open camera")
