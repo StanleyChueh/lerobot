@@ -88,6 +88,8 @@ from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 # to prevent keyboard/terminal artifacts (e.g. arrow keys, hotkeys)
 # from polluting language prompts passed to the policy.
 import re
+import cv2
+import numpy as np
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 _CONTROL_RE = re.compile(r"[\x00-\x1F\x7F]")
@@ -303,13 +305,13 @@ def record_loop(
 
         # Get robot observation
         obs = robot.get_observation()
+        #print(obs)
 
         # 建議使用 dataset.features 的 key 來確保完全匹配
         top_cam_key = "top" 
+        eval_cam2 = "camera2"
         
         if top_cam_key in obs:
-            import cv2
-            import numpy as np
 
             img = obs[top_cam_key] 
             
@@ -322,27 +324,46 @@ def record_loop(
 
             h, w, c = img_hwc.shape
 
-            # 2. 執行中心裁切 (從 640 寬度中取中間 480)
-            target_size = 480
-            start_x = (w - target_size) // 2
-            end_x = start_x + target_size
-            
-            # 這裡 y 維度保持 0:480，x 維度取 80:560
-            img_cropped = img_hwc[0:target_size, start_x:end_x]
+            # img_hwc[y1:y2, x1:x2]
+            # Plz refer to lerobot_record_pictureXY.py to find y1:y2,x1:x2
+            # Remember to deactivate lerobot,to base env
+            img_cropped = img_hwc[19:217, 285:546]
 
             # 3. Resize 回原本 Dataset 預期的解析度 (640x480)
             # cv2.resize 接受的格式是 (Width, Height)
             img_resized_hwc = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
             # 4. 關鍵：轉回 LeRobot 要求的 [C, H, W] 格式
-            # 從 [480, 640, 3] 轉回 [3, 480, 640]
-            img_chw = np.transpose(img_resized_hwc, (1, 2, 0))
+            img_chw = np.transpose(img_resized_hwc, (0, 1, 2))
             
             obs[top_cam_key] = img_chw
 
-            # cv2.imshow("Top Camera View", img_resized_hwc)
 
-            # cv2.waitKey(1)
+        elif eval_cam2 in obs:
+
+            img = obs[eval_cam2] 
+            
+            # 1. 確保轉為 OpenCV 格式 [H, W, C]
+            # 如果 img 是 [3, 480, 640]，轉為 [480, 640, 3]
+            if img.shape[0] == 3:
+                img_hwc = np.transpose(img, (1, 2, 0))
+            else:
+                img_hwc = img # 已經是 HWC 格式
+
+            h, w, c = img_hwc.shape
+
+            # 這裡 y 維度保持 0:480，x 維度取 80:560
+            img_cropped = img_hwc[19:217, 285:546]
+
+            # 3. Resize 回原本 Dataset 預期的解析度 (640x480)
+            # cv2.resize 接受的格式是 (Width, Height)
+            img_resized_hwc1 = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
+
+            # 4. 關鍵：轉回 LeRobot 要求的 [C, H, W] 格式
+            # 從 [480, 640, 3] 轉回 [3, 480, 640]
+            img_chw1 = np.transpose(img_resized_hwc1, (0, 1, 2))
+
+            obs[eval_cam2] = img_chw1
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
