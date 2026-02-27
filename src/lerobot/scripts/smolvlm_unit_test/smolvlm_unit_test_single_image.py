@@ -7,7 +7,7 @@ import numpy as np
 import os 
 
 # Configuration
-IMAGE_PATH = "single_cam_sorting_top_block_only.png"
+IMAGE_PATH = "single_cam_sorting_top_crop_grasp.png"
 
 MODEL_ID = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
