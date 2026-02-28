@@ -203,7 +203,7 @@ def _build_eagle_processor(tokenizer_assets_repo: str = DEFAULT_TOKENIZER_ASSETS
             "Vendor files are copied during model creation. Create the policy/model first, "
             "or call ensure_eagle_cache_ready() before building processors."
         )
-    proc = AutoProcessor.from_pretrained(str(cache_dir), trust_remote_code=True, use_fast=True)
+    proc = AutoProcessor.from_pretrained(str(cache_dir), trust_remote_code=True, use_fast=True,fix_mistral_regex=True)
     proc.tokenizer.padding_side = "left"
     return proc
 
@@ -284,13 +284,52 @@ class GrootPackInputsStep(ProcessorStep):
 
         # 2) Language (string)
         lang = comp.get(self.language_key)
+
         if isinstance(lang, list):
             lang = lang[0] if len(lang) > 0 else None
+
+        if not lang:
+            # Try reading task_index from transition (frame-level parquet)
+            task_idx = transition.get("task_index", None)
+
+            if task_idx is not None:
+                if isinstance(task_idx, torch.Tensor):
+                    task_idx = int(task_idx.flatten()[0].item())
+                else:
+                    task_idx = int(task_idx)
+
+                # Lazy load mapping once
+                if not hasattr(self, "_task_map"):
+                    import pandas as pd
+                    from pathlib import Path
+
+                    # Infer dataset root from current working directory
+                    # Assumes standard LeRobot structure:
+                    # dataset_root/
+                    #   ├── data/
+                    #   ├── meta/
+                    dataset_root = Path.cwd()
+                    tasks_path = dataset_root / "meta" / "tasks.parquet"
+
+                    if not tasks_path.exists():
+                        # Try one level up (when running inside data/chunk-xxx)
+                        tasks_path = dataset_root.parent.parent / "meta" / "tasks.parquet"
+
+                    df_tasks = pd.read_parquet(tasks_path)
+
+                    mapping = {}
+                    for task_str, row in df_tasks.iterrows():
+                        mapping[int(row["task_index"])] = str(task_str)
+
+                    self._task_map = mapping
+
+                lang = self._task_map.get(task_idx)
+
         if not lang:
             lang = "Perform the task."
-        if self.formalize_language:
-            lang = (lang or "").lower()
-            lang = "".join(ch for ch in lang if ch.isalnum() or ch.isspace())
+
+        comp["task"] = lang
+        print(f"[GrootPackInputsStep] Packed language: {lang}")
         comp["language"] = lang
 
         # 3) State/state_mask -> (B, 1, max_state_dim)
