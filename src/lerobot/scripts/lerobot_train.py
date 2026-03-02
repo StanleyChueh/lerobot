@@ -36,6 +36,7 @@ from lerobot.policies.factory import make_policy, make_pre_post_processors
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.wandb_utils import WandBLogger
 from lerobot.scripts.lerobot_eval import eval_policy_all
+from lerobot.utils.tensorboard_utils import TensorBoardLogger
 from lerobot.utils.import_utils import register_third_party_plugins
 from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
 from lerobot.utils.random_utils import set_seed
@@ -193,6 +194,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         wandb_logger = None
         if is_main_process:
             logging.info(colored("Logs will be saved locally.", "yellow", attrs=["bold"]))
+
+    # Initialize TensorBoard only on main process
+    if cfg.tensorboard.enable and is_main_process:
+        tb_logger = TensorBoardLogger(cfg)
+    else:
+        tb_logger = None
 
     if cfg.seed is not None:
         set_seed(cfg.seed, accelerator=accelerator)
@@ -357,6 +364,11 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     policy.train()
 
+    # Per-task loss accumulators (populated dynamically; keys are task name strings).
+    # These are kept separate from train_metrics so they never interfere with the
+    # total loss calculation.
+    task_loss_meters: dict[str, AverageMeter] = {}
+
     train_metrics = {
         "loss": AverageMeter("loss", ":.3f"),
         "grad_norm": AverageMeter("grdn", ":.3f"),
@@ -406,8 +418,37 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
+        # Accumulate per-task losses every step (no extra forward pass — reuses
+        # losses_after_rm_padding already computed during update_policy).
+        if (
+            is_main_process
+            and output_dict is not None
+            and "losses_after_rm_padding" in output_dict
+            and "task" in batch
+        ):
+            per_sample_losses = output_dict["losses_after_rm_padding"]  # (B, T, D)
+            for task_name in set(batch["task"]):
+                if task_name not in task_loss_meters:
+                    task_loss_meters[task_name] = AverageMeter(f"task_loss/{task_name}", ":.3f")
+                mask = torch.tensor(
+                    [t == task_name for t in batch["task"]],
+                    device=per_sample_losses.device,
+                )
+                task_loss_meters[task_name].update(
+                    per_sample_losses[mask].mean().item(),
+                    n=int(mask.sum().item()),
+                )
+
         if is_log_step:
             logging.info(train_tracker)
+
+            # Read off accumulated per-task averages (mirrors train/loss behaviour).
+            task_loss_dict = {
+                f"task_loss/{name}": m.avg
+                for name, m in task_loss_meters.items()
+                if m.count > 0
+            }
+
             if wandb_logger:
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
@@ -422,8 +463,27 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                             "rabc_num_frames": rabc_stats["num_frames"],
                         }
                     )
+                wandb_log_dict.update(task_loss_dict)
                 wandb_logger.log_dict(wandb_log_dict, step)
+            if tb_logger:
+                tb_log_dict = train_tracker.to_dict()
+                if output_dict:
+                    tb_log_dict.update(output_dict)
+                if rabc_weights is not None:
+                    rabc_stats = rabc_weights.get_stats()
+                    tb_log_dict.update(
+                        {
+                            "rabc_delta_mean": rabc_stats["delta_mean"],
+                            "rabc_delta_std": rabc_stats["delta_std"],
+                            "rabc_num_frames": rabc_stats["num_frames"],
+                        }
+                    )
+                tb_log_dict.update(task_loss_dict)
+                tb_logger.log_dict(tb_log_dict, step)
             train_tracker.reset_averages()
+            # Reset per-task accumulators (same cadence as train_tracker)
+            for m in task_loss_meters.values():
+                m.reset()
 
         if cfg.save_checkpoint and is_saving_step:
             if is_main_process:
@@ -442,6 +502,8 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 update_last_checkpoint(checkpoint_dir)
                 if wandb_logger:
                     wandb_logger.log_policy(checkpoint_dir)
+                if tb_logger:
+                    tb_logger.log_policy(checkpoint_dir)
 
             accelerator.wait_for_everyone()
 
@@ -491,6 +553,10 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
                     wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                if tb_logger:
+                    tb_log_dict = {**eval_tracker.to_dict()}
+                    tb_logger.log_dict(tb_log_dict, step, mode="eval")
+                    tb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
 
             accelerator.wait_for_everyone()
 
@@ -499,6 +565,9 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("End of training")
+
+        if tb_logger:
+            tb_logger.finish()
 
         if cfg.policy.push_to_hub:
             unwrapped_policy = accelerator.unwrap_model(policy)

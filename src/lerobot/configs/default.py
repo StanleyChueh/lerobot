@@ -50,6 +50,14 @@ class WandBConfig:
 
 
 @dataclass
+class TensorBoardConfig:
+    enable: bool = False
+    # Subdirectory under output_dir where TensorBoard event files are written.
+    # Defaults to "tensorboard" so files end up at <output_dir>/tensorboard/.
+    log_dir: str = "tensorboard"
+
+
+@dataclass
 class EvalConfig:
     n_episodes: int = 50
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
