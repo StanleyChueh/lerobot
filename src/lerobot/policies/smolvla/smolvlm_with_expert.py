@@ -455,6 +455,9 @@ class SmolVLMWithExpertModel(nn.Module):
         # RMSNorm
         num_layers = self.num_vlm_layers
         head_dim = self.vlm.config.text_config.head_dim
+
+        self.hidden_per_layer = []
+        
         for layer_idx in range(num_layers):
             if (
                 fill_kv_cache
@@ -520,6 +523,10 @@ class SmolVLMWithExpertModel(nn.Module):
 
             inputs_embeds = outputs_embeds
 
+            self.hidden_per_layer.append(
+                outputs_embeds[0].detach().clone()
+            )
+
         # final norm
         outputs_embeds = []
         for i, hidden_states in enumerate(inputs_embeds):
@@ -528,6 +535,7 @@ class SmolVLMWithExpertModel(nn.Module):
                 outputs_embeds.append(out_emb)
             else:
                 outputs_embeds.append(None)
+        self.last_hidden_states = outputs_embeds
         return outputs_embeds, past_key_values
 
     # help eager_attention_forward 
