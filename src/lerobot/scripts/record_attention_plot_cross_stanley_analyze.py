@@ -33,7 +33,6 @@ import matplotlib.pyplot as plt
 
 def extract_cross_attention_maps(attn_matrix, num_img_tokens):
     mean_action_attn = attn_matrix.mean(dim=0)
-
     # print("Cross K length:", mean_action_attn.shape[0])
 
     K = mean_action_attn.shape[0]
@@ -131,6 +130,16 @@ def main():
     policy.model.vlm_with_expert.attention_mode = "cross_attn"
 
     preprocessor, _ = make_smolvla_pre_post_processors(policy.config, dataset.meta.stats)
+    
+    print("\n" + "="*30)
+    print("Preprocessor 處理順序 (Pipeline Steps):")
+    for i, step in enumerate(preprocessor.steps):
+        print(f"步驟 {i+1}: {type(step).__name__}")
+        # 如果是 Tokenizer 步驟，額外印出參數
+        if "Tokenizer" in type(step).__name__:
+            print(f"   -> Max Length: {step.max_length}")
+            print(f"   -> Padding: {step.padding}")
+    print("="*30 + "\n")
 
     if hasattr(dataset.meta, 'episode_data_index'):
         start_idx = dataset.meta.episode_data_index['from'][args.episode]
@@ -253,6 +262,11 @@ def main():
             plt.figure(figsize=(10, 4))
             plt.plot(mean_attn_values)
             plt.axvline(x=2*num_img_tokens, color='r', linestyle='--', label='Image-Text Split')
+
+            text_start = 2 * num_img_tokens
+            text_end = text_start + real_text_len
+            plt.axvline(x=text_end, color='g', linestyle='--', label='Text-State Split')
+                
             plt.title("Attention Weight Distribution across Tokens")
             plt.xlabel("Token Index")
             plt.ylabel("Mean Attention Value")
@@ -261,17 +275,24 @@ def main():
             print("已儲存 Token 分佈圖至: token_distribution_debug.png")
             print("="*50 + "\n")
 
-
         num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
-        p_cam1, p_cam2, p_text, p_others = analyze_attention_refined(
+
+        # 1. 呼叫函式並接收字典結果
+        attn_results = analyze_attention_refined(
             attn_matrix, 
             num_img_tokens, 
-            real_text_len=int(text_token_len)  # 將這裡的 text_token_len= 改為 real_text_len=
+            real_text_len=int(text_token_len)
         )
 
-        # 印出結果診斷
-        print(f"Frame {i}: Cam1:{p_cam1:.1%} | Cam2:{p_cam2:.1%} | Text:{p_text:.1%} | Others:{p_others:.1%}")
-       
+        # 2. 修改 print 語法，從字典中提取數據
+        print(
+            f"Frame {i}: "
+            f"Vision:{attn_results['Vision']:.1%} | "
+            f"Text:{attn_results['Text']:.1%} | "
+            f"State:{attn_results['State']:.1%} | "
+            f"Padding:{attn_results['Padding']:.1%}"
+        )
+
         h1_1d, h2_1d = extract_cross_attention_maps(
             attn_matrix,
             num_img_tokens

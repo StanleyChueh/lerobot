@@ -523,9 +523,10 @@ class SmolVLMWithExpertModel(nn.Module):
 
             inputs_embeds = outputs_embeds
 
-            self.hidden_per_layer.append(
-                outputs_embeds[0].detach().clone()
-            )
+            if outputs_embeds[0] is not None:
+                self.hidden_per_layer.append(
+                    outputs_embeds[0].detach().clone()
+                )
 
         # final norm
         outputs_embeds = []
