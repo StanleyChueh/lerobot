@@ -305,9 +305,7 @@ def record_loop(
 
         # Get robot observation
         obs = robot.get_observation()
-        #print(obs)
 
-        # 建議使用 dataset.features 的 key 來確保完全匹配
         top_cam_key = "top" 
         eval_cam2 = "camera2"
         
@@ -315,8 +313,6 @@ def record_loop(
 
             img = obs[top_cam_key] 
             
-            # 1. 確保轉為 OpenCV 格式 [H, W, C]
-            # 如果 img 是 [3, 480, 640]，轉為 [480, 640, 3]
             if img.shape[0] == 3:
                 img_hwc = np.transpose(img, (1, 2, 0))
             else:
@@ -329,11 +325,10 @@ def record_loop(
             # Remember to deactivate lerobot,to base env
             img_cropped = img_hwc[19:217, 285:546]
 
-            # 3. Resize 回原本 Dataset 預期的解析度 (640x480)
-            # cv2.resize 接受的格式是 (Width, Height)
+            # 3. Resize to 640x480
             img_resized_hwc = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-            # 4. 關鍵：轉回 LeRobot 要求的 [C, H, W] 格式
+            # 4. Convert to C,H,W format
             img_chw = np.transpose(img_resized_hwc, (0, 1, 2))
             
             obs[top_cam_key] = img_chw
@@ -343,24 +338,19 @@ def record_loop(
 
             img = obs[eval_cam2] 
             
-            # 1. 確保轉為 OpenCV 格式 [H, W, C]
-            # 如果 img 是 [3, 480, 640]，轉為 [480, 640, 3]
             if img.shape[0] == 3:
                 img_hwc = np.transpose(img, (1, 2, 0))
             else:
-                img_hwc = img # 已經是 HWC 格式
+                img_hwc = img 
 
             h, w, c = img_hwc.shape
 
-            # 這裡 y 維度保持 0:480，x 維度取 80:560
+            # x1:x2=19 to 285
+            # y1:y2=217 to 546
             img_cropped = img_hwc[19:217, 285:546]
 
-            # 3. Resize 回原本 Dataset 預期的解析度 (640x480)
-            # cv2.resize 接受的格式是 (Width, Height)
             img_resized_hwc1 = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-            # 4. 關鍵：轉回 LeRobot 要求的 [C, H, W] 格式
-            # 從 [480, 640, 3] 轉回 [3, 480, 640]
             img_chw1 = np.transpose(img_resized_hwc1, (0, 1, 2))
 
             obs[eval_cam2] = img_chw1

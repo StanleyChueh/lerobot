@@ -31,19 +31,27 @@ from lerobot.utils.constants import OBS_LANGUAGE_TOKENS
 # plot tool
 import matplotlib.pyplot as plt
 
-def extract_cross_attention_maps(attn_matrix, num_img_tokens):
+def extract_cross_attention_maps(attn_matrix, num_img_tokens, real_text_len):
     mean_action_attn = attn_matrix.mean(dim=0)
-    # print("Cross K length:", mean_action_attn.shape[0])
+    
+    # 1. 定義有效區間 (Vision + Real Text)
+    vision_end = 2 * num_img_tokens
+    text_end = vision_end + real_text_len
+    
+    # 2. 提取有效部分的權重
+    # 我們只想要視覺部分，但我們要用「視覺+文字」的總合來重新歸一化
+    # 這樣如果文字權重變大，影像 Heatmap 就會變淡；如果文字沒用，影像就會變亮
+    valid_total_attn = mean_action_attn[:text_end].sum() + 1e-8
+    
+    # 3. 提取影像 1d 權重並重新縮放
+    # 這裡的邏輯：排除 Padding 後，影像在「有效資訊」中所佔的真實強度
+    heat_cam1_1d = mean_action_attn[:num_img_tokens] / valid_total_attn
+    heat_cam2_1d = mean_action_attn[num_img_tokens:vision_end] / valid_total_attn
 
-    K = mean_action_attn.shape[0]
-    if 2 * num_img_tokens > K:
-        print(f"[錯誤] 2*num_img_tokens={2*num_img_tokens} > K={K}，切分一定錯。")
-        return None, None
+    text_weights = mean_action_attn[vision_end:text_end].cpu().tolist()
+    print(f"文字 Token 權重分佈: {text_weights}")
 
-    heat_cam1_1d = mean_action_attn[:num_img_tokens]
-    heat_cam2_1d = mean_action_attn[num_img_tokens:2*num_img_tokens]
-
-    return heat_cam1_1d, heat_cam2_1d
+    return heat_cam1_1d, heat_cam2_1d, text_weights
 
 def process_heatmap(heat_1d, original_size=(480, 640)):
 
@@ -74,6 +82,47 @@ def process_heatmap(heat_1d, original_size=(480, 640)):
     heat_norm = np.clip((heat_resized - v_min) / (v_max - v_min + 1e-6), 0, 1)
 
     return heat_norm
+
+def draw_prompt_weights_aligned(img, prompt, weights):
+    h, w, _ = img.shape
+    text_bar_height = 100
+    text_bar = np.ones((text_bar_height, w, 3), dtype=np.uint8) * 255
+    
+    # 1. 計算文字佔用的寬度
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness = 1
+    (text_w, text_h), baseline = cv2.getTextSize(prompt, font, font_scale, thickness)
+    
+    start_x = 20
+    start_y = 40
+    
+    # 2. 繪製文字
+    cv2.putText(text_bar, f"Prompt: {prompt}", (start_x, start_y), 
+                font, font_scale, (50, 50, 50), thickness)
+
+    # 3. 繪製精確對齊的權重條
+    if len(weights) > 0:
+        w_array = np.array(weights)
+        # 歸一化
+        norm_w = (w_array - w_array.min()) / (w_array.max() - w_array.min() + 1e-8)
+        
+        # 我們將權重條的寬度設定為與文字長度一致
+        bar_width = text_w + 100 # 預留一點緩衝
+        bar_y = start_y + 15
+        
+        # 建立一個小型的權重條並放大
+        small_bar = (norm_w.reshape(1, -1) * 255).astype(np.uint8)
+        color_bar = cv2.applyColorMap(cv2.resize(small_bar, (bar_width, 15)), cv2.COLORMAP_JET)
+        
+        # 貼上權重條
+        text_bar[bar_y:bar_y+15, start_x:start_x+bar_width] = color_bar
+        
+        # 標註說明
+        cv2.putText(text_bar, "Low", (start_x, bar_y + 30), font, 0.4, (100, 0, 0), 1)
+        cv2.putText(text_bar, "High", (start_x + bar_width - 30, bar_y + 30), font, 0.4, (0, 0, 100), 1)
+    
+    return np.vstack((img, text_bar))
 
 def analyze_attention_refined(attn_matrix, num_img_tokens, real_text_len):
     mean_attn = attn_matrix.mean(dim=0).float().cpu()
@@ -174,7 +223,6 @@ def main():
 
         observation_batch["task"] = args.prompt
         batch_pp = preprocessor(observation_batch)
-        #print(batch_pp.keys())
         
         # 提取文字 Token 的實際長度 (排除 Padding)
         # SmolVLA 的 input_ids 通常在 batch_pp 中
@@ -293,9 +341,10 @@ def main():
             f"Padding:{attn_results['Padding']:.1%}"
         )
 
-        h1_1d, h2_1d = extract_cross_attention_maps(
+        h1_1d, h2_1d , text_weights_list = extract_cross_attention_maps(
             attn_matrix,
-            num_img_tokens
+            num_img_tokens,
+            real_text_len=int(text_token_len)
         )
 
         if h1_1d is not None:
@@ -316,13 +365,19 @@ def main():
 
             combined = np.hstack((vis_f, vis_t))
 
-            # 初始化 VideoWriter
-            if video_writer is None:
-                height, width, _ = combined.shape
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                video_writer = cv2.VideoWriter(args.output_path, fourcc, 15.0, (width, height))
+            combined_with_text = draw_prompt_weights_aligned(
+                combined, 
+                args.prompt, 
+                text_weights_list
+            )
 
-            video_writer.write(combined)
+            # 3. 寫入影片 (注意高度增加了 80)
+            if video_writer is None:
+                fh, fw, _ = combined_with_text.shape
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                video_writer = cv2.VideoWriter(args.output_path, fourcc, 15.0, (fw, fh))
+
+            video_writer.write(combined_with_text)
             
             if i % 50 == 0:
                 print(f"已處理幀數: {i - start_idx}")
