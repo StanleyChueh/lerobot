@@ -271,6 +271,8 @@ lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower 
 
 Attention heat map visualization
 
+Attention Visualization
+
 SmolVLA
 
 Self attention
@@ -286,4 +288,12 @@ python src/lerobot/scripts/record_attention_plot_cross_stanley.py     --repo_id 
     "observation.images.front": "observation.images.camera1",
     "observation.images.top":   "observation.images.camera2"
 }' 
+```
+
+#### PI0.5
+
+Training(RTX 5090 is not enough!!)
+
+```
+lerobot-train   --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking   --policy.type=pi05   --output_dir=./outputs/train/pi05_koch_sorting_n_stacking   --job_name=pi05_sorting_stacking   --policy.repo_id=ethanCSL/pi05_koch_sorting_n_stacking   --policy.pretrained_path=lerobot/pi05_base   --policy.compile_model=true   --policy.gradient_checkpointing=true   --wandb.enable=true   --policy.dtype=bfloat16   --policy.freeze_vision_encoder=false   --policy.train_expert_only=false   --policy.device=cuda   --batch_size=8   --steps=30000
 ```
