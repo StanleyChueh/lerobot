@@ -441,7 +441,12 @@ class PaliGemmaWithExpertModel(
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
         image_outputs = self.paligemma.model.get_image_features(image)
-        features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+        if hasattr(image_outputs, "pooler_output"):
+            features = image_outputs.pooler_output
+        else:
+            features = image_outputs
+
+        features = features * self.paligemma.config.text_config.hidden_size**0.5
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
