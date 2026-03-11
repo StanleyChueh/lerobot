@@ -48,15 +48,10 @@ def main():
             use_cache=True
         )
 
-    # 5. 分析注意力
-    # 取得生成的 Tokens
-    generated_ids = outputs.sequences[0][inputs.input_ids.shape[-1]:]
-    tokens = [processor.tokenizer.decode(tid) for tid in generated_ids]
-
     last_step_attn = outputs.attentions[-1][-1] # (1, heads, seq_len, seq_len)
     total_seq_len = last_step_attn.shape[-1]
-    
-    # 2. 自動尋找視覺 Token 的範圍
+
+    # 自動尋找視覺 Token 的範圍
     # 在 SmolVLM2 中，視覺 Token 的權重通常顯著大於 Padding 或 Special Tokens
     # 我們取平均注意力圖來尋找非零區域
     full_avg_attn = last_step_attn.mean(dim=1)[0, -1, :] # 取得最後一個 token 對全體的注意力
@@ -70,39 +65,87 @@ def main():
 
     print(f"[*] Debug Info: Total Seq={total_seq_len}, Prompt={prompt_len}, Est Vision={num_vision_tokens}")
 
-    vision_weights = []
-    for i, step_attn in enumerate(outputs.attentions):
-        # 取得當前步驟的最後一層注意力
-        # Shape: (1, heads, 1, current_total_seq)
-        curr_attn = step_attn[-1].mean(dim=1).squeeze()
-        
-        # 修正：嘗試不同的切片範圍
-        # 如果視覺 Token 被放在開頭，使用 [:num_vision_tokens]
-        # 如果有 BOS，則可能是 [1:num_vision_tokens+1]
-        v_sum = curr_attn[:num_vision_tokens].sum().item()
-        
-        # 如果 v_sum 依然是 0，代表視覺 Token 在中間，我們輸出最大權重位置來 Debug
-        if v_sum == 0:
-            max_idx = curr_attn.argmax().item()
-            # 強制捕捉最大權重周圍的區域
-            v_sum = curr_attn[max(0, max_idx-50):max_idx+50].sum().item()
+    print("\n=== Input Token → Vision Attention ===")
 
-        vision_weights.append(v_sum)
+    input_ids = inputs.input_ids[0]
+    input_tokens = processor.tokenizer.convert_ids_to_tokens(input_ids)
+
+    prompt_attn = outputs.attentions[0]  # prompt forward pass
+    last_layer = prompt_attn[-1]         # 最後一層
+
+    # (1, heads, seq, seq)
+    avg_attn = last_layer.mean(dim=1)[0]
+
+    input_vision_weights = []
+
+    for i in range(prompt_len):
+        token_attn = avg_attn[i]
+        v_sum = token_attn[:num_vision_tokens].sum().item()
+        input_vision_weights.append(v_sum)
+
+    for t, w in zip(input_tokens, input_vision_weights):
+        print(f"{t:12s} | attention={w:.4f}")
+
+    print("\n=== Generated Token → Vision Attention ===")
+
+    generated_ids = outputs.sequences[0][inputs.input_ids.shape[-1]:]
+    tokens = processor.tokenizer.convert_ids_to_tokens(generated_ids)
+
+    output_vision_weights = []
+
+    for step_attn in outputs.attentions:
+        # 最後一層
+        last_layer = step_attn[-1]
+
+        # (1, heads, 1, seq)
+        curr_attn = last_layer.mean(dim=1).squeeze()
+
+        v_sum = curr_attn[:num_vision_tokens].sum().item()
+        output_vision_weights.append(v_sum)
+
+    for t, w in zip(tokens, output_vision_weights):
+        print(f"{t:12s} | attention={w:.4f}")
+    
+    all_tokens = processor.tokenizer.convert_ids_to_tokens(outputs.sequences[0])
+
+    print("\n=== Full Token Layout ===")
+    for i, tok in enumerate(all_tokens):
+        print(i, tok)
 
     # 6. 繪圖
-    plt.figure(figsize=(16, 6))
-    plt.plot(vision_weights, marker='o', color='#d62728', linewidth=1.5)
-    
-    clean_tokens = [t.replace(' ', ' ') for t in tokens]
-    plt.xticks(range(len(clean_tokens)), clean_tokens, rotation=70, fontsize=8)
-    plt.ylabel("Visual Attention Weight Sum")
-    plt.title(f"Attention Analysis | Image: {os.path.basename(args.image_path)}")
-    plt.grid(axis='y', linestyle='--', alpha=0.3)
+    plt.figure(figsize=(16,6))
+
+    plt.plot(input_vision_weights, marker='o')
+
+    plt.xticks(
+        range(len(input_tokens)),
+        input_tokens,
+        rotation=70,
+        fontsize=8
+    )
+
+    plt.ylabel("Vision Attention Weight")
+    plt.title("Input Tokens → Vision Attention")
     plt.tight_layout()
-    
-    plt.savefig("smolvlm_attention_final.png")
-    print("[+] Success! Plot saved as smolvlm_attention_final.png")
-    plt.show()
+
+    plt.savefig("input_attention.png")
+
+    plt.figure(figsize=(16,6))
+
+    plt.plot(output_vision_weights, marker='o')
+
+    plt.xticks(
+        range(len(tokens)),
+        tokens,
+        rotation=70,
+        fontsize=8
+    )
+
+    plt.ylabel("Vision Attention Weight")
+    plt.title("Generated Tokens → Vision Attention")
+    plt.tight_layout()
+
+    plt.savefig("output_attention.png")
 
 if __name__ == "__main__":
     main()

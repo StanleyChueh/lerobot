@@ -1,12 +1,43 @@
 '''
-This is the t-SNE visualization script for the SmolVLA attention analysis in the paper.
-(Reference:Don't blind your VLA:https://arxiv.org/pdf/2510.25616)
-It extracts the hidden representations of specific language tokens (e.g. "red", "green") 
-from both the baseline SmolVLM and the fine-tuned SmolVLA, then visualizes how these token representations cluster in 2D space across different layers.
+This is the t-SNE visualization script replicating Figure 5 of "Don't Blind Your VLA".
+(Reference: https://arxiv.org/pdf/2510.25616)
 
-Usage:
-python src/lerobot/scripts/record_attention_plot_smolvlm_smolvla_tsne.py     --repo_id "ethanCSL/svla_koch_sorting_n_stacking"          --episode 0     --prompt "put the red cube in the right box,and green cube in the left box."  --ckpt ethanCSL/svla_koch_sorting_n_stacking --use_state
+Methodology (matching the paper):
+  - Run across MULTIPLE episodes to get diverse visual contexts per token class.
+  - Probe specific object/color tokens (e.g. "red", "green") across all frames.
+  - Each (frame, token) pair becomes one point in t-SNE, colored by token class.
+  - Two rows: SmolVLM base vs SmolVLA fine-tuned — if fine-tuning collapses
+    representations (like OpenVLA), clusters will overlap in SmolVLA row.
 
+Methodology (matching the paper):
+  - Run across MULTIPLE episodes from MULTIPLE tasks to get diverse visual contexts.
+  - Probe specific object/color tokens across all frames; each word is one color class.
+  - Two rows: SmolVLM base vs SmolVLA fine-tuned.
+    Well-separated clusters = preserved grounding (Qwen/Prismatic style).
+    Overlapping clusters    = representation collapse (OpenVLA style).
+
+  IDEAL SETUP (this dataset):
+    Episode   0-99:  sorting task  - "red"=right-box, "green"=left-box
+    Episode 100-199: stacking task - "green" on top of "red"
+    Probing "red"/"green" across BOTH tasks is the strongest test:
+    if grounding is preserved, all "red" tokens cluster together regardless of task.
+
+Usage - multi-task replication (RECOMMENDED):
+python src/lerobot/scripts/record_attention_plot_smolvlm_smolvla_tsne.py \
+    --repo_id "ethanCSL/svla_koch_sorting_n_stacking" \
+    --ckpt    "ethanCSL/svla_koch_sorting_n_stacking_vision_encoder_unfrozen_train_expert_only_false" \
+    --tasks   '[{"episodes": "0,2,4,6,8,10", "prompt": "put the red cube in the right box,and green cube in the left box."}, {"episodes": "100,102,104,106,108,110", "prompt": "put the green cube on top of red cube"}]' \
+    --tokens  "red,green" \
+    --frame_stride 3
+
+Usage - single-task fallback:
+python src/lerobot/scripts/record_attention_plot_smolvlm_smolvla_tsne.py \
+    --repo_id  "ethanCSL/svla_koch_sorting_n_stacking" \
+    --ckpt     "ethanCSL/svla_koch_sorting_n_stacking_vision_encoder_unfrozen_train_expert_only_false" \
+    --episodes "0,1,2,3,4,5" \
+    --prompt   "put the red cube in the right box,and green cube in the left box." \
+    --tokens   "red,green" \
+    --frame_stride 3
 '''
 
 import torch
@@ -31,17 +62,49 @@ from sklearn.manifold import TSNE
 import matplotlib.pyplot as plt
 
 # 1. Initialization & Argument Parsing
-parser = argparse.ArgumentParser(description="Visualize Attention Maps for SmolVLA")
-parser.add_argument("--repo_id", type=str, default="lerobot/svla_so100_pickplace", help="HuggingFace Dataset Repo ID")
-parser.add_argument("--episode", type=int, default=10, help="Episode index to visualize")
-parser.add_argument("--prompt", type=str, default="grip the green block and put it into box", help="Task prompt")
-parser.add_argument("--token", type=str, default=None, help="(Optional) Specific word to visualize.")
-parser.add_argument("--use_state", action="store_true", help="Condition attention on joint states")
+parser = argparse.ArgumentParser(description="Replicate Don't-Blind-Your-VLA t-SNE (Figure 5)")
+parser.add_argument("--repo_id",       type=str, default="lerobot/svla_so100_pickplace")
+# Multi-task mode (RECOMMENDED for paper replication)
+parser.add_argument("--tasks",         type=str, default=None,
+                    help='JSON list: [{"episodes": "0,1,2", "prompt": "..."}, ...]. '
+                         'Each task has its own episodes AND prompt. Overrides --episodes/--prompt.')
+# Single-task fallback
+parser.add_argument("--episodes",      type=str, default="0",
+                    help="Comma-separated episode indices (single-task fallback).")
+parser.add_argument("--prompt",        type=str, default="grip the green block and put it into box",
+                    help="Task prompt (single-task fallback).")
+# Shared
+parser.add_argument("--tokens",        type=str, default="red,green",
+                    help="Comma-separated token words to probe (one color class each in t-SNE).")
+parser.add_argument("--frame_stride",  type=int, default=3,
+                    help="Sample every Nth frame. Lower = more points, slower.")
+parser.add_argument("--use_state",     action="store_true")
 parser.add_argument("--video_backend", type=str, default="pyav")
-parser.add_argument("--ckpt", type=str, default=None,
-                    help="Trained SmolVLA checkpoint repo or path")
+parser.add_argument("--ckpt",          type=str, default=None,
+                    help="Unfrozen SmolVLA checkpoint (train_expert_only=False, freeze_vision_encoder=False).")
 
 args = parser.parse_args()
+
+import json as _json
+
+TOKEN_WORDS = [t.strip() for t in args.tokens.split(",") if t.strip()]
+
+# Build task_configs: list of {"episodes": [int, ...], "prompt": str}
+if args.tasks is not None:
+    task_configs = [
+        {
+            "episodes": [int(e.strip()) for e in tc["episodes"].split(",") if e.strip()],
+            "prompt":   tc["prompt"],
+        }
+        for tc in _json.loads(args.tasks)
+    ]
+else:
+    task_configs = [{
+        "episodes": [int(e.strip()) for e in args.episodes.split(",") if e.strip()],
+        "prompt":   args.prompt,
+    }]
+
+all_task_episode_indices = [ep for tc in task_configs for ep in tc["episodes"]]
 
 DATASET_REPO_ID = args.repo_id
 
@@ -103,29 +166,47 @@ for key in ["observation.images.camera1", "observation.images.camera2",
     vla_policy.config.input_features.pop(key, None)
 vla_policy = vla_policy.to(device)
 vla_policy.reset()
+# Force self_attn for prefix encoding (checkpoint may have been trained with cross_attn;
+# hidden_per_layer is only populated during the VLM self-attention forward pass)
+vla_policy.model.vlm_with_expert.attention_mode = "self_attn"
 vla_policy.model.vlm_with_expert.debug_attn = True
 policies["SmolVLA"] = vla_policy
-policies["SmolVLA_Blind"]       = vla_policy  # same weights — ALL cameras zeroed
-policies["SmolVLA_Blind_Top"]   = vla_policy  # same weights — only TOP camera zeroed
-policies["SmolVLA_Blind_Front"] = vla_policy  # same weights — only FRONT camera zeroed
+# Note: blind variants removed for clean 2-row paper replication (Fig. 5 style).
+# SmolVLM = pre-fine-tune baseline; SmolVLA = post-fine-tune subject.
 
-# 2. Episode Selection
-target_episode_idx = args.episode
-
+# 2. Build episode frame ranges
 total_episodes = len(dataset.meta.episodes)
-if target_episode_idx < 0 or target_episode_idx >= total_episodes:
-    raise ValueError(f"Episode index {target_episode_idx} is out of range")
+for ep_idx in all_task_episode_indices:
+    if ep_idx < 0 or ep_idx >= total_episodes:
+        raise ValueError(f"Episode index {ep_idx} out of range [0, {total_episodes-1}]")
 
-ep_meta = dataset.meta.episodes[target_episode_idx]
-ep_length = ep_meta['length']
+_cum = 0
+_ep_starts = []
+for ep in dataset.meta.episodes:
+    _ep_starts.append(_cum)
+    _cum += ep['length']
 
-start_idx = 0
-for i in range(target_episode_idx):
-    start_idx += dataset.meta.episodes[i]['length']
-end_idx = start_idx + ep_length
+# task_episode_ranges[i] = list of (ep_idx, start, end, prompt) for task i
+task_episode_ranges = []
+for tc in task_configs:
+    ranges = []
+    for ep_idx in tc["episodes"]:
+        s = _ep_starts[ep_idx]
+        e = s + dataset.meta.episodes[ep_idx]['length']
+        ranges.append((ep_idx, s, e, tc["prompt"]))
+    task_episode_ranges.append(ranges)
 
-print(f"\n[INFO] Processing Episode: {target_episode_idx}")
-print(f"       Range: {start_idx} to {end_idx}")
+all_episode_ranges = [r for trs in task_episode_ranges for r in trs]
+total_frames = sum(e - s for _, s, e, _ in all_episode_ranges)
+
+print(f"\n[INFO] Tasks configured: {len(task_configs)}")
+for i, tc in enumerate(task_configs):
+    print(f"  Task {i}: episodes={tc['episodes']}")
+    print(f"           prompt='{tc['prompt']}'")
+print(f"[INFO] Token words: {TOKEN_WORDS}")
+print(f"[INFO] Frame stride: {args.frame_stride}")
+print(f"[INFO] Total frames: {total_frames}  |  ~{total_frames // args.frame_stride} points per token per model")
+print(f"[INFO] Approx points per token per model: {total_frames // args.frame_stride}")
 
 # =========================
 # 3. Helper Functions 
@@ -282,179 +363,189 @@ def compute_deterministic_attention(policy, batch, device):
     return
 
 # =========================
-# 4. Main Loop (FIXED)
+# 4. Main Loop
 # =========================
-
-PROMPT = args.prompt
-print("USING PROMPT:", PROMPT)
 
 processor = policies["SmolVLM"].model.vlm_with_expert.processor
 
-red_idx   = get_token_indices(processor, PROMPT, "red")
-green_idx = get_token_indices(processor, PROMPT, "green")
+# Build per-prompt token index maps (positions differ between prompts)
+def build_token_idx_map(prompt):
+    idx_map = {}
+    for word in TOKEN_WORDS:
+        idxs = get_token_indices(processor, prompt, word)
+        idx_map[word] = idxs[0]
+    return idx_map
 
-print(f"[INFO] Start processing Frames...")
+prompt_token_maps = {}
+for tc in task_configs:
+    p = tc["prompt"]
+    if p not in prompt_token_maps:
+        prompt_token_maps[p] = build_token_idx_map(p)
+        print(f"[INFO] Prompt: '{p}'")
+        for word, pos in prompt_token_maps[p].items():
+            print(f"         token '{word}' -> position {pos}")
+
 LAYER_IDS = [0, 7, 15]
-all_features = {
-    "SmolVLM":           {lid: [] for lid in LAYER_IDS},
-    "SmolVLA":           {lid: [] for lid in LAYER_IDS},
-    "SmolVLA_Blind":     {lid: [] for lid in LAYER_IDS},
-    "SmolVLA_Blind_Top": {lid: [] for lid in LAYER_IDS},
-    "SmolVLA_Blind_Front": {lid: [] for lid in LAYER_IDS},
-}
-all_labels = []
-current_frame = 0
 
-# ===== Create output folder =====
-# Saves next to the script file regardless of where the command is run from.
-block_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "attn_block_every30")
+all_features = {
+    model_name: {lid: [] for lid in LAYER_IDS}
+    for model_name in policies
+}
+all_labels = {model_name: [] for model_name in policies}
+
+block_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "attn_tsne_paper")
 os.makedirs(block_dir, exist_ok=True)
 
 for model_name, policy in policies.items():
+    print(f"\n[INFO] Running {model_name} ({len(all_episode_ranges)} episodes, {len(task_configs)} tasks)...")
+    frame_count = 0
 
-    print(f"\n[INFO] Running {model_name}")
-    current_frame = 0
+    for task_ranges in task_episode_ranges:
+        for ep_idx, ep_start, ep_end, ep_prompt in task_ranges:
+            tok_map = prompt_token_maps[ep_prompt]
+            ep_frame = 0
 
-    for global_idx in range(start_idx, end_idx):
+            for global_idx in range(ep_start, ep_end):
+                if ep_frame % args.frame_stride != 0:
+                    ep_frame += 1
+                    continue
 
-        item = dataset[global_idx]
-        observation_batch = {}
+                item = dataset[global_idx]
+                observation_batch = {}
 
-        for k, v in item.items():
-            if k in ("observation.images.front", "observation.images.top"):
-                if isinstance(v, np.ndarray):
-                    v = torch.from_numpy(v)
-                if model_name == "SmolVLA_Blind":
-                    v = torch.zeros_like(v)          # all cameras zeroed
-                elif model_name == "SmolVLA_Blind_Top" and k == "observation.images.top":
-                    v = torch.zeros_like(v)          # only top camera zeroed
-                elif model_name == "SmolVLA_Blind_Front" and k == "observation.images.front":
-                    v = torch.zeros_like(v)          # only front camera zeroed
-                observation_batch[k] = v.unsqueeze(0).to(device)
+                for k, v in item.items():
+                    if k in ("observation.images.front", "observation.images.top"):
+                        if isinstance(v, np.ndarray):
+                            v = torch.from_numpy(v)
+                        observation_batch[k] = v.unsqueeze(0).to(device)
+                    elif k == "observation.state" and args.use_state:
+                        if isinstance(v, np.ndarray):
+                            v = torch.from_numpy(v)
+                        observation_batch[OBS_STATE] = v.unsqueeze(0).to(device)
 
-            elif k == "observation.state" and args.use_state:
-                if isinstance(v, np.ndarray):
-                    v = torch.from_numpy(v)
-                observation_batch[OBS_STATE] = v.unsqueeze(0).to(device)
+                # Use this episode's specific task prompt
+                observation_batch["task"] = ep_prompt
 
-        observation_batch["task"] = PROMPT
+                compute_deterministic_attention(policy, observation_batch, device)
 
-        compute_deterministic_attention(policy, observation_batch, device)
+                _, total_img_tokens = extract_full_attention(policy)
+                lang_start = total_img_tokens
 
-        attn_matrix, total_img_tokens = extract_full_attention(policy)
+                for layer_id in LAYER_IDS:
+                    hidden = policy.model.vlm_with_expert.hidden_per_layer[layer_id]
+                    for word, tok_pos in tok_map.items():
+                        rep = hidden[0, lang_start + tok_pos, :].detach().float().cpu()
+                        all_features[model_name][layer_id].append(rep)
 
-        img_start = 0
-        img_end = total_img_tokens
-        lang_start = img_end
+                # Label = token word (color class), regardless of which task
+                all_labels[model_name].extend(list(tok_map.keys()))
 
-        # Instead of weighted_pool, do this:
-        for layer_id in LAYER_IDS:
-            hidden = policy.model.vlm_with_expert.hidden_per_layer[layer_id]
-            # Take the hidden state AT the language token position, not a pooled image vector
-            red_rep   = hidden[0, lang_start + red_idx[0],   :].detach().float().cpu()
-            green_rep = hidden[0, lang_start + green_idx[0], :].detach().float().cpu()
+                frame_count += 1
+                ep_frame += 1
 
-            all_features[model_name][layer_id].append(red_rep)
-            all_features[model_name][layer_id].append(green_rep)
+    print(f"[INFO] {model_name}: {frame_count} frames x {len(TOKEN_WORDS)} tokens = {frame_count * len(TOKEN_WORDS)} points per layer")
 
-        # 只在 baseline 加 label 一次
-        if model_name == "SmolVLM":
-            all_labels.extend(["red", "green"])
-
-        current_frame += 1
-
-# ==================================
-# t-SNE visualization (2x3 compare)
-# ==================================
-print("Feature sizes:")
+# ==============================================================
+# t-SNE visualization — Figure 5 style (paper replication)
+# 2 rows (SmolVLM base | SmolVLA fine-tuned) x 3 columns (layers)
+# Color = token class (red/green, or whatever --tokens specifies)
+# ==============================================================
+print("\nFeature sizes:")
 for m in all_features:
     for l in LAYER_IDS:
-        print(m, l, len(all_features[m][l]))
+        print(f"  {m}  layer={l}  points={len(all_features[m][l])}")
 
-# ── Legend patch ──────────────────────────────────────────────────────────────
 import matplotlib.patches as mpatches
+
+# Assign a distinct color to each token word (matches paper's cup/bottle/knife colors)
+_PALETTE = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple", "tab:brown"]
+token_color_map = {word: _PALETTE[i % len(_PALETTE)] for i, word in enumerate(TOKEN_WORDS)}
 legend_handles = [
-    mpatches.Patch(color="red",   label="'red' token"),
-    mpatches.Patch(color="green", label="'green' token"),
+    mpatches.Patch(color=token_color_map[w], label=f"'{w}' token")
+    for w in TOKEN_WORDS
 ]
 
-fig, axes = plt.subplots(5, 3, figsize=(15, 20))
-# Row labels
-row_titles = [
-    "SmolVLM (base, with vision)",
-    "SmolVLA (fine-tuned, with vision)",
-    "SmolVLA Blind (all cameras zeroed)",
-    "SmolVLA Blind Top (top camera zeroed)",
-    "SmolVLA Blind Front (front camera zeroed)",
+ROW_MODELS = ["SmolVLM", "SmolVLA"]
+ROW_LABELS = [
+    "SmolVLM (base, pre-fine-tune)",
+    "SmolVLA (fine-tuned, unfrozen backbone)",
 ]
-for row, title in enumerate(row_titles):
-    axes[row, 0].set_ylabel(title, fontsize=9, labelpad=6)
+
+fig, axes = plt.subplots(len(ROW_MODELS), len(LAYER_IDS), figsize=(5 * len(LAYER_IDS), 4 * len(ROW_MODELS)))
+if len(ROW_MODELS) == 1:
+    axes = axes[np.newaxis, :]  # ensure 2D indexing
+
+for row, model_name in enumerate(ROW_MODELS):
+    axes[row, 0].set_ylabel(ROW_LABELS[row], fontsize=10, labelpad=8)
 
 for col, layer_id in enumerate(LAYER_IDS):
 
-    # Extract features (cast bfloat16 → float32; numpy doesn't support bf16)
-    features_vlm         = torch.stack(all_features["SmolVLM"][layer_id]).float().numpy()
-    features_vla         = torch.stack(all_features["SmolVLA"][layer_id]).float().numpy()
-    features_blind       = torch.stack(all_features["SmolVLA_Blind"][layer_id]).float().numpy()
-    features_blind_top   = torch.stack(all_features["SmolVLA_Blind_Top"][layer_id]).float().numpy()
-    features_blind_front = torch.stack(all_features["SmolVLA_Blind_Front"][layer_id]).float().numpy()
+    # ── Stack features from both models jointly into one t-SNE embedding
+    # so the coordinate spaces are comparable across rows (same as paper)
+    per_model_feats = [
+        torch.stack(all_features[m][layer_id]).float().numpy()
+        for m in ROW_MODELS
+    ]
+    features_all = np.concatenate(per_model_feats, axis=0)
+    labels_all   = []
+    for m in ROW_MODELS:
+        labels_all.extend(all_labels[m])
 
-    # Joint t-SNE space for all five so geometry is comparable across rows
-    features_all = np.concatenate(
-        [features_vlm, features_vla, features_blind, features_blind_top, features_blind_front], axis=0
-    )
+    n_samples  = len(features_all)
+    perplexity = min(30, max(5, n_samples // (len(ROW_MODELS) * len(TOKEN_WORDS)) - 1))
+    print(f"[t-SNE] layer={layer_id}  n={n_samples}  perplexity={perplexity}")
 
-    n_samples = len(features_all)
-    perplexity = min(30, n_samples // 5 - 1)
     tsne = TSNE(
         n_components=2,
         perplexity=perplexity,
-        learning_rate=200,
+        learning_rate="auto",
         init="pca",
-        random_state=42
+        random_state=42,
+        max_iter=1000,
     )
-
     emb_all = tsne.fit_transform(features_all)
 
-    n_vlm         = len(features_vlm)
-    n_vla         = len(features_vla)
-    n_blind       = len(features_blind)
-    n_blind_top   = len(features_blind_top)
-    emb_vlm         = emb_all[:n_vlm]
-    emb_vla         = emb_all[n_vlm : n_vlm + n_vla]
-    emb_blind       = emb_all[n_vlm + n_vla : n_vlm + n_vla + n_blind]
-    emb_blind_top   = emb_all[n_vlm + n_vla + n_blind : n_vlm + n_vla + n_blind + n_blind_top]
-    emb_blind_front = emb_all[n_vlm + n_vla + n_blind + n_blind_top :]
+    # Split back per model
+    offset = 0
+    for row, model_name in enumerate(ROW_MODELS):
+        n = len(per_model_feats[row])
+        emb  = emb_all[offset : offset + n]
+        labs = labels_all[offset : offset + n]
+        offset += n
 
-    colors = ["red", "green"] * (len(features_vlm) // 2)
+        # Scatter each token class separately so colors are correct
+        for word in TOKEN_WORDS:
+            mask = np.array([l == word for l in labs])
+            axes[row, col].scatter(
+                emb[mask, 0], emb[mask, 1],
+                c=token_color_map[word],
+                s=6, alpha=0.7, linewidths=0,
+            )
 
-    # Row 0: SmolVLM — baseline VLM, real images
-    axes[0, col].scatter(emb_vlm[:, 0],         emb_vlm[:, 1],         c=colors, s=8)
-    axes[0, col].set_title(f"SmolVLM — Layer {layer_id + 1}")
-
-    # Row 1: SmolVLA — fine-tuned, real images
-    axes[1, col].scatter(emb_vla[:, 0],         emb_vla[:, 1],         c=colors, s=8)
-    axes[1, col].set_title(f"SmolVLA — Layer {layer_id + 1}")
-
-    # Row 2: SmolVLA Blind — all cameras zeroed
-    axes[2, col].scatter(emb_blind[:, 0],       emb_blind[:, 1],       c=colors, s=8)
-    axes[2, col].set_title(f"SmolVLA Blind (all) — Layer {layer_id + 1}")
-
-    # Row 3: SmolVLA Blind Top — only top camera zeroed
-    axes[3, col].scatter(emb_blind_top[:, 0],   emb_blind_top[:, 1],   c=colors, s=8)
-    axes[3, col].set_title(f"SmolVLA Blind Top — Layer {layer_id + 1}")
-
-    # Row 4: SmolVLA Blind Front — only front camera zeroed
-    axes[4, col].scatter(emb_blind_front[:, 0], emb_blind_front[:, 1], c=colors, s=8)
-    axes[4, col].set_title(f"SmolVLA Blind Front — Layer {layer_id + 1}")
-
-fig.legend(handles=legend_handles, loc="lower center", ncol=2, fontsize=10, bbox_to_anchor=(0.5, -0.02))
+        axes[row, col].set_title(f"{model_name} — Layer {layer_id + 1}", fontsize=10)
+        axes[row, col].set_xticks([])
+        axes[row, col].set_yticks([])
+state_start
+fig.legend(
+    handles=legend_handles,
+    loc="lower center",
+    ncol=len(TOKEN_WORDS),
+    fontsize=11,
+    bbox_to_anchor=(0.5, -0.04),
+)
+task_summary = "  |  ".join(
+    f"Task {i} ep{tc['episodes'][0]}-{tc['episodes'][-1]}: '{tc['prompt'][:35]}...'"
+    for i, tc in enumerate(task_configs)
+)
 plt.suptitle(
-    "t-SNE of language-token representations\n"
-    "Row 0: SmolVLM base  |  Row 1: SmolVLA full vision  |  Row 2: all cameras blind\n"
-    "Row 3: top camera blind  |  Row 4: front camera blind",
-    fontsize=10, y=1.01
+    f"t-SNE of language-token hidden representations\n"
+    f"{task_summary}\n"
+    f"Tokens: {TOKEN_WORDS}  Stride: {args.frame_stride}  "
+    f"| Well-separated = preserved grounding | Overlap = collapse (OpenVLA-style)",
+    fontsize=9, y=1.02,
 )
 plt.tight_layout()
-plt.savefig(os.path.join(block_dir, "tsne_compare_smolvlm_vs_smolvla_blind.png"), bbox_inches="tight")
+out_path = os.path.join(block_dir, "tsne_dontblind_replication.png")
+plt.savefig(out_path, bbox_inches="tight", dpi=150)
+print(f"\n[DONE] Saved to {out_path}")
 plt.show()
