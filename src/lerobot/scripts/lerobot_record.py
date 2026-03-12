@@ -152,6 +152,7 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    attention: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -222,7 +223,9 @@ def record_loop(
     control_time_s: int | None = None,
     task_holder: dict | None = None, 
     display_data: bool = False,
-    listener = None
+    listener = None,
+    show_attention: bool = False,
+    **kwargs
 ):
     if policy:
         print("record loop, policy is not None:")
@@ -363,14 +366,10 @@ def record_loop(
 
         # Get action from either policy or teleop
         if policy is not None and preprocessor is not None and postprocessor is not None:
-            
-            # Check the prompt, to see if there any incorrect char
-            print(
-                "[DEBUG] task repr:",
-                repr(task_holder["text"]),
-                "len:",
-                len(task_holder["text"]),
-            )
+            # --- A. 提前開啟注意力權重記錄 ---
+            model = policy.model.vlm_with_expert if hasattr(policy.model, "vlm_with_expert") else policy.model
+            model.record_attn = True
+            model.attn_records = {} # 清空舊紀錄
 
             action_values = predict_action(
                 observation=observation_frame,
@@ -382,6 +381,62 @@ def record_loop(
                 task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
+
+            if show_attention:
+                import rerun as rr
+                
+                # --- B. 提取 Cross-Attention 權重 ---
+                layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
+                h1_1d, h3_1d = None, None
+                
+                if len(layer_ids) > 0:
+                    final_layer = max(layer_ids)
+                    attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
+                    if len(attn_list) > 0:
+                        attn_matrix = attn_list[-1].mean(dim=1)[0] # [Q, K]
+                        # SmolVLA 預設影像 token 數通常為 81
+                        num_img_tokens = getattr(model, "num_img_tokens", 81) 
+                        # 這裡使用您定義的提取函式
+                        h1_1d, h3_1d = extract_cross_attention_maps(attn_matrix, num_img_tokens)
+
+                # --- C. 對應您的指令攝像頭名稱: camera1 與 camera3 ---
+                # 注意：這裡的 key 必須與 --robot.cameras 裡的名稱完全一致
+                view_configs = [
+                    {"key": "camera1", "heat": h1_1d},
+                    {"key": "camera3", "heat": h3_1d},
+                ]
+
+                for config in view_configs:
+                    cam_key = config["key"]
+                    heat_1d = config["heat"]
+                    
+                    if cam_key in obs:
+                        img_rgb = obs[cam_key]
+                        # 確保是 HWC 格式
+                        if img_rgb.shape[0] == 3:
+                            img_rgb = np.transpose(img_rgb, (1, 2, 0))
+                        
+                        # 確保是 uint8
+                        if img_rgb.dtype != np.uint8:
+                            img_rgb = (img_rgb * 255).astype(np.uint8) if img_rgb.max() <= 1.0 else img_rgb.astype(np.uint8)
+
+                        # 生成熱力圖
+                        h, w = img_rgb.shape[:2]
+                        if heat_1d is not None:
+                            heatmap_2d = process_heatmap(heat_1d, original_size=(h, w))
+                        else:
+                            heatmap_2d = np.zeros((h, w), dtype=np.float32)
+
+                        # 取得 Action 數值並轉成 2D
+                        chunk_np = action_values[0].cpu().numpy() if hasattr(action_values, 'cpu') else action_values[0]
+                        if chunk_np.ndim == 1: 
+                            chunk_np = chunk_np[np.newaxis, :]
+
+                        # 使用您的 draw_overlay 進行疊加並轉成 RGB
+                        display_img_rgb = draw_overlay(img_rgb, heatmap_2d, chunk_np, task_holder["text"])
+
+                        # 推送到 Rerun
+                        rr.log(f"evaluation/{cam_key}", rr.Image(display_img_rgb))
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
@@ -435,7 +490,6 @@ def record_loop(
         precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
-
 
 @parser.wrap()
 def record(cfg: RecordConfig) -> LeRobotDataset:
@@ -552,6 +606,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     postprocessor=postprocessor,
                     dataset=dataset,
                     control_time_s=cfg.dataset.episode_time_s,
+                    show_attention=cfg.attention,
                     task_holder=current_task,
                     display_data=cfg.display_data,
                     listener=listener,
@@ -615,6 +670,75 @@ def main():
     register_third_party_plugins()
     record()
 
+def draw_overlay(image_rgb, attention_map, action_chunk, task_text):
+    """
+    將 Attention 與 Action 數值繪製在影像上，並回傳 RGB 格式
+    """
+    # 將輸入的 RGB 轉為 BGR 供 OpenCV 繪圖
+    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    
+    # 1. Attention 疊加
+    if np.max(attention_map) > 0:
+        heatmap_img = cv2.applyColorMap(np.uint8(255 * attention_map), cv2.COLORMAP_JET)
+        overlay = cv2.addWeighted(image_bgr, 0.7, heatmap_img, 0.3, 0)
+    else:
+        overlay = image_bgr.copy()
+
+    # 2. 繪製半透明背景與文字
+    cv2.rectangle(overlay, (5, 5), (450, 110), (0, 0, 0), -1)
+    overlay = cv2.addWeighted(image_bgr, 0.4, overlay, 0.6, 0)
+
+    y_offset = 30
+    cv2.putText(overlay, f"Task: {task_text}", (10, y_offset), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    if action_chunk.ndim == 1:
+        action_chunk = action_chunk[None, :]
+
+    for i, action in enumerate(action_chunk[:3]): 
+        y_offset += 20
+        try:
+            action_str = ", ".join([f"{v:.2f}" for v in action])
+        except TypeError:
+            action_str = f"{action:.2f}"
+        cv2.putText(overlay, f"Step {i}: [{action_str}]", (10, y_offset), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+    
+    # 轉回 RGB 給 Rerun 顯示
+    return cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+
+def extract_cross_attention_maps(attn_matrix, num_img_tokens):
+    """從注意力矩陣中切分出不同攝像頭的 1D 權重"""
+    mean_action_attn = attn_matrix.mean(dim=0)
+    K = mean_action_attn.shape[0]
+    
+    # 防止索引溢出
+    if 2 * num_img_tokens > K:
+        return None, None
+
+    heat_cam1_1d = mean_action_attn[:num_img_tokens]
+    heat_cam2_1d = mean_action_attn[num_img_tokens:2*num_img_tokens]
+    return heat_cam1_1d, heat_cam2_1d
+
+def process_heatmap(heat_1d, original_size=(480, 640)):
+    """將 1D 權重轉換為 2D 熱力圖並縮放至影像大小"""
+    heat_1d = heat_1d.float().detach().cpu()
+    num_tokens = heat_1d.numel()
+    side = int(math.sqrt(num_tokens))
+    
+    if side * side != num_tokens:
+        for h in range(side, 0, -1):
+            if num_tokens % h == 0:
+                w = num_tokens // h
+                heat_2d = heat_1d.reshape(h, w).numpy()
+                break
+    else:
+        heat_2d = heat_1d.reshape(side, side).numpy()
+
+    heat_resized = cv2.resize(heat_2d, (original_size[1], original_size[0]), interpolation=cv2.INTER_LINEAR)
+    v_min, v_max = np.percentile(heat_resized, [0, 98])
+    heat_norm = np.clip((heat_resized - v_min) / (v_max - v_min + 1e-6), 0, 1)
+    return heat_norm
 
 if __name__ == "__main__":
     main()
