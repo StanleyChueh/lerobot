@@ -1,3 +1,10 @@
+"""
+lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+camera1: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30},
+camera3: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30}
+}'  --dataset.single_task="Put the red cube in the right box, the green cube in the left box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/svla_koch_sorting_n_stacking_screw_nut_crop_top_camera/checkpoints/020000/pretrained_model   --policy.empty_cameras=1 --dataset.reset_time_s=5 --attention=true --display_data=true
+"""
+
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
