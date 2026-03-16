@@ -58,7 +58,7 @@ def log_rerun_data(
         observation: An optional dictionary containing observation data to log.
         action: An optional dictionary containing action data to log.
     """
-    if observation:
+    if observation is not None:
         for k, v in observation.items():
             if v is None:
                 continue
@@ -77,7 +77,7 @@ def log_rerun_data(
                 else:
                     rr.log(key, rr.Image(arr), static=True)
 
-    if action:
+    if action is not None:
         for k, v in action.items():
             if v is None:
                 continue

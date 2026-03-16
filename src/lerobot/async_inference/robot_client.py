@@ -79,6 +79,7 @@ from .helpers import (
     visualize_action_queue_size,
 )
 
+from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 class RobotClient:
     prefix = "robot_client"
@@ -381,6 +382,12 @@ class RobotClient:
         _performed_action = self.robot.send_action(
             self._action_tensor_to_action_dict(timed_action.get_action())
         )
+
+        log_rerun_data(
+            observation=None,
+            action=self._action_tensor_to_action_dict(timed_action.get_action())
+        )
+
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
 
@@ -473,6 +480,9 @@ class RobotClient:
             """Control loop: (2) Streaming observations to the remote policy server"""
             if self._ready_to_send_observation():
                 _captured_observation = self.control_loop_observation(task, verbose)
+            
+            if _captured_observation is not None:
+                log_rerun_data(observation=_captured_observation, action=None)
 
             self.logger.debug(f"Control loop (ms): {(time.perf_counter() - control_loop_start) * 1000:.2f}")
             # Dynamically adjust sleep time to maintain the desired control frequency
@@ -489,6 +499,9 @@ def async_client(cfg: RobotClientConfig):
         raise ValueError(f"Robot {cfg.robot.type} not yet supported!")
 
     client = RobotClient(cfg)
+
+    if cfg.debug_visualize_queue_size:
+        init_rerun(session_name="async_inference")
 
     if client.start():
         client.logger.info("Starting action receiver thread...")
