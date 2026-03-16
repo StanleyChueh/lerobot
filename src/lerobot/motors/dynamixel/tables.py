@@ -139,7 +139,7 @@ MODEL_RESOLUTION = {
 # {model: model_number}
 # https://emanual.robotis.com/docs/en/dxl/x/{MODEL}/#control-table-of-eeprom-area
 MODEL_NUMBER_TABLE = {
-    "xl330-m077": 1190,
+    "xl330-m077": 1200,
     "xl330-m288": 1200,
     "xl430-w250": 1060,
     "xm430-w350": 1020,

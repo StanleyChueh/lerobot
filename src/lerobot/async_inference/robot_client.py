@@ -49,11 +49,15 @@ import torch
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
-from lerobot.robots import (
-    RobotConfig,  # noqa: F401
+from lerobot.robots import (  # noqa: F401
+    Robot,
+    RobotConfig,
+    bi_so_follower,
+    koch_follower,
     make_robot_from_config,
+    omx_follower,
+    so_follower,
 )
-from lerobot.robots.koch_follower import KochFollowerConfig  # noqa: F401
 from lerobot.transport import (
     services_pb2,  # type: ignore
     services_pb2_grpc,  # type: ignore
@@ -280,13 +284,6 @@ class RobotClient:
                 # Deserialize bytes back into list[TimedAction]
                 deserialize_start = time.perf_counter()
                 timed_actions = pickle.loads(actions_chunk.data)  # nosec
-
-                print(f"[DEBUG client] received {len(timed_actions)} actions")
-                if len(timed_actions) > 0:
-                    print(f"[DEBUG client] first timestep={timed_actions[0].get_timestep()}")
-                    print(f"[DEBUG client] first action={timed_actions[0].get_action()}")
-                    print(f"[DEBUG client] first action norm={timed_actions[0].get_action().norm().item():.6f}")
-
                 deserialize_time = time.perf_counter() - deserialize_start
 
                 # Log device type of received actions
@@ -381,11 +378,9 @@ class RobotClient:
             timed_action = self.action_queue.get_nowait()
         get_end = time.perf_counter() - get_start
 
-        action_dict = self._action_tensor_to_action_dict(timed_action.get_action())
-        print(f"[DEBUG robot] sending timestep={timed_action.get_timestep()} action={action_dict}")
-        _performed_action = self.robot.send_action(action_dict)
-        print(f"[DEBUG robot] send_action returned: {_performed_action}")
-
+        _performed_action = self.robot.send_action(
+            self._action_tensor_to_action_dict(timed_action.get_action())
+        )
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
 

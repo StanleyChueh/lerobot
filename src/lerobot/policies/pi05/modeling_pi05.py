@@ -21,11 +21,10 @@ import math
 from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypedDict
-
+from typing_extensions import Unpack
 import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
-from typing_extensions import Unpack
 
 from lerobot.utils.import_utils import _transformers_available
 
@@ -435,18 +434,30 @@ class PaliGemmaWithExpertModel(
         if self.train_expert_only:
             self.paligemma.eval()
 
+    # def embed_image(self, image: torch.Tensor):
+    #     # Vision tower and multi_modal_projector are kept in float32 (params_to_keep_float32).
+    #     out_dtype = image.dtype
+    #     if image.dtype != torch.float32:
+    #         image = image.to(torch.float32)
+    #     image_outputs = self.paligemma.model.get_image_features(image)
+    #     features = image_outputs.pooler_output * self.paligemma.config.text_config.hidden_size**0.5
+    #     if features.dtype != out_dtype:
+    #         features = features.to(out_dtype)
+    #     return features
     def embed_image(self, image: torch.Tensor):
-        # Vision tower and multi_modal_projector are kept in float32 (params_to_keep_float32).
         out_dtype = image.dtype
         if image.dtype != torch.float32:
             image = image.to(torch.float32)
+
         image_outputs = self.paligemma.model.get_image_features(image)
+
         if hasattr(image_outputs, "pooler_output"):
             features = image_outputs.pooler_output
         else:
             features = image_outputs
 
-        features = features * self.paligemma.config.text_config.hidden_size**0.5
+        features = features * (self.paligemma.config.text_config.hidden_size**0.5)
+
         if features.dtype != out_dtype:
             features = features.to(out_dtype)
         return features
