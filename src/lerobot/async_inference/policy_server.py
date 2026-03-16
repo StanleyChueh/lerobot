@@ -61,7 +61,11 @@ from .helpers import (
     observations_similar,
     raw_observation_to_observation,
 )
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
+from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.policies.rtc.configuration_rtc import RTCConfig
 
 class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
     prefix = "policy_server"
@@ -151,7 +155,23 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         policy_class = get_policy_class(self.policy_type)
 
         start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        # self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        policy_class = get_policy_class(self.policy_type)
+
+        if self.policy_type == "pi05":
+            cfg = PI05Config.from_pretrained(policy_specs.pretrained_name_or_path)
+            cfg.device = self.device
+            cfg.rtc_config = RTCConfig(enabled=True)
+
+            self.policy = policy_class.from_pretrained(
+                policy_specs.pretrained_name_or_path,
+                config=cfg,
+            )
+        else:
+            self.policy = policy_class.from_pretrained(
+                policy_specs.pretrained_name_or_path
+            )
+
         self.policy.to(self.device)
 
         # Load preprocessor and postprocessor, overriding device to match requested device
@@ -323,7 +343,13 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
 
     def _get_action_chunk(self, observation: dict[str, torch.Tensor]) -> torch.Tensor:
         """Get an action chunk from the policy. The chunk contains only"""
-        chunk = self.policy.predict_action_chunk(observation)
+        # chunk = self.policy.predict_action_chunk(observation)
+        chunk = self.policy.predict_action_chunk(
+            observation,
+            inference_delay=1,
+            prev_chunk_left_over=None,
+            execution_horizon=10,
+        )
         if chunk.ndim != 3:
             chunk = chunk.unsqueeze(0)  # adding batch dimension, now shape is (B, chunk_size, action_dim)
 
