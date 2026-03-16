@@ -443,20 +443,36 @@ class Eagle25VLImageProcessorFast(BaseImageProcessorFast):
         # Prepare input images
         # transformers >= 4.53.0: uses _prepare_image_like_inputs instead of _prepare_input_images
         if images is not None:
-            images = self._prepare_image_like_inputs(
-                images=images,
-                do_convert_rgb=do_convert_rgb,
-                input_data_format=input_data_format,
-                device=device,
-            )
+            if hasattr(self, "_prepare_image_like_inputs"):
+                images = self._prepare_image_like_inputs(
+                    images=images,
+                    do_convert_rgb=do_convert_rgb,
+                    input_data_format=input_data_format,
+                    device=device,
+                )
+            else:
+                images = self._prepare_input_images(
+                    images=images,
+                    do_convert_rgb=do_convert_rgb,
+                    input_data_format=input_data_format,
+                    device=device,
+                )
 
         if videos is not None:
-            videos = self._prepare_image_like_inputs(
-                images=videos,
-                do_convert_rgb=do_convert_rgb,
-                input_data_format=input_data_format,
-                device=device,
-            )
+            if hasattr(self, "_prepare_image_like_inputs"):
+                videos = self._prepare_image_like_inputs(
+                    images=videos,
+                    do_convert_rgb=do_convert_rgb,
+                    input_data_format=input_data_format,
+                    device=device,
+                )
+            else:
+                videos = self._prepare_input_images(
+                    images=videos,
+                    do_convert_rgb=do_convert_rgb,
+                    input_data_format=input_data_format,
+                    device=device,
+                )
 
         # Update kwargs that need further processing before being validated
         kwargs = self._further_process_kwargs(**kwargs)
