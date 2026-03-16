@@ -33,6 +33,9 @@ python src/lerobot/async_inference/robot_client.py \
 ```
 """
 
+''' Visualization
+RUN  rerun viewer in another terminal to launch re-run
+'''
 import logging
 import pickle  # nosec
 import threading
