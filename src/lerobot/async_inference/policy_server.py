@@ -151,7 +151,29 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
         policy_class = get_policy_class(self.policy_type)
 
         start = time.perf_counter()
-        self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        # self.policy = policy_class.from_pretrained(policy_specs.pretrained_name_or_path)
+        try:
+            self.policy = policy_class.from_pretrained(
+                policy_specs.pretrained_name_or_path
+            )
+        except RuntimeError as e:
+            missing_embed = "_groot_model.backbone.eagle_model.language_model.model.embed_tokens.weight"
+            if (
+                policy_specs.policy_type == "groot"
+                and "Missing key(s) in state_dict" in str(e)
+                and missing_embed in str(e)
+            ):
+                self.logger.warning(
+                    "Falling back to strict=False for GR00T checkpoint because only "
+                    "the tied/shared embed_tokens weight is missing."
+                )
+                self.policy = policy_class.from_pretrained(
+                    policy_specs.pretrained_name_or_path,
+                    strict=False,
+                )
+            else:
+                raise
+                
         self.policy.to(self.device)
 
         # Load preprocessor and postprocessor, overriding device to match requested device
