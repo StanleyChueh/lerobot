@@ -433,6 +433,7 @@ def record_loop(
                 task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
+            
             model = policy.model.vlm_with_expert
             if hasattr(model, "attn_records"):
                 layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]

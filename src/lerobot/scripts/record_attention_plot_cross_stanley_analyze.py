@@ -161,7 +161,7 @@ def main():
     parser.add_argument("--ckpt", type=str, required=True)
     parser.add_argument("--episode", type=int, default=0)
     parser.add_argument("--prompt", type=str, default="Put the green cube in the box.")
-    parser.add_argument("--output_path", type=str, default="attention_video_cross_stanley.mp4")
+    parser.add_argument("--output_path", type=str, default="attention_video_cross_stanley_analyze.mp4")
     parser.add_argument("--rename_map", type=str, default='{"observation.images.front": "observation.images.camera1", "observation.images.top": "observation.images.camera2"}')
     parser.add_argument("--video_backend", type=str, default="pyav")
     args = parser.parse_args()
@@ -235,7 +235,7 @@ def main():
             text_token_len = batch_pp[mask_key].sum().item()
         elif token_key in batch_pp:
             text_token_len = batch_pp[token_key].shape[1]
-
+        
 
         # ---- Enable cross-attention recording ----
         model = policy.model.vlm_with_expert
@@ -259,11 +259,18 @@ def main():
         model = policy.model.vlm_with_expert
 
         layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
+        print("ALL attn keys:", model.attn_records.keys())
+        
+        print("a")
         if len(layer_ids) == 0:
+            print("b")
             continue
-
+        print("c")
         final_layer = max(layer_ids)
         attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
+        print("attn_records:", model.attn_records.keys())
+        print("layer_ids:", layer_ids)
+        print("attn_list len:", len(attn_list))
         if len(attn_list) == 0:
             continue
 
@@ -271,7 +278,6 @@ def main():
 
         attn_matrix = attn.mean(dim=1)[0]   # [Q, K]
         num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
-
         # 插入在 attn_matrix 定義之後
         if i == start_idx:
             print("\n" + "="*50)
