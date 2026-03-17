@@ -277,7 +277,7 @@ class SmolVLMWithExpertModel(nn.Module):
 
         attention_interface = self.get_attention_interface()
 
-        att_output = attention_interface(
+        att_output, _ = attention_interface(
             attention_mask_, batch_size, head_dim, query_states, key_states, value_states
         )
         return [att_output], past_key_values
@@ -324,7 +324,7 @@ class SmolVLMWithExpertModel(nn.Module):
             query_states = apply_rope(query_state, position_id)
             key_states = apply_rope(key_state, position_id)
 
-            att_output = attention_interface(
+            att_output, _ = attention_interface(
                 prefix_attention_mask, batch_size, head_dim, query_states, key_states, value_states
             )
             att_outputs.append(att_output)
@@ -382,7 +382,7 @@ class SmolVLMWithExpertModel(nn.Module):
 
             expert_query_states = apply_rope(expert_query_state, expert_position_id)
 
-            att_output = attention_interface(
+            att_output, expert_probs = attention_interface(
                 expert_attention_mask,
                 batch_size,
                 head_dim,
@@ -390,6 +390,12 @@ class SmolVLMWithExpertModel(nn.Module):
                 expert_key_states,
                 expert_value_states,
             )
+
+            if getattr(self, "record_attn", False):
+                if not hasattr(self, "attn_records"):
+                    self.attn_records = {}
+                self.attn_records.setdefault((layer_idx, "expert_cross"), []).append(expert_probs)
+
             att_outputs.append(att_output)
         else:
             att_outputs.append(None)
@@ -553,12 +559,13 @@ class SmolVLMWithExpertModel(nn.Module):
         if self.debug_attn:
             self.last_attn_weights = probs.detach()
 
+        probs_to_record = probs.detach().cpu()
+
         probs = probs.to(dtype=value_states.dtype)
 
         att_output = torch.matmul(probs, value_states.permute(0, 2, 1, 3))
 
         att_output = att_output.permute(0, 2, 1, 3)
-        # we use -1 because sequence length can change
         att_output = att_output.reshape(batch_size, -1, num_key_value_heads * num_key_value_groups * head_dim)
 
-        return att_output
+        return att_output, probs_to_record

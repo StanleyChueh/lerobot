@@ -161,11 +161,13 @@ def main():
         model = policy.model.vlm_with_expert
 
         layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
+        print(f"目前记录的 cross attention 层: {layer_ids}")
         if len(layer_ids) == 0:
             continue
 
         final_layer = max(layer_ids)
         attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
+        print(f"第 {i} 步，记录的 cross attention 数量: {len(attn_list)}")
         if len(attn_list) == 0:
             continue
 
@@ -176,7 +178,6 @@ def main():
         t = 0
 
         num_img_tokens = policy.model.vlm_with_expert._debug_num_img_tokens
-
         h1_1d, h2_1d = extract_cross_attention_maps(
             attn_matrix,
             num_img_tokens
