@@ -90,6 +90,7 @@ from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 import re
 import cv2
 import numpy as np
+import rerun as rr
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 _CONTROL_RE = re.compile(r"[\x00-\x1F\x7F]")
@@ -199,6 +200,51 @@ class RecordConfig:
                   ( Rerun Log / Loop Wait )
 """
 
+
+def extract_cross_attention_maps(attn_matrix, num_img_tokens):
+    mean_action_attn = attn_matrix.mean(dim=0)
+
+    # print("Cross K length:", mean_action_attn.shape[0])
+
+    K = mean_action_attn.shape[0]
+    if 2 * num_img_tokens > K:
+        print(f"[錯誤] 2*num_img_tokens={2*num_img_tokens} > K={K}，切分一定錯。")
+        return None, None
+
+    heat_cam1_1d = mean_action_attn[:num_img_tokens]
+    heat_cam2_1d = mean_action_attn[num_img_tokens:2*num_img_tokens]
+
+    return heat_cam1_1d, heat_cam2_1d
+
+def process_heatmap(heat_1d, original_size=(480, 640)):
+
+    heat_1d = heat_1d.float().detach().cpu()
+
+    num_tokens = heat_1d.numel()
+
+    # 自動推測 grid 為正方形（最安全）
+    side = int(math.sqrt(num_tokens))
+
+    if side * side != num_tokens:
+        # 如果不是完美平方，找最近可整除排列
+        for h in range(side, 0, -1):
+            if num_tokens % h == 0:
+                w = num_tokens // h
+                heat_2d = heat_1d.reshape(h, w).numpy()
+                break
+    else:
+        heat_2d = heat_1d.reshape(side, side).numpy()
+
+    heat_resized = cv2.resize(
+        heat_2d,
+        (original_size[1], original_size[0]),
+        interpolation=cv2.INTER_LINEAR,
+    )
+
+    v_min, v_max = np.percentile(heat_resized, [0, 98])
+    heat_norm = np.clip((heat_resized - v_min) / (v_max - v_min + 1e-6), 0, 1)
+
+    return heat_norm
 
 @safe_stop_image_writer
 def record_loop(
@@ -371,6 +417,11 @@ def record_loop(
                 "len:",
                 len(task_holder["text"]),
             )
+            model = policy.model.vlm_with_expert
+            model.record_attn = True
+            model.attn_records = {}
+            model.attention_mode = "cross_attn"
+            print("attn_records keys:", model.attn_records.keys())
 
             action_values = predict_action(
                 observation=observation_frame,
@@ -382,6 +433,40 @@ def record_loop(
                 task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
+            model = policy.model.vlm_with_expert
+            if hasattr(model, "attn_records"):
+                layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
+                #print(len(layer_ids))
+                if len(layer_ids) == 0:
+                    final_layer = max(layer_ids)
+                    attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
+                    print(len(attn_list))
+
+                    if len(attn_list) > 0:
+                        print("attention")
+                        attn = attn_list[-1]  # [B, heads, Q, K]
+
+                        attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
+                        num_img_tokens = model._debug_num_img_tokens
+
+                        h1_1d, h2_1d = extract_cross_attention_maps(attn_matrix, num_img_tokens)
+                        img_front = obs_processed["observation.images.camera1"]
+                        img_top   = obs_processed["observation.images.camera2"]
+
+                        img_front = img_front.transpose(1,2,0)
+                        img_top   = img_top.transpose(1,2,0)
+
+                        mask_f = process_heatmap(h1_1d)
+                        mask_t = process_heatmap(h2_1d)
+
+                        heatmap_f = cv2.applyColorMap(np.uint8(255 * mask_f), cv2.COLORMAP_JET)
+                        heatmap_t = cv2.applyColorMap(np.uint8(255 * mask_t), cv2.COLORMAP_JET)
+
+                        vis_f = cv2.addWeighted(img_front, 0.6, heatmap_f, 0.4, 0)
+                        vis_t = cv2.addWeighted(img_top, 0.6, heatmap_t, 0.4, 0)
+
+                        rr.log("attention/cam1", rr.Image(vis_f))
+                        rr.log("attention/cam2", rr.Image(vis_t))
 
             act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
 
@@ -429,6 +514,7 @@ def record_loop(
             dataset.add_frame(frame)
 
         if display_data:
+
             log_rerun_data(observation=obs_processed, action=action_values)
 
         dt_s = time.perf_counter() - start_loop_t
