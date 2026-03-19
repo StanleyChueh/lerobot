@@ -290,6 +290,15 @@ python src/lerobot/scripts/record_attention_plot_cross_stanley.py     --repo_id 
 }' 
 ```
 
+Real-time Attention Visualization
+
+```
+python src/lerobot/scripts/lerobot_record_realtime_stanley.py   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30},
+    camera2: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30}
+  }'   --dataset.single_task="Put the red cube in the right box, the green cube in the left box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=ethanCSL/svla_koch_sorting_only_wrist   --policy.empty_cameras=1 --dataset.reset_time_s=5  --display_data=True
+```
+
 #### PI0.5
 
 Training(RTX 5090 is not enough!!)
