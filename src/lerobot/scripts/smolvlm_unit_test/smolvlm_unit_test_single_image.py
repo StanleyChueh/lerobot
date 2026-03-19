@@ -7,7 +7,7 @@ import numpy as np
 import os 
 
 # Configuration
-IMAGE_PATH = "single_cam_sorting_top_crop_grasp.png"
+IMAGE_PATH = "single_cam_sorting_top_red.png"
 
 MODEL_ID = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -79,6 +79,20 @@ with torch.inference_mode():
     last_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
     print(f"AI Says: {last_text}")
+
+    wrapped = textwrap.wrap(last_text, width=50)
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+
+    # Change these values:
+    font_scale = 0.5  # Increase for larger text (e.g., 1.0, 1.2), decrease for smaller (e.g., 0.5, 0.6)
+    thickness = 1     # Increase for bolder text (e.g., 3, 4)
+    line_spacing = 15 # Increase for more space between lines if using larger font
+
+    for i, line in enumerate(wrapped):
+        y = 40 + i * line_spacing
+        cv2.putText(resized, line, (20, y), font, font_scale, (255, 0, 0), thickness)
+    cv2.imwrite(save_path, resized)
 
     del inputs, generated_ids
     torch.cuda.empty_cache()

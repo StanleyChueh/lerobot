@@ -6,8 +6,8 @@ from transformers import AutoProcessor, AutoModelForImageTextToText
 import numpy as np
 
 # Configuration
-VIDEO_PATH = "single_cam_sorting.mp4"
-OUTPUT_VIDEO_PATH = "output_with_overlay.mp4"
+VIDEO_PATH = "wrist_dataset.mp4"
+OUTPUT_VIDEO_PATH = "wrist_dataset_smolvlm.mp4"
 
 MODEL_ID = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"

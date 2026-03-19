@@ -306,54 +306,54 @@ def record_loop(
         # Get robot observation
         obs = robot.get_observation()
 
-        top_cam_key = "top" 
-        eval_cam2 = "camera2"
+        # top_cam_key = "wrist" 
+        # eval_cam2 = "camera2"
         
-        if top_cam_key in obs:
+        # if top_cam_key in obs:
 
-            img = obs[top_cam_key] 
+        #     img = obs[top_cam_key] 
             
-            if img.shape[0] == 3:
-                img_hwc = np.transpose(img, (1, 2, 0))
-            else:
-                img_hwc = img # 已經是 HWC 格式
+        #     if img.shape[0] == 3:
+        #         img_hwc = np.transpose(img, (1, 2, 0))
+        #     else:
+        #         img_hwc = img # 已經是 HWC 格式
 
-            h, w, c = img_hwc.shape
+        #     h, w, c = img_hwc.shape
 
-            # img_hwc[y1:y2, x1:x2]
-            # Plz refer to lerobot_record_pictureXY.py to find y1:y2,x1:x2
-            # Remember to deactivate lerobot,to base env
-            img_cropped = img_hwc[19:217, 285:546]
+        #     # img_hwc[y1:y2, x1:x2]
+        #     # Plz refer to lerobot_record_pictureXY.py to find y1:y2,x1:x2
+        #     # Remember to deactivate lerobot,to base env
+        #     img_cropped = img_hwc[19:217, 285:546]
 
-            # 3. Resize to 640x480
-            img_resized_hwc = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
+        #     # 3. Resize to 640x480
+        #     img_resized_hwc = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-            # 4. Convert to C,H,W format
-            img_chw = np.transpose(img_resized_hwc, (0, 1, 2))
+        #     # 4. Convert to C,H,W format
+        #     img_chw = np.transpose(img_resized_hwc, (0, 1, 2))
             
-            obs[top_cam_key] = img_chw
+        #     obs[top_cam_key] = img_chw
 
 
-        elif eval_cam2 in obs:
+        # elif eval_cam2 in obs:
 
-            img = obs[eval_cam2] 
+        #     img = obs[eval_cam2] 
             
-            if img.shape[0] == 3:
-                img_hwc = np.transpose(img, (1, 2, 0))
-            else:
-                img_hwc = img 
+        #     if img.shape[0] == 3:
+        #         img_hwc = np.transpose(img, (1, 2, 0))
+        #     else:
+        #         img_hwc = img 
 
-            h, w, c = img_hwc.shape
+        #     h, w, c = img_hwc.shape
 
-            # x1:x2=19 to 285
-            # y1:y2=217 to 546
-            img_cropped = img_hwc[19:217, 285:546]
+        #     # x1:x2=19 to 285
+        #     # y1:y2=217 to 546
+        #     img_cropped = img_hwc[19:217, 285:546]
 
-            img_resized_hwc1 = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
+        #     img_resized_hwc1 = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-            img_chw1 = np.transpose(img_resized_hwc1, (0, 1, 2))
+        #     img_chw1 = np.transpose(img_resized_hwc1, (0, 1, 2))
 
-            obs[eval_cam2] = img_chw1
+        #     obs[eval_cam2] = img_chw1
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
