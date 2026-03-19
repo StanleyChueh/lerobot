@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -91,6 +92,7 @@ import re
 import cv2
 import numpy as np
 import rerun as rr
+import torch
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 _CONTROL_RE = re.compile(r"[\x00-\x1F\x7F]")
@@ -200,40 +202,63 @@ class RecordConfig:
                   ( Rerun Log / Loop Wait )
 """
 
+def extract_cross_attention_maps(attn_matrix, num_img_tokens, num_cameras=2):
+    if attn_matrix is None:
+        logging.warning("attn_matrix is None, skip attention visualization.")
+        return []
 
-def extract_cross_attention_maps(attn_matrix, num_img_tokens):
+    if num_img_tokens is None:
+        logging.warning("num_img_tokens is None, skip attention visualization.")
+        return []
+
+    if num_img_tokens <= 0:
+        logging.warning("num_img_tokens=%s is invalid, skip attention visualization.", num_img_tokens)
+        return []
+
     mean_action_attn = attn_matrix.mean(dim=0)
+    total_key_tokens = mean_action_attn.shape[0]
+    expected_tokens = num_cameras * num_img_tokens
 
-    # print("Cross K length:", mean_action_attn.shape[0])
+    if expected_tokens > total_key_tokens:
+        logging.warning(
+            "Cannot split cross attention: expected %s image tokens (%s cameras x %s tokens) but only %s keys are available.",
+            expected_tokens,
+            num_cameras,
+            num_img_tokens,
+            total_key_tokens,
+        )
+        return []
 
-    K = mean_action_attn.shape[0]
-    if 2 * num_img_tokens > K:
-        print(f"[錯誤] 2*num_img_tokens={2*num_img_tokens} > K={K}，切分一定錯。")
-        return None, None
+    return [
+        mean_action_attn[i * num_img_tokens : (i + 1) * num_img_tokens]
+        for i in range(num_cameras)
+    ]
 
-    heat_cam1_1d = mean_action_attn[:num_img_tokens]
-    heat_cam2_1d = mean_action_attn[num_img_tokens:2*num_img_tokens]
-
-    return heat_cam1_1d, heat_cam2_1d
 
 def process_heatmap(heat_1d, original_size=(480, 640)):
+    if heat_1d is None:
+        return None
 
     heat_1d = heat_1d.float().detach().cpu()
-
     num_tokens = heat_1d.numel()
+    if num_tokens == 0:
+        return None
 
-    # 自動推測 grid 為正方形（最安全）
     side = int(math.sqrt(num_tokens))
+    heat_2d = None
 
-    if side * side != num_tokens:
-        # 如果不是完美平方，找最近可整除排列
+    if side * side == num_tokens:
+        heat_2d = heat_1d.reshape(side, side).numpy()
+    else:
         for h in range(side, 0, -1):
             if num_tokens % h == 0:
                 w = num_tokens // h
                 heat_2d = heat_1d.reshape(h, w).numpy()
                 break
-    else:
-        heat_2d = heat_1d.reshape(side, side).numpy()
+
+    if heat_2d is None:
+        logging.warning("Unable to reshape %s attention tokens into a 2D heatmap.", num_tokens)
+        return None
 
     heat_resized = cv2.resize(
         heat_2d,
@@ -243,8 +268,43 @@ def process_heatmap(heat_1d, original_size=(480, 640)):
 
     v_min, v_max = np.percentile(heat_resized, [0, 98])
     heat_norm = np.clip((heat_resized - v_min) / (v_max - v_min + 1e-6), 0, 1)
-
     return heat_norm
+
+
+def to_hwc_uint8(img):
+    if hasattr(img, "detach"):
+        img = img.detach().cpu().numpy()
+
+    img = np.asarray(img)
+    if img.ndim != 3:
+        raise ValueError(f"Expected 3D image tensor/array, got shape {img.shape}")
+
+    if img.shape[0] in (1, 3) and img.shape[-1] not in (1, 3):
+        img = np.transpose(img, (1, 2, 0))
+
+    if img.dtype != np.uint8:
+        img = np.clip(img, 0, 255)
+        if img.max() <= 1.0:
+            img = img * 255.0
+        img = img.astype(np.uint8)
+
+    return np.ascontiguousarray(img)
+
+
+def get_policy_image_keys(policy, obs_processed):
+    config_image_features = getattr(policy.config, "image_features", None)
+    if isinstance(config_image_features, dict):
+        configured_keys = list(config_image_features.keys())
+    elif config_image_features is not None:
+        configured_keys = list(config_image_features)
+    else:
+        configured_keys = []
+
+    image_keys = [key for key in configured_keys if key in obs_processed]
+    if image_keys:
+        return image_keys
+
+    return sorted(key for key in obs_processed if key.startswith("observation.images."))
 
 @safe_stop_image_writer
 def record_loop(
@@ -375,7 +435,7 @@ def record_loop(
             img_resized_hwc = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
             # 4. Convert to C,H,W format
-            img_chw = np.transpose(img_resized_hwc, (0, 1, 2))
+            img_chw = np.transpose(img_resized_hwc, (2, 0, 1))
             
             obs[top_cam_key] = img_chw
 
@@ -397,7 +457,7 @@ def record_loop(
 
             img_resized_hwc1 = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-            img_chw1 = np.transpose(img_resized_hwc1, (0, 1, 2))
+            img_chw1 = np.transpose(img_resized_hwc1, (2, 0, 1))
 
             obs[eval_cam2] = img_chw1
 
@@ -419,9 +479,17 @@ def record_loop(
             )
             model = policy.model.vlm_with_expert
             model.record_attn = True
-            model.attn_records = {}
+            model.debug_attn = True
             model.attention_mode = "cross_attn"
-            print("attn_records keys:", model.attn_records.keys())
+
+            if not hasattr(model, "attn_records") or model.attn_records is None:
+                model.attn_records = {}
+            if not hasattr(model, "_last_vis_attn"):
+                model._last_vis_attn = None
+            if not hasattr(model, "_last_vis_num_img_tokens"):
+                model._last_vis_num_img_tokens = None
+
+            print("attn_records keys before predict:", model.attn_records.keys())
 
             action_values = predict_action(
                 observation=observation_frame,
@@ -435,41 +503,90 @@ def record_loop(
             )
 
             model = policy.model.vlm_with_expert
-            if hasattr(model, "attn_records"):
+            if display_data and hasattr(model, "attn_records"):
                 layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
-                print(len(layer_ids))
+                print("cross-attn layer count after predict:", len(layer_ids))
+
+                attn = None
+                num_img_tokens = getattr(model, "_debug_num_img_tokens", None)
+
                 if len(layer_ids) > 0:
                     final_layer = max(layer_ids)
                     attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
-                    print(len(attn_list))
+                    print("final layer attn records:", len(attn_list))
 
                     if len(attn_list) > 0:
-                        print("attention")
                         attn = attn_list[-1]  # [B, heads, Q, K]
+                        model._last_vis_attn = attn
+                        if num_img_tokens is not None:
+                            model._last_vis_num_img_tokens = num_img_tokens
 
-                        attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
-                        num_img_tokens = model._debug_num_img_tokens
+                model.attn_records = {}
 
-                        h1_1d, h2_1d = extract_cross_attention_maps(attn_matrix, num_img_tokens)
-                        img_front = obs_processed["observation.images.camera1"]
-                        img_top   = obs_processed["observation.images.camera2"]
+                if attn is None:
+                    attn = getattr(model, "_last_vis_attn", None)
+                    num_img_tokens = getattr(model, "_last_vis_num_img_tokens", None)
+                    if attn is None:
+                        print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
+                    else:
+                        print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
 
-                        img_front = img_front.transpose(1,2,0)
-                        img_top   = img_top.transpose(1,2,0)
+        if attn is not None:
+            print("attention")
+            image_obs_keys = get_policy_image_keys(policy, observation_frame)
 
-                        mask_f = process_heatmap(h1_1d)
-                        mask_t = process_heatmap(h2_1d)
+            if num_img_tokens is None:
+                try:
+                    device = get_safe_torch_device(policy.config.device)
+                    image_batch = {}
+                    for image_key in image_obs_keys:
+                        x = torch.as_tensor(observation_frame[image_key], device=device)
+                        if x.ndim == 3:
+                            x = x.unsqueeze(0)
+                        image_batch[image_key] = x
 
-                        heatmap_f = cv2.applyColorMap(np.uint8(255 * mask_f), cv2.COLORMAP_JET)
-                        heatmap_t = cv2.applyColorMap(np.uint8(255 * mask_t), cv2.COLORMAP_JET)
+                    images_list, _ = policy.prepare_images(image_batch)
+                    img_emb0 = policy.model.vlm_with_expert.embed_image(images_list[0])
+                    num_img_tokens = int(img_emb0.shape[1])
 
-                        vis_f = cv2.addWeighted(img_front, 0.6, heatmap_f, 0.4, 0)
-                        vis_t = cv2.addWeighted(img_top, 0.6, heatmap_t, 0.4, 0)
+                    model._debug_num_img_tokens = num_img_tokens
+                    model._last_vis_num_img_tokens = num_img_tokens
+                    print("[DEBUG] recovered num_img_tokens:", num_img_tokens)
+                except Exception as e:
+                    print("[DEBUG] failed to recover num_img_tokens:", repr(e))
 
-                        rr.log("attention/cam1", rr.Image(vis_f))
-                        rr.log("attention/cam2", rr.Image(vis_t))
+            attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
+            num_cameras = min(2, len(image_obs_keys))
+            heat_1d_list = extract_cross_attention_maps(
+                attn_matrix,
+                num_img_tokens,
+                num_cameras=num_cameras,
+            )
 
-            act_processed_policy: RobotAction = make_robot_action(action_values, dataset.features)
+            print("[DEBUG] image_obs_keys:", image_obs_keys)
+            print("[DEBUG] num_img_tokens:", num_img_tokens)
+            print("[DEBUG] len(heat_1d_list):", len(heat_1d_list))
+
+            if len(heat_1d_list) == 0:
+                print("[DEBUG] no heatmap slices generated, so rr.log(attention/...) was not called")
+
+            for cam_idx, (image_key, heat_1d) in enumerate(
+                zip(image_obs_keys[:num_cameras], heat_1d_list),
+                start=1,
+            ):
+                img_hwc = to_hwc_uint8(observation_frame[image_key])
+                mask = process_heatmap(heat_1d, original_size=img_hwc.shape[:2])
+                if mask is None:
+                    print(f"[DEBUG] mask is None for {image_key}, skip rr.log")
+                    continue
+
+                heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
+                vis = cv2.addWeighted(img_hwc, 0.6, heatmap, 0.4, 0)
+                rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
+                print(f"[DEBUG] logged attention/cam{cam_idx}")
+
+            feature_spec = dataset.features if dataset is not None else robot.action_features
+            act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)
 
         # always enter this loop in recording,and only enter it when resetting(left key is pressed) in eval.
         elif policy is None and isinstance(teleop, Teleoperator):
