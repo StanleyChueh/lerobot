@@ -83,9 +83,9 @@ Train
 If dataset has only two cameras, set one to empty, and remap to fit the format of smolvla_base in dev branch
 
 ```
- lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/Stanley_grip_block_2color   --batch_size=16   --steps=20000   --output_dir=outputs/train/Stanley_grip_block_2color   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/Stanley_grip_block_2color   --wandb.enable=true   --rename_map='{
+lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking_wrist_camera   --batch_size=16   --steps=40000   --output_dir=outputs/train/svla_koch_sorting_n_stacking_wrist_camera   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_koch_sorting_n_stacking_wrist_camera   --wandb.enable=false  --rename_map='{                                              
     "observation.images.front": "observation.images.camera1",
-    "observation.images.top":   "observation.images.camera2"
+    "observation.images.wrist":   "observation.images.camera2"
   }'   --policy.empty_cameras=1 --dataset.video_backend=pyav
 ```
 
