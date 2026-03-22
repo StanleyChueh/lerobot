@@ -277,9 +277,17 @@ class SmolVLMWithExpertModel(nn.Module):
 
         attention_interface = self.get_attention_interface()
 
-        att_output, _ = attention_interface(
+        # 1. Capture the probabilities instead of throwing them away with '_'
+        att_output, probs_to_record = attention_interface(
             attention_mask_, batch_size, head_dim, query_states, key_states, value_states
         )
+        
+        # 2. Save them to the attn_records dictionary under the key 'vlm_self'
+        if getattr(self, "record_attn", False):
+            if not hasattr(self, "attn_records"):
+                self.attn_records = {}
+            self.attn_records.setdefault((layer_idx, "vlm_self"), []).append(probs_to_record)
+
         return [att_output], past_key_values
 
     def forward_cross_attn_layer(
