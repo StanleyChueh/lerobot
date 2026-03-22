@@ -14,6 +14,8 @@
 
 """
 Example command:
+
+Remote device(server)
 ```shell
  python -m lerobot.async_inference.robot_client \
   --robot.type=koch_follower \
@@ -22,6 +24,24 @@ Example command:
   --robot.cameras="{ front: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30} }" \
   --task="Put the red cube in the right box,and green cube in the left box." \
   --server_address=10.100.4.125:8080 \
+  --policy_type=groot \
+  --pretrained_name_or_path=ethanCSL/gr00t_koch_sorting_only_wrist \
+  --policy_device=cuda \
+  --client_device=cuda \
+  --actions_per_chunk=50 \
+  --debug_visualize_queue_size=True
+
+```
+
+Local device(server)
+```shell
+ python -m lerobot.async_inference.robot_client \
+  --robot.type=koch_follower \
+  --robot.id=my_awesome_follower_arm \
+  --robot.port=/dev/ttyUSB_follower \
+  --robot.cameras="{ front: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30}, wrist: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30} }" \
+  --task="Put the red cube in the right box,and green cube in the left box." \
+  --server_address=127.0.0.1:8080 \
   --policy_type=groot \
   --pretrained_name_or_path=ethanCSL/gr00t_koch_sorting_only_wrist \
   --policy_device=cuda \

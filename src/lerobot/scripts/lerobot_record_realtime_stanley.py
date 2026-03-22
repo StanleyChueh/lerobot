@@ -202,38 +202,41 @@ class RecordConfig:
                   ( Rerun Log / Loop Wait )
 """
 
-def extract_cross_attention_maps(attn_matrix, num_img_tokens, num_cameras=2):
+def extract_cross_attention_maps(attn_matrix, num_img_tokens, num_cameras=2, add_image_special_tokens=True):
     if attn_matrix is None:
         logging.warning("attn_matrix is None, skip attention visualization.")
         return []
 
-    if num_img_tokens is None:
-        logging.warning("num_img_tokens is None, skip attention visualization.")
-        return []
-
-    if num_img_tokens <= 0:
+    if num_img_tokens is None or num_img_tokens <= 0:
         logging.warning("num_img_tokens=%s is invalid, skip attention visualization.", num_img_tokens)
         return []
 
     mean_action_attn = attn_matrix.mean(dim=0)
     total_key_tokens = mean_action_attn.shape[0]
-    expected_tokens = num_cameras * num_img_tokens
+    
+    # SmolVLA prepends 2 start tokens and appends 1 end token per image
+    start_tokens = 2 if add_image_special_tokens else 0
+    end_tokens = 1 if add_image_special_tokens else 0
+    tokens_per_block = start_tokens + num_img_tokens + end_tokens
+
+    expected_tokens = num_cameras * tokens_per_block
 
     if expected_tokens > total_key_tokens:
         logging.warning(
-            "Cannot split cross attention: expected %s image tokens (%s cameras x %s tokens) but only %s keys are available.",
+            "Cannot split cross attention: expected %s total image tokens but only %s keys are available.",
             expected_tokens,
-            num_cameras,
-            num_img_tokens,
             total_key_tokens,
         )
         return []
 
-    return [
-        mean_action_attn[i * num_img_tokens : (i + 1) * num_img_tokens]
-        for i in range(num_cameras)
-    ]
-
+    maps = []
+    for i in range(num_cameras):
+        # Skip the start tokens to get strictly to the image patches
+        start_idx = i * tokens_per_block + start_tokens
+        end_idx = start_idx + num_img_tokens
+        maps.append(mean_action_attn[start_idx : end_idx])
+        
+    return maps
 
 def process_heatmap(heat_1d, original_size=(480, 640)):
     if heat_1d is None:
@@ -576,7 +579,8 @@ def record_loop(
                     continue
 
                 heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
-                vis = cv2.addWeighted(img_hwc, 0.6, heatmap, 0.4, 0)
+                heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+                vis = cv2.addWeighted(img_hwc, 0.6, heatmap_rgb, 0.4, 0)
                 rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
                 print(f"[DEBUG] logged attention/cam{cam_idx}")
 
