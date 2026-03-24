@@ -202,41 +202,37 @@ class RecordConfig:
                   ( Rerun Log / Loop Wait )
 """
 
-def extract_cross_attention_maps(attn_matrix, num_img_tokens, num_cameras=2, add_image_special_tokens=True):
+def extract_cross_attention_maps(attn_matrix, num_img_tokens, num_cameras=2):
     if attn_matrix is None:
         logging.warning("attn_matrix is None, skip attention visualization.")
         return []
 
-    if num_img_tokens is None or num_img_tokens <= 0:
+    if num_img_tokens is None:
+        logging.warning("num_img_tokens is None, skip attention visualization.")
+        return []
+
+    if num_img_tokens <= 0:
         logging.warning("num_img_tokens=%s is invalid, skip attention visualization.", num_img_tokens)
         return []
 
     mean_action_attn = attn_matrix.mean(dim=0)
     total_key_tokens = mean_action_attn.shape[0]
-    
-    # SmolVLA prepends 2 start tokens and appends 1 end token per image
-    start_tokens = 2 if add_image_special_tokens else 0
-    end_tokens = 1 if add_image_special_tokens else 0
-    tokens_per_block = start_tokens + num_img_tokens + end_tokens
-
-    expected_tokens = num_cameras * tokens_per_block
+    expected_tokens = num_cameras * num_img_tokens
 
     if expected_tokens > total_key_tokens:
         logging.warning(
-            "Cannot split cross attention: expected %s total image tokens but only %s keys are available.",
+            "Cannot split cross attention: expected %s image tokens (%s cameras x %s tokens) but only %s keys are available.",
             expected_tokens,
+            num_cameras,
+            num_img_tokens,
             total_key_tokens,
         )
         return []
 
-    maps = []
-    for i in range(num_cameras):
-        # Skip the start tokens to get strictly to the image patches
-        start_idx = i * tokens_per_block + start_tokens
-        end_idx = start_idx + num_img_tokens
-        maps.append(mean_action_attn[start_idx : end_idx])
-        
-    return maps
+    return [
+        mean_action_attn[i * num_img_tokens : (i + 1) * num_img_tokens]
+        for i in range(num_cameras)
+    ]
 
 def process_heatmap(heat_1d, original_size=(480, 640)):
     if heat_1d is None:
@@ -376,6 +372,11 @@ def record_loop(
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
 
+        attn = None
+        num_img_tokens = None
+        act_processed_policy = None
+        act_processed_teleop = None
+
         # Keyboard 't' to switch task in real-time!
         # USe events["change_task"],events["in_task_input"]
         if events["change_task"]  == True:
@@ -405,6 +406,11 @@ def record_loop(
                 events["rerecord_episode"] = True
             else:
                 print("[WARN] Empty input, task unchanged")
+
+        attn = None
+        num_img_tokens = None
+        act_processed_policy = None
+        act_processed_teleop = None
 
         start_loop_t = time.perf_counter()
 
@@ -500,6 +506,9 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
+            feature_spec = dataset.features if dataset is not None else robot.action_features
+            act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)
+
             model = policy.model.vlm_with_expert
             if display_data and hasattr(model, "attn_records"):
                 layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
@@ -529,8 +538,7 @@ def record_loop(
                     else:
                         print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
 
-        if attn is not None:
-            print("attention")
+        if display_data and attn is not None:
             image_obs_keys = get_policy_image_keys(policy, observation_frame)
 
             if num_img_tokens is None:

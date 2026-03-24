@@ -159,7 +159,7 @@ def process_heatmap(heat_1d, original_image_size=(480, 640), model_input_size=(5
     heat_2d = heat_1d.reshape(grid_size, grid_size)
     
     # 2. Prepare for interpolation (Batch, Channel, H, W)
-    heat_tensor = torch.tensor(heat_2d).unsqueeze(0).unsqueeze(0).float()
+    heat_tensor = heat_2d.unsqueeze(0).unsqueeze(0).float()
     
     # 3. Upscale to Model Input Size (512x512)
     heat_512 = F.interpolate(heat_tensor, size=model_input_size, mode='bilinear', align_corners=False)
@@ -185,7 +185,7 @@ def process_heatmap(heat_1d, original_image_size=(480, 640), model_input_size=(5
     # 6. Resize to original image size
     heat_final = F.interpolate(heat_valid.unsqueeze(0).unsqueeze(0), size=original_image_size, mode='bilinear')
     
-    return heat_final[0, 0].numpy()
+    return heat_final[0, 0].detach().cpu().numpy()
 
 def compute_deterministic_attention(policy, batch, device):
     """

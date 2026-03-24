@@ -234,7 +234,6 @@ def extract_cross_attention_maps(attn_matrix, num_img_tokens, num_cameras=2):
         for i in range(num_cameras)
     ]
 
-
 def process_heatmap(heat_1d, original_size=(480, 640)):
     if heat_1d is None:
         return None
@@ -306,94 +305,6 @@ def get_policy_image_keys(policy, obs_processed):
 
     return sorted(key for key in obs_processed if key.startswith("observation.images."))
 
-def log_latest_attention_rerun(
-    observation_frame: dict[str, Any],
-    task_text: str,
-    vis_policy: PreTrainedPolicy,
-    vis_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-):
-    device = get_safe_torch_device(vis_policy.config.device)
-
-    vis_policy.reset()
-    vis_preprocessor.reset()
-
-    model = vis_policy.model.vlm_with_expert
-    model.record_attn = True
-    model.debug_attn = True
-    model.attention_mode = "cross_attn"
-    model.attn_records = {}
-
-    obs_for_vis = {}
-    for k, v in observation_frame.items():
-        x = v if torch.is_tensor(v) else torch.as_tensor(v)
-
-        if k.startswith("observation.images."):
-            # Convert image to float32 on device
-            x = x.to(device=device, dtype=torch.float32)
-
-            # Ensure image is CHW before batching
-            # HWC -> CHW
-            if x.ndim == 3 and x.shape[-1] in (1, 3) and x.shape[0] not in (1, 3):
-                x = x.permute(2, 0, 1).contiguous()
-
-            # If image is already batched HWC -> BCHW
-            elif x.ndim == 4 and x.shape[-1] in (1, 3) and x.shape[1] not in (1, 3):
-                x = x.permute(0, 3, 1, 2).contiguous()
-
-            if x.max() <= 1.0:
-                x = x * 255.0
-        else:
-            x = x.to(device)
-
-        if x.ndim == 3:
-            x = x.unsqueeze(0)
-
-        obs_for_vis[k] = x
-
-    obs_for_vis["task"] = task_text
-
-    batch_pp = vis_preprocessor(obs_for_vis)
-
-    with torch.no_grad():
-        vis_policy.predict_action_chunk(batch_pp)
-
-    images_list, _ = vis_policy.prepare_images(batch_pp)
-    img_emb0 = model.embed_image(images_list[0])
-    num_img_tokens = int(img_emb0.shape[1])
-
-    layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
-    if len(layer_ids) == 0:
-        return
-
-    final_layer = max(layer_ids)
-    attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
-    if len(attn_list) == 0:
-        return
-
-    attn = attn_list[-1]
-    attn_matrix = attn.mean(dim=1)[0]
-
-    image_obs_keys = get_policy_image_keys(vis_policy, observation_frame)
-    num_cameras = min(2, len(image_obs_keys))
-    heat_1d_list = extract_cross_attention_maps(
-        attn_matrix,
-        num_img_tokens,
-        num_cameras=num_cameras,
-    )
-
-    for cam_idx, (image_key, heat_1d) in enumerate(
-        zip(image_obs_keys[:num_cameras], heat_1d_list),
-        start=1,
-    ):
-        img_hwc = to_hwc_uint8(observation_frame[image_key])
-        mask = process_heatmap(heat_1d, original_size=img_hwc.shape[:2])
-        if mask is None:
-            continue
-
-        heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
-        vis = cv2.addWeighted(img_hwc, 0.6, heatmap, 0.4, 0)
-        rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
-
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -413,8 +324,6 @@ def record_loop(
     policy: PreTrainedPolicy | None = None,
     preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
-    vis_policy: PreTrainedPolicy | None = None,
-    vis_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
     control_time_s: int | None = None,
     task_holder: dict | None = None, 
     display_data: bool = False,
@@ -460,9 +369,13 @@ def record_loop(
         postprocessor.reset()
 
     timestamp = 0
-    vis_step = 0
     start_episode_t = time.perf_counter()
     while timestamp < control_time_s:
+
+        attn = None
+        num_img_tokens = None
+        act_processed_policy = None
+        act_processed_teleop = None
 
         # Keyboard 't' to switch task in real-time!
         # USe events["change_task"],events["in_task_input"]
@@ -494,6 +407,11 @@ def record_loop(
             else:
                 print("[WARN] Empty input, task unchanged")
 
+        attn = None
+        num_img_tokens = None
+        act_processed_policy = None
+        act_processed_teleop = None
+
         start_loop_t = time.perf_counter()
 
         if events["exit_early"]:
@@ -504,7 +422,7 @@ def record_loop(
         obs = robot.get_observation()
 
         top_cam_key = "top" 
-        eval_cam2 = "camera2"
+        eval_cam2 = "camera4"
         
         if top_cam_key in obs:
 
@@ -525,11 +443,8 @@ def record_loop(
             # 3. Resize to 640x480
             img_resized_hwc = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-            # 4. Convert to C,H,W format
-            img_chw = np.transpose(img_resized_hwc, (2, 0, 1))
-            
-            obs[top_cam_key] = img_chw
-
+            # Keep HWC for downstream preprocessors / policy image processor
+            obs[top_cam_key] = np.ascontiguousarray(img_resized_hwc)
 
         elif eval_cam2 in obs:
 
@@ -545,12 +460,10 @@ def record_loop(
             # x1:x2=19 to 285
             # y1:y2=217 to 546
             img_cropped = img_hwc[19:217, 285:546]
-
             img_resized_hwc1 = cv2.resize(img_cropped, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-            img_chw1 = np.transpose(img_resized_hwc1, (2, 0, 1))
-
-            obs[eval_cam2] = img_chw1
+            # Keep HWC for downstream preprocessors / policy image processor
+            obs[eval_cam2] = np.ascontiguousarray(img_resized_hwc1)
 
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
@@ -568,6 +481,20 @@ def record_loop(
                 "len:",
                 len(task_holder["text"]),
             )
+            model = policy.model.vlm_with_expert
+            model.record_attn = True
+            model.debug_attn = True
+            model.attention_mode = "cross_attn"
+
+            if not hasattr(model, "attn_records") or model.attn_records is None:
+                model.attn_records = {}
+            if not hasattr(model, "_last_vis_attn"):
+                model._last_vis_attn = None
+            if not hasattr(model, "_last_vis_num_img_tokens"):
+                model._last_vis_num_img_tokens = None
+
+            print("attn_records keys before predict:", model.attn_records.keys())
+
             action_values = predict_action(
                 observation=observation_frame,
                 policy=policy,
@@ -575,19 +502,96 @@ def record_loop(
                 preprocessor=preprocessor,
                 postprocessor=postprocessor,
                 use_amp=policy.config.use_amp,
-                task=task_holder["text"],
+                task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
 
-        if display_data and vis_policy is not None and vis_preprocessor is not None:
-            if vis_step % 10 == 0:
-                log_latest_attention_rerun(
-                    observation_frame=observation_frame,
-                    task_text=task_holder["text"],
-                    vis_policy=vis_policy,
-                    vis_preprocessor=vis_preprocessor,
-                )
-            vis_step += 1
+            feature_spec = dataset.features if dataset is not None else robot.action_features
+            act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)
+
+            model = policy.model.vlm_with_expert
+            if display_data and hasattr(model, "attn_records"):
+                layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
+                print("cross-attn layer count after predict:", len(layer_ids))
+
+                attn = None
+                num_img_tokens = getattr(model, "_debug_num_img_tokens", None)
+
+                if len(layer_ids) > 0:
+                    final_layer = max(layer_ids)
+                    attn_list = model.attn_records.get((final_layer, "expert_cross"), [])
+                    print("final layer attn records:", len(attn_list))
+
+                    if len(attn_list) > 0:
+                        attn = attn_list[-1]  # [B, heads, Q, K]
+                        model._last_vis_attn = attn
+                        if num_img_tokens is not None:
+                            model._last_vis_num_img_tokens = num_img_tokens
+
+                model.attn_records = {}
+
+                if attn is None:
+                    attn = getattr(model, "_last_vis_attn", None)
+                    num_img_tokens = getattr(model, "_last_vis_num_img_tokens", None)
+                    if attn is None:
+                        print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
+                    else:
+                        print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
+
+        if display_data and attn is not None:
+            image_obs_keys = get_policy_image_keys(policy, observation_frame)
+
+            if num_img_tokens is None:
+                try:
+                    device = get_safe_torch_device(policy.config.device)
+                    image_batch = {}
+                    for image_key in image_obs_keys:
+                        x = torch.as_tensor(observation_frame[image_key], device=device)
+                        if x.ndim == 3:
+                            x = x.unsqueeze(0)
+                        image_batch[image_key] = x
+
+                    images_list, _ = policy.prepare_images(image_batch)
+                    img_emb0 = policy.model.vlm_with_expert.embed_image(images_list[0])
+                    num_img_tokens = int(img_emb0.shape[1])
+
+                    model._debug_num_img_tokens = num_img_tokens
+                    model._last_vis_num_img_tokens = num_img_tokens
+                    print("[DEBUG] recovered num_img_tokens:", num_img_tokens)
+                except Exception as e:
+                    print("[DEBUG] failed to recover num_img_tokens:", repr(e))
+
+            attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
+            num_cameras = min(2, len(image_obs_keys))
+            heat_1d_list = extract_cross_attention_maps(
+                attn_matrix,
+                num_img_tokens,
+                num_cameras=num_cameras,
+            )
+
+            print("[DEBUG] image_obs_keys:", image_obs_keys)
+            print("[DEBUG] num_img_tokens:", num_img_tokens)
+            print("[DEBUG] len(heat_1d_list):", len(heat_1d_list))
+
+            if len(heat_1d_list) == 0:
+                print("[DEBUG] no heatmap slices generated, so rr.log(attention/...) was not called")
+
+            for cam_idx, (image_key, heat_1d) in enumerate(
+                zip(image_obs_keys[:num_cameras], heat_1d_list),
+                start=1,
+            ):
+                img_hwc = to_hwc_uint8(observation_frame[image_key])
+                mask = process_heatmap(heat_1d, original_size=img_hwc.shape[:2])
+                if mask is None:
+                    print(f"[DEBUG] mask is None for {image_key}, skip rr.log")
+                    continue
+
+                heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
+                heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+                vis = cv2.addWeighted(img_hwc, 0.6, heatmap_rgb, 0.4, 0)
+                rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
+                print(f"[DEBUG] logged attention/cam{cam_idx}")
+
             feature_spec = dataset.features if dataset is not None else robot.action_features
             act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)
 
@@ -718,10 +722,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         policy = None if cfg.policy is None else make_policy(cfg.policy, ds_meta=dataset.meta)
         preprocessor = None
         postprocessor = None
-
-        vis_policy = None
-        vis_preprocessor = None
-
         if cfg.policy is not None:
             preprocessor, postprocessor = make_pre_post_processors(
                 policy_cfg=cfg.policy,
@@ -732,21 +732,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
                 },
             )
-
-            if cfg.display_data:
-                vis_policy = make_policy(cfg.policy, ds_meta=dataset.meta)
-                vis_policy.to(get_safe_torch_device(cfg.policy.device))
-                vis_policy.eval()
-
-                vis_preprocessor, _ = make_pre_post_processors(
-                    policy_cfg=cfg.policy,
-                    pretrained_path=cfg.policy.pretrained_path,
-                    dataset_stats=rename_stats(dataset.meta.stats, cfg.dataset.rename_map),
-                    preprocessor_overrides={
-                        "device_processor": {"device": cfg.policy.device},
-                        "rename_observations_processor": {"rename_map": cfg.dataset.rename_map},
-                    },
-                )
 
         robot.connect()
         if teleop is not None:
@@ -776,8 +761,6 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     policy=policy,
                     preprocessor=preprocessor,
                     postprocessor=postprocessor,
-                    vis_policy=vis_policy,
-                    vis_preprocessor=vis_preprocessor,
                     dataset=dataset,
                     control_time_s=cfg.dataset.episode_time_s,
                     task_holder=current_task,
