@@ -269,45 +269,6 @@ def process_heatmap(heat_1d, original_size=(480, 640)):
     heat_norm = np.clip((heat_resized - v_min) / (v_max - v_min + 1e-6), 0, 1)
     return heat_norm
 
-def analyze_attention(attn_matrix, num_img_tokens, real_text_len):
-    """
-    Analyze cross-attention distribution between
-    Vision / Text / Robot State / Padding
-
-    This does NOT modify attention used for visualization.
-    It only prints statistics.
-    """
-
-    if attn_matrix is None or num_img_tokens is None:
-        return None
-
-    mean_attn = attn_matrix.mean(dim=0).float().cpu()
-
-    # Vision tokens (2 cameras)
-    vision_end = 2 * num_img_tokens
-    vision_attn = mean_attn[:vision_end].sum().item()
-
-    # Text tokens
-    text_start = vision_end
-    text_end = text_start + real_text_len
-    text_attn = mean_attn[text_start:text_end].sum().item()
-
-    # Robot state tokens (empirical position used in analyze script)
-    state_attn = mean_attn[275:].sum().item()
-
-    # Padding / others
-    others_attn = mean_attn[text_end:275].sum().item()
-
-    total = vision_attn + text_attn + state_attn + others_attn + 1e-8
-
-    result = {
-        "Vision": vision_attn / total,
-        "Text": text_attn / total,
-        "State": state_attn / total,
-        "Padding": others_attn / total,
-    }
-
-    return result
 
 def to_hwc_uint8(img):
     if hasattr(img, "detach"):
@@ -601,29 +562,6 @@ def record_loop(
                     print("[DEBUG] failed to recover num_img_tokens:", repr(e))
 
             attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
-            real_text_len = 0
-            mask_key = "observation.language.attention_mask"
-
-            if mask_key in observation_frame:
-                try:
-                    real_text_len = int(np.sum(observation_frame[mask_key]))
-                except Exception:
-                    real_text_len = 0
-            
-            analysis = analyze_attention(
-                attn_matrix,
-                num_img_tokens,
-                real_text_len
-            )
-
-            if analysis is not None:
-                print(
-                    f"[ATTN] Vision:{analysis['Vision']:.1%} | "
-                    f"Text:{analysis['Text']:.1%} | "
-                    f"State:{analysis['State']:.1%} | "
-                    f"Padding:{analysis['Padding']:.1%}"
-                )
-
             num_cameras = min(2, len(image_obs_keys))
             heat_1d_list = extract_cross_attention_maps(
                 attn_matrix,
