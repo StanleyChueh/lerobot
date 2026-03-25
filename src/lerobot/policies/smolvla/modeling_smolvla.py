@@ -625,6 +625,9 @@ class VLAFlowMatching(nn.Module):
         embs = []
         pad_masks = []
         att_masks = []
+        token_layout = []
+        cursor = 0
+
         for _img_idx, (
             img,
             img_mask,
@@ -641,6 +644,17 @@ class VLAFlowMatching(nn.Module):
                     image_start_token[:, :, 0], dtype=torch.bool, device=image_start_token.device
                 )
                 att_masks += [0] * (image_start_mask.shape[-1])
+
+                start = cursor
+                end = cursor + image_start_mask.shape[1]
+                token_layout.append({
+                    "type": "image_start_token",
+                    "image_index": _img_idx,
+                    "start": start,
+                    "end": end,
+                })
+                cursor = end
+
                 embs.append(image_start_token)
                 pad_masks.append(image_start_mask)
 
@@ -653,6 +667,16 @@ class VLAFlowMatching(nn.Module):
 
             bsize, num_img_embs = img_emb.shape[:2]
             img_mask = img_mask[:, None].expand(bsize, num_img_embs)
+
+            start = cursor
+            end = cursor + num_img_embs
+            token_layout.append({
+                "type": "image",
+                "image_index": _img_idx,
+                "start": start,
+                "end": end,
+            })
+            cursor = end
 
             embs.append(img_emb)
             pad_masks.append(img_mask)
@@ -669,6 +693,17 @@ class VLAFlowMatching(nn.Module):
                 image_end_mask = torch.ones_like(
                     image_end_token[:, :, 0], dtype=torch.bool, device=image_end_token.device
                 )
+
+                start = cursor
+                end = cursor + image_end_mask.shape[1]
+                token_layout.append({
+                    "type": "image_end_token",
+                    "image_index": _img_idx,
+                    "start": start,
+                    "end": end,
+                })
+                cursor = end
+
                 embs.append(image_end_token)
                 pad_masks.append(image_end_mask)
                 att_masks += [0] * (image_end_mask.shape[1])
@@ -681,6 +716,16 @@ class VLAFlowMatching(nn.Module):
         pad_masks.append(lang_masks)
 
         num_lang_embs = lang_emb.shape[1]
+
+        start = cursor
+        end = cursor + num_lang_embs
+        token_layout.append({
+            "type": "language",
+            "start": start,
+            "end": end,
+        })
+        cursor = end
+
         att_masks += [0] * num_lang_embs
 
         state_emb = self.state_proj(state)
@@ -690,6 +735,16 @@ class VLAFlowMatching(nn.Module):
         device = state_emb.device
 
         states_seq_len = state_emb.shape[1]
+
+        start = cursor
+        end = cursor + states_seq_len
+        token_layout.append({
+            "type": "state",
+            "start": start,
+            "end": end,
+        })
+        cursor = end
+
         state_mask = torch.ones(bsize, states_seq_len, dtype=torch.bool, device=device)
         pad_masks.append(state_mask)
 
@@ -707,6 +762,9 @@ class VLAFlowMatching(nn.Module):
             att_masks = pad_tensor(att_masks, self.prefix_length, pad_value=0)
 
         att_masks = att_masks.expand(bsize, -1)
+
+        self._last_prefix_token_layout = token_layout
+        self.vlm_with_expert._last_prefix_token_layout = token_layout
 
         return embs, pad_masks, att_masks
 
