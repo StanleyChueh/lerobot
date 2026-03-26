@@ -592,9 +592,10 @@ def record_loop(
             attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
             image_attn_list, contrib = extract_cross_attention_maps(attn_matrix, token_layout)
 
-            print("[DEBUG] image_obs_keys:", image_obs_keys)
-            print("[DEBUG] num_img_tokens:", num_img_tokens)
-            print("[DEBUG] len(image_attn_list):", len(image_attn_list))
+            # For debugging
+            # print("[DEBUG] image_obs_keys:", image_obs_keys)
+            # print("[DEBUG] num_img_tokens:", num_img_tokens)
+            # print("[DEBUG] len(image_attn_list):", len(image_attn_list))
 
             if len(image_attn_list) == 0:
                 print("[DEBUG] no heatmap slices generated, so rr.log(attention/...) was not called")
