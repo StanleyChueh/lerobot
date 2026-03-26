@@ -155,6 +155,8 @@ class RecordConfig:
     play_sounds: bool = True
     # Resume recording on an existing dataset.
     resume: bool = False
+    #Debug freq
+    debug_freq: bool = False
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -287,7 +289,19 @@ def to_hwc_uint8(img):
 
     return np.ascontiguousarray(img)
 
-def draw_ratio_overlay(img, cam_ratio, contrib):
+def draw_ratio_overlay(
+    img,
+    cam_ratio,
+    contrib,
+    debug_freq: bool = False,
+    control_hz: float | None = None,
+    attn_hz: float | None = None,
+    attn_is_stale: bool = False,
+    obs_ms: float | None = None,
+    infer_ms: float | None = None,
+    dataset_ms: float | None = None,
+    rerun_ms: float | None = None,
+):
     out = img.copy()
 
     lines = [
@@ -297,6 +311,21 @@ def draw_ratio_overlay(img, cam_ratio, contrib):
         f"prompt: {contrib.get('language', 0.0) * 100:.1f}%",
         f"state: {contrib.get('state', 0.0) * 100:.1f}%",
     ]
+
+    if debug_freq:
+        if control_hz is not None:
+            lines.append(f"control_hz: {control_hz:.2f}")
+        if attn_hz is not None:
+            stale_suffix = " (cached)" if attn_is_stale else ""
+            lines.append(f"attn_hz: {attn_hz:.2f}{stale_suffix}")
+        if obs_ms is not None:
+            lines.append(f"obs_ms: {obs_ms:.1f}")
+        if infer_ms is not None:
+            lines.append(f"infer_ms: {infer_ms:.1f}")
+        if dataset_ms is not None:
+            lines.append(f"dataset_ms: {dataset_ms:.1f}")
+        if rerun_ms is not None:
+            lines.append(f"rerun_ms: {rerun_ms:.1f}")
 
     x, y = 16, 28
     dy = 26
@@ -349,7 +378,8 @@ def record_loop(
     control_time_s: int | None = None,
     task_holder: dict | None = None, 
     display_data: bool = False,
-    listener = None
+    listener = None,
+    debug_freq: bool = False,
 ):
     if policy:
         print("record loop, policy is not None:")
@@ -392,6 +422,16 @@ def record_loop(
 
     timestamp = 0
     start_episode_t = time.perf_counter()
+    last_control_tick_t = None
+    smoothed_control_hz = None
+    last_new_attn_t = None
+    smoothed_attn_hz = None
+
+    smoothed_obs_ms = None
+    smoothed_infer_ms = None
+    smoothed_dataset_ms = None
+    smoothed_rerun_ms = None
+
     while timestamp < control_time_s:
 
         attn = None
@@ -437,12 +477,29 @@ def record_loop(
 
         start_loop_t = time.perf_counter()
 
+        if last_control_tick_t is not None:
+            control_dt_s = max(start_loop_t - last_control_tick_t, 1e-6)
+            instant_control_hz = 1.0 / control_dt_s
+            if smoothed_control_hz is None:
+                smoothed_control_hz = instant_control_hz
+            else:
+                smoothed_control_hz = 0.8 * smoothed_control_hz + 0.2 * instant_control_hz
+        last_control_tick_t = start_loop_t
+
+        fresh_attn_this_step = False
+
         if events["exit_early"]:
             events["exit_early"] = False
             break
 
         # Get robot observation
+        obs_t0 = time.perf_counter()
         obs = robot.get_observation()
+        obs_ms = (time.perf_counter() - obs_t0) * 1000.0
+        if smoothed_obs_ms is None:
+            smoothed_obs_ms = obs_ms
+        else:
+            smoothed_obs_ms = 0.8 * smoothed_obs_ms + 0.2 * obs_ms
 
         top_cam_key = "top" 
         eval_cam2 = "camera4"
@@ -520,6 +577,7 @@ def record_loop(
 
             print("attn_records keys before predict:", model.attn_records.keys())
 
+            infer_t0 = time.perf_counter()
             action_values = predict_action(
                 observation=observation_frame,
                 policy=policy,
@@ -530,6 +588,11 @@ def record_loop(
                 task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
+            infer_ms = (time.perf_counter() - infer_t0) * 1000.0
+            if smoothed_infer_ms is None:
+                smoothed_infer_ms = infer_ms
+            else:
+                smoothed_infer_ms = 0.8 * smoothed_infer_ms + 0.2 * infer_ms
 
             feature_spec = dataset.features if dataset is not None else robot.action_features
             act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)
@@ -552,6 +615,16 @@ def record_loop(
                         token_layout = getattr(model, "_last_prefix_token_layout", None)
                         model._last_vis_attn = attn
                         model._last_vis_token_layout = token_layout
+                        fresh_attn_this_step = True
+                        now_attn_t = time.perf_counter()
+                        if last_new_attn_t is not None:
+                            attn_dt_s = max(now_attn_t - last_new_attn_t, 1e-6)
+                            instant_attn_hz = 1.0 / attn_dt_s
+                            if smoothed_attn_hz is None:
+                                smoothed_attn_hz = instant_attn_hz
+                            else:
+                                smoothed_attn_hz = 0.8 * smoothed_attn_hz + 0.2 * instant_attn_hz
+                        last_new_attn_t = now_attn_t
                         if num_img_tokens is not None:
                             model._last_vis_num_img_tokens = num_img_tokens
 
@@ -566,64 +639,71 @@ def record_loop(
                 else:
                     print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
 
-        if display_data and attn is not None:
-            image_obs_keys = get_policy_image_keys(policy, observation_frame)
+            if display_data and attn is not None:
+                image_obs_keys = get_policy_image_keys(policy, observation_frame)
 
-            if num_img_tokens is None:
-                try:
-                    device = get_safe_torch_device(policy.config.device)
-                    image_batch = {}
-                    for image_key in image_obs_keys:
-                        x = torch.as_tensor(observation_frame[image_key], device=device)
-                        if x.ndim == 3:
-                            x = x.unsqueeze(0)
-                        image_batch[image_key] = x
+                if num_img_tokens is None:
+                    try:
+                        device = get_safe_torch_device(policy.config.device)
+                        image_batch = {}
+                        for image_key in image_obs_keys:
+                            x = torch.as_tensor(observation_frame[image_key], device=device)
+                            if x.ndim == 3:
+                                x = x.unsqueeze(0)
+                            image_batch[image_key] = x
 
-                    images_list, _ = policy.prepare_images(image_batch)
-                    img_emb0 = policy.model.vlm_with_expert.embed_image(images_list[0])
-                    num_img_tokens = int(img_emb0.shape[1])
+                        images_list, _ = policy.prepare_images(image_batch)
+                        img_emb0 = policy.model.vlm_with_expert.embed_image(images_list[0])
+                        num_img_tokens = int(img_emb0.shape[1])
 
-                    model._debug_num_img_tokens = num_img_tokens
-                    model._last_vis_num_img_tokens = num_img_tokens
-                    print("[DEBUG] recovered num_img_tokens:", num_img_tokens)
-                except Exception as e:
-                    print("[DEBUG] failed to recover num_img_tokens:", repr(e))
+                        model._debug_num_img_tokens = num_img_tokens
+                        model._last_vis_num_img_tokens = num_img_tokens
+                        print("[DEBUG] recovered num_img_tokens:", num_img_tokens)
+                    except Exception as e:
+                        print("[DEBUG] failed to recover num_img_tokens:", repr(e))
 
-            attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
-            image_attn_list, contrib = extract_cross_attention_maps(attn_matrix, token_layout)
+                attn_matrix = attn.mean(dim=1)[0]  # [Q, K]
+                image_attn_list, contrib = extract_cross_attention_maps(attn_matrix, token_layout)
 
-            # For debugging
-            # print("[DEBUG] image_obs_keys:", image_obs_keys)
-            # print("[DEBUG] num_img_tokens:", num_img_tokens)
-            # print("[DEBUG] len(image_attn_list):", len(image_attn_list))
+                if len(image_attn_list) == 0:
+                    print("[DEBUG] no heatmap slices generated, so rr.log(attention/...) was not called")
 
-            if len(image_attn_list) == 0:
-                print("[DEBUG] no heatmap slices generated, so rr.log(attention/...) was not called")
+                for item in image_attn_list:
+                    image_index = item["image_index"]
+                    heat_1d = item["heat_1d"]
+                    ratio = item["ratio"]
 
-            for item in image_attn_list:
-                image_index = item["image_index"]
-                heat_1d = item["heat_1d"]
-                ratio = item["ratio"]
+                    if image_index >= len(image_obs_keys):
+                        continue
 
-                if image_index >= len(image_obs_keys):
-                    continue
+                    image_key = image_obs_keys[image_index]
+                    cam_idx = image_index + 1
 
-                image_key = image_obs_keys[image_index]
-                cam_idx = image_index + 1
+                    img_hwc = to_hwc_uint8(observation_frame[image_key])
+                    mask = process_heatmap(heat_1d, original_size=img_hwc.shape[:2])
+                    if mask is None:
+                        print(f"[DEBUG] mask is None for {image_key}, skip rr.log")
+                        continue
 
-                img_hwc = to_hwc_uint8(observation_frame[image_key])
-                mask = process_heatmap(heat_1d, original_size=img_hwc.shape[:2])
-                if mask is None:
-                    print(f"[DEBUG] mask is None for {image_key}, skip rr.log")
-                    continue
+                    heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
+                    heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
+                    vis = cv2.addWeighted(img_hwc, 0.6, heatmap_rgb, 0.4, 0)
+                    vis = draw_ratio_overlay(
+                        vis,
+                        ratio,
+                        contrib,
+                        debug_freq=debug_freq,
+                        control_hz=smoothed_control_hz,
+                        attn_hz=smoothed_attn_hz,
+                        attn_is_stale=not fresh_attn_this_step,
+                        obs_ms=smoothed_obs_ms,
+                        infer_ms=smoothed_infer_ms,
+                        dataset_ms=smoothed_dataset_ms,
+                        rerun_ms=smoothed_rerun_ms,
+                    )
 
-                heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
-                heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
-                vis = cv2.addWeighted(img_hwc, 0.6, heatmap_rgb, 0.4, 0)
-                vis = draw_ratio_overlay(vis, ratio, contrib)
-
-                rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
-                print(f"[DEBUG] logged attention/cam{cam_idx}")
+                    rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
+                    print(f"[DEBUG] logged attention/cam{cam_idx}")
 
             feature_spec = dataset.features if dataset is not None else robot.action_features
             act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)
@@ -667,13 +747,24 @@ def record_loop(
 
         # Write to dataset
         if dataset is not None:
+            dataset_t0 = time.perf_counter()
             action_frame = build_dataset_frame(dataset.features, action_values, prefix=ACTION)
             frame = {**observation_frame, **action_frame, "task": task_holder["text"]}
             dataset.add_frame(frame)
+            dataset_ms = (time.perf_counter() - dataset_t0) * 1000.0
+            if smoothed_dataset_ms is None:
+                smoothed_dataset_ms = dataset_ms
+            else:
+                smoothed_dataset_ms = 0.8 * smoothed_dataset_ms + 0.2 * dataset_ms
 
         if display_data:
-
+            rerun_t0 = time.perf_counter()
             log_rerun_data(observation=obs_processed, action=action_values)
+            rerun_ms = (time.perf_counter() - rerun_t0) * 1000.0
+            if smoothed_rerun_ms is None:
+                smoothed_rerun_ms = rerun_ms
+            else:
+                smoothed_rerun_ms = 0.8 * smoothed_rerun_ms + 0.2 * rerun_ms
 
         dt_s = time.perf_counter() - start_loop_t
         precise_sleep(1 / fps - dt_s)
@@ -798,6 +889,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     control_time_s=cfg.dataset.episode_time_s,
                     task_holder=current_task,
                     display_data=cfg.display_data,
+                    debug_freq=cfg.debug_freq,
                     listener=listener,
                 )
 
@@ -820,6 +912,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         control_time_s=cfg.dataset.reset_time_s,
                         task_holder=current_task, 
                         display_data=cfg.display_data,
+                        debug_freq=cfg.debug_freq,
                         listener=listener,
                     )
 
