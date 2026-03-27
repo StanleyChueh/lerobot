@@ -57,6 +57,17 @@ Right key to save episode, left key to discard episode
 ```bash
 lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/Stanley_grip_block_2color     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the green cube in the box."
 ```
+
+Record with three cameras
+
+```
+lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{
+  front: {type: opencv, index_or_path: 5, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  top:   {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  side:  {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG}
+}"    --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the red cube in the right box,and green cube in the left box." --display_data=true
+```
+
 > **Note**
 > Remember to check camera id before recording, use the following command to check camera id, and use ffplay to test it!
 > ```
