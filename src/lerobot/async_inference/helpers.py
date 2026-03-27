@@ -151,6 +151,10 @@ def prepare_raw_observation(
     # -> {observation.state:[value1,value2,...], observation.images.laptop:np.ndarray}
     lerobot_obs = make_lerobot_observation(robot_obs, lerobot_features)
 
+    print("robot_obs keys:", list(robot_obs.keys()))
+    print("lerobot_obs keys:", list(lerobot_obs.keys()))
+    print("policy_image_features keys:", list(policy_image_features.keys()))
+
     # 2. Greps all observation.images.<> keys
     image_keys = list(filter(is_image_key, lerobot_obs))
     # state's shape is expected as (B, state_dim)

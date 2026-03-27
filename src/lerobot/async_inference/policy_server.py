@@ -176,6 +176,9 @@ class PolicyServer(services_pb2_grpc.AsyncInferenceServicer):
                 
         self.policy.to(self.device)
 
+        self.logger.info(f"Policy image features: {list(self.policy.config.image_features.keys())}")
+        self.logger.info(f"Policy input features: {list(self.policy.config.input_features.keys())}")
+
         # Load preprocessor and postprocessor, overriding device to match requested device
         device_override = {"device": self.device}
         self.preprocessor, self.postprocessor = make_pre_post_processors(
