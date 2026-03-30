@@ -146,6 +146,16 @@ It will randomize hue,saturation,constract, brightness,affine,sharpness in train
   }'   --policy.empty_cameras=1 --dataset.image_transforms.enable=true --dataset.image_transforms.random_order=true --dataset.image_transforms.max_num_transforms=6 --dataset.video_backend=pyav
 ```
 
+Unfrozen Vision encoder(SigLIP) in smolvlm
+
+```
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front_wrist   --batch_size=16   --steps=40000   --output_dir=outputs/train/svla_koch_sorting_n_stacking_side_front_wrist_unfrozen_vision_encoder   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front_wrist_unfrozen_vision_encoder    --wandb.enable=false   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.wrist":   "observation.images.camera2",
+    "observation.images.side":  "observation.images.camera3"
+  }'   --dataset.video_backend=pyav --policy.freeze_vision_encoder=false --policy.train_expert_only=false
+```
+
 Evaluation:
 
 Evaluation with three cameras
