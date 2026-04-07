@@ -575,7 +575,7 @@ def record_loop(
             if not hasattr(model, "_last_vis_token_layout"):
                 model._last_vis_token_layout = None
 
-            print("attn_records keys before predict:", model.attn_records.keys())
+            #print("attn_records keys before predict:", model.attn_records.keys())
 
             infer_t0 = time.perf_counter()
             action_values = predict_action(
@@ -600,7 +600,7 @@ def record_loop(
             model = policy.model.vlm_with_expert
             if display_data and hasattr(model, "attn_records"):
                 layer_ids = [k[0] for k in model.attn_records.keys() if k[1] == "expert_cross"]
-                print("cross-attn layer count after predict:", len(layer_ids))
+                #print("cross-attn layer count after predict:", len(layer_ids))
 
                 attn = None
                 num_img_tokens = getattr(model, "_debug_num_img_tokens", None)
@@ -703,7 +703,7 @@ def record_loop(
                     )
 
                     rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
-                    print(f"[DEBUG] logged attention/cam{cam_idx}")
+                    #print(f"[DEBUG] logged attention/cam{cam_idx}")
 
             feature_spec = dataset.features if dataset is not None else robot.action_features
             act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)

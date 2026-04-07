@@ -569,9 +569,9 @@ def record_loop(
                 num_cameras=num_cameras,
             )
 
-            print("[DEBUG] image_obs_keys:", image_obs_keys)
-            print("[DEBUG] num_img_tokens:", num_img_tokens)
-            print("[DEBUG] len(heat_1d_list):", len(heat_1d_list))
+            # print("[DEBUG] image_obs_keys:", image_obs_keys)
+            # print("[DEBUG] num_img_tokens:", num_img_tokens)
+            # print("[DEBUG] len(heat_1d_list):", len(heat_1d_list))
 
             if len(heat_1d_list) == 0:
                 print("[DEBUG] no heatmap slices generated, so rr.log(attention/...) was not called")
@@ -590,7 +590,7 @@ def record_loop(
                 heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
                 vis = cv2.addWeighted(img_hwc, 0.6, heatmap_rgb, 0.4, 0)
                 rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
-                print(f"[DEBUG] logged attention/cam{cam_idx}")
+                #print(f"[DEBUG] logged attention/cam{cam_idx}")
 
             feature_spec = dataset.features if dataset is not None else robot.action_features
             act_processed_policy: RobotAction = make_robot_action(action_values, feature_spec)
