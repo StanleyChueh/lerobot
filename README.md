@@ -57,6 +57,17 @@ Right key to save episode, left key to discard episode
 ```bash
 lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{ front: {type: opencv, index_or_path: /dev/video6, width: 640, height: 480, fps: 30}, top: {type: opencv, index_or_path: /dev/video0, width: 640, height: 480, fps: 30}}"     --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/Stanley_grip_block_2color     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the green cube in the box."
 ```
+
+Record with three cameras
+
+```
+lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follower     --robot.id=my_awesome_follower_arm     --robot.cameras="{
+  front: {type: opencv, index_or_path: 5, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  wrist:   {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  side:  {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG}
+}"    --teleop.type=koch_leader     --teleop.port=/dev/ttyUSB_leader     --teleop.id=my_awesome_leader_arm         --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front_wrist     --dataset.num_episodes=25          --dataset.episode_time_s=30     --dataset.reset_time_s=5     --dataset.single_task="Put the red cube in the right box,and green cube in the left box." --display_data=true
+```
+
 > **Note**
 > Remember to check camera id before recording, use the following command to check camera id, and use ffplay to test it!
 > ```
@@ -79,6 +90,16 @@ lerobot-record     --robot.type=koch_follower     --robot.port=/dev/ttyUSB_follo
 > ```
 
 Train
+
+Train with three cameras
+
+```
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front_wrist   --batch_size=16   --steps=40000   --output_dir=outputs/train/svla_koch_sorting_n_stacking_side_front_wrist   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front_wrist   --wandb.enable=false   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.wrist":   "observation.images.camera2",
+    "observation.images.side":  "observation.images.camera3"
+  }'   --dataset.video_backend=pyav
+```
 
 If dataset has only two cameras, set one to empty, and remap to fit the format of smolvla_base in dev branch
 
@@ -125,7 +146,29 @@ It will randomize hue,saturation,constract, brightness,affine,sharpness in train
   }'   --policy.empty_cameras=1 --dataset.image_transforms.enable=true --dataset.image_transforms.random_order=true --dataset.image_transforms.max_num_transforms=6 --dataset.video_backend=pyav
 ```
 
+Unfrozen Vision encoder(SigLIP) in smolvlm
+
+```
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front_wrist   --batch_size=16   --steps=40000   --output_dir=outputs/train/svla_koch_sorting_n_stacking_side_front_wrist_unfrozen_vision_encoder   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_koch_sorting_n_stacking_side_front_wrist_unfrozen_vision_encoder    --wandb.enable=false   --rename_map='{
+    "observation.images.front": "observation.images.camera1",
+    "observation.images.wrist":   "observation.images.camera2",
+    "observation.images.side":  "observation.images.camera3"
+  }'   --dataset.video_backend=pyav --policy.freeze_vision_encoder=false --policy.train_expert_only=false
+```
+
 Evaluation:
+
+Evaluation with three cameras
+
+```
+lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 5, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  }'   --dataset.single_task="Put the green cube in the box."   --dataset.repo_id=ethanCSL/eval_Ting_grip_block   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=/home/bruce/CSL/lerobot_nn/outputs/train/Stanley_grip_block_2color/checkpoints/020000/pretrained_model   --policy.empty_cameras=1 --dataset.reset_time_s=5  
+```
+
+Evaluation with two cameras
 
 ```bash
 lerobot-record   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
