@@ -203,6 +203,41 @@ class RecordConfig:
                                V
                   ( Rerun Log / Loop Wait )
 """
+#top token
+def get_top_tokens_from_hidden(hidden_states, embedding_matrix, tokenizer, top_k=5):
+    """
+    將 hidden_states (B, seq, dim) 投影回詞表並取得 top_k tokens
+    """
+    # 進行矩陣相乘 (B, seq, dim) @ (dim, vocab_size) -> (B, seq, vocab_size)
+    logits = torch.matmul(hidden_states, embedding_matrix.t())
+    top_values, top_ids = torch.topk(logits, k=top_k, dim=-1)
+    
+    # 轉為文字
+    top_ids_list = top_ids.detach().cpu().numpy()
+    batch_tokens = []
+    for batch in top_ids_list:
+        seq_tokens = []
+        for token_ids in batch:
+            # 將 5 個 token_id 轉為文字串
+            decoded = [tokenizer.decode([tid]) for tid in token_ids]
+            seq_tokens.append(decoded)
+        batch_tokens.append(seq_tokens)
+    return batch_tokens
+
+def draw_token_overlay(img, top_tokens_list):
+    """
+    將解碼出的 token 繪製在影像畫面上
+    """
+    out = img.copy()
+    # 假設我們只取序列最後一個 token 的預測 (通常是當前決策的關鍵)
+    # top_tokens_list 結構: [batch][seq_len][top_k]
+    tokens = top_tokens_list[0][-1] 
+    
+    text = "Top Tokens: " + ", ".join(tokens)
+    x, y = 16, img.shape[0] - 20
+    cv2.putText(out, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
+    cv2.putText(out, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1, cv2.LINE_AA)
+    return out
 
 def extract_cross_attention_maps(attn_matrix, token_layout):
     if attn_matrix is None or token_layout is None:
@@ -380,7 +415,9 @@ def record_loop(
     display_data: bool = False,
     listener = None,
     debug_freq: bool = False,
-):
+):  
+    model = policy.model.vlm_with_expert
+
     if policy:
         print("record loop, policy is not None:")
     else:
@@ -419,22 +456,16 @@ def record_loop(
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
+        def hook_fn(module, input, output):
+            # output 通常是一個 tuple，第一項是 hidden_states [batch, seq, dim]
+            if isinstance(output, tuple):
+                model._last_hidden_states = output[0]
+            else:
+                model._last_hidden_states = output
 
-        # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
-        print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
-        
-        # Your newly discovered 36-neuron, 13-layer cluster!
-        multi_layer_cluster = {0: [29, 146, 174, 324, 345, 355, 396, 422, 555, 624, 635, 639, 666, 677, 828, 921, 962, 1006, 1031, 1076, 1078, 1088, 1175, 1180, 1218, 1320, 1392, 1443, 1555, 1671, 1685, 1799, 1881, 1894, 1958, 1988, 2028, 2160, 2165, 2207, 2257, 2279, 2301, 2433, 2481], 1: [174, 188, 265, 329, 387, 445, 495, 507, 594, 645, 655, 747, 786, 840, 890, 893, 924, 926, 1113, 1126, 1177, 1186, 1222, 1245, 1329, 1355, 1390, 1483, 1503, 1505, 1515, 1574, 1630, 1690, 1723, 1768, 1940, 2018, 2125, 2139, 2179, 2183, 2212, 2246, 2251, 2267, 2308, 2319, 2378, 2452, 2506], 2: [36, 78, 85, 221, 382, 387, 423, 528, 674, 685, 693, 775, 809, 826, 903, 913, 1070, 1076, 1150, 1210, 1530, 1569, 1592, 1649, 1679, 1751, 1774, 2313, 2374, 2524, 2537, 2544], 3: [70, 95, 102, 218, 319, 320, 352, 368, 657, 725, 749, 763, 1008, 1015, 1053, 1073, 1195, 1328, 1438, 1506, 1591, 1625, 1714, 1758, 1798, 1891, 1896, 1968, 2079, 2131, 2134, 2314, 2496, 2497], 4: [134, 146, 209, 415, 613, 620, 687, 767, 1013, 1153, 1165, 1179, 1191, 1216, 1274, 1302, 1388, 1503, 1505, 1556, 1586, 1674, 1678, 1698, 1721, 1849, 2018, 2106, 2133, 2157, 2180, 2185, 2269, 2271, 2317, 2437, 2467, 2496], 5: [8, 59, 82, 107, 117, 197, 199, 214, 258, 323, 332, 495, 516, 519, 536, 568, 592, 642, 744, 783, 802, 828, 935, 1089, 1262, 1303, 1376, 1447, 1462, 1478, 1481, 1644, 1977, 2026, 2074, 2090, 2102, 2195, 2215, 2239, 2256, 2336, 2394, 2400, 2408, 2540], 6: [81, 84, 273, 332, 485, 574, 591, 694, 705, 818, 858, 880, 925, 929, 971, 1173, 1197, 1462, 1467, 1471, 1488, 1722, 1767, 1809, 2242, 2360, 2451], 7: [23, 191, 290, 327, 383, 419, 444, 649, 679, 730, 746, 748, 973, 1043, 1065, 1082, 1151, 1203, 1297, 1360, 1372, 1393, 1469, 1590, 1593, 1700, 1908, 1953, 2074, 2404], 8: [8, 134, 417, 472, 483, 522, 654, 718, 1003, 1120, 1130, 1183, 1193, 1259, 1344, 1395, 1411, 1479, 1502, 1509, 1578, 1636, 1655, 1692, 1741, 1824, 1874, 1878, 1953, 1969, 1973, 2017, 2135, 2200, 2239, 2301, 2425, 2432, 2489], 9: [138, 282, 287, 514, 560, 578, 639, 809, 832, 957, 996, 1022, 1065, 1121, 1144, 1301, 1329, 1386, 1579, 1582, 1676, 1784, 1978, 2207, 2301, 2373, 2401, 2488, 2554], 10: [18, 81, 259, 538, 546, 631, 737, 1038, 1061, 1090, 1100, 1263, 1283, 1327, 1362, 1369, 1653, 1679, 1697, 1755, 1870, 2003, 2021, 2026, 2063, 2137, 2161, 2276, 2277, 2284, 2411], 11: [147, 365, 443, 473, 695, 696, 727, 735, 757, 798, 813, 830, 959, 978, 1009, 1010, 1118, 1218, 1323, 1475, 1640, 1655, 1742, 1750, 1820, 1838, 1870, 1880, 1899, 1903, 1927, 1957, 1998, 2045, 2176, 2460, 2469, 2471, 2504, 2550], 12: [37, 41, 44, 105, 182, 367, 515, 550, 588, 705, 715, 939, 994, 996, 1036, 1197, 1214, 1254, 1566, 1755, 1783, 1790, 1834, 1903, 1979, 2013, 2153, 2165, 2343], 13: [20, 74, 81, 136, 262, 294, 341, 346, 367, 398, 595, 656, 677, 739, 1056, 1084, 1105, 1173, 1199, 1242, 1341, 1433, 1454, 1531, 1617, 1631, 1764, 1825, 2032, 2077, 2169, 2206, 2216, 2411, 2420, 2550], 14: [192, 193, 231, 258, 404, 439, 463, 580, 627, 664, 737, 881, 957, 1110, 1120, 1211, 1212, 1349, 1396, 1398, 1616, 1697, 1823, 1853, 1905, 1913, 1984, 1986, 1992, 2151, 2212, 2545, 2555], 15: [78, 400, 410, 434, 562, 603, 633, 668, 917, 938, 1036, 1056, 1088, 1157, 1168, 1231, 1235, 1240, 1274, 1278, 1375, 1491, 1528, 1736, 1972, 2057, 2073, 2268, 2333, 2351, 2394, 2409, 2484]}
-        
-        # Start with your successful negative value
-        steering_strength = 4.0 
-        
-        if hasattr(policy, "apply_steering_vector"):
-            policy.apply_steering_vector(
-                multi_layer_clusters=multi_layer_cluster, 
-                strength=steering_strength
-            )
-        print("--------------------------------\n")
+        # 將 Hook 註冊在語言模型的最後一層
+        # 對於 SmolVLA/Llama 結構，通常是 model.vlm.model.layers[-1]
+        handle = model.vlm.language_model.model.layers[-1].register_forward_hook(hook_fn)
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -577,10 +608,11 @@ def record_loop(
                 "len:",
                 len(task_holder["text"]),
             )
-            model = policy.model.vlm_with_expert
+            
             model.record_attn = True
             model.debug_attn = True
             model.attention_mode = "cross_attn"
+            emb_matrix = model.vlm.get_input_embeddings().weight
 
             if not hasattr(model, "attn_records") or model.attn_records is None:
                 model.attn_records = {}
@@ -590,7 +622,7 @@ def record_loop(
                 model._last_vis_num_img_tokens = None
             if not hasattr(model, "_last_vis_token_layout"):
                 model._last_vis_token_layout = None
-            
+
             #print("attn_records keys before predict:", model.attn_records.keys())
 
             infer_t0 = time.perf_counter()
@@ -604,6 +636,24 @@ def record_loop(
                 task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
+            if display_data and hasattr(model, "_last_hidden_states"):
+                # 只取序列的最後一個 token 以節省計算量 [1, dim]
+                last_hidden = model._last_hidden_states[:, -1, :] 
+                
+                # 投影回詞表
+                top_tokens = get_top_tokens_from_hidden(
+                    last_hidden, 
+                    emb_matrix, 
+                    policy.model.tokenizer, # 使用模型自帶的 tokenizer
+                    top_k=5
+                )
+                
+                # 在 Rerun 或影像上顯示
+                if display_data:
+                    # 修改你原本的 vis 繪製邏輯
+                    vis = draw_token_overlay(vis, top_tokens)
+                    rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
+                    
             infer_ms = (time.perf_counter() - infer_t0) * 1000.0
             if smoothed_infer_ms is None:
                 smoothed_infer_ms = infer_ms

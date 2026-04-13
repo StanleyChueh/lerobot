@@ -502,6 +502,15 @@ class SmolVLMWithExpertModel(nn.Module):
                     out_emb = layer.post_attention_layernorm(out_emb)
                     out_emb = layer.mlp(out_emb)
 
+                    # --- ⚡ FULL-MODEL VLA STEERING INTERVENTION ⚡ ---
+                    if hasattr(self, "steering_vectors") and self.steering_vectors is not None:
+                        if layer_idx in self.steering_vectors:
+                            # Steer the VLM Language Backbone!
+                            if i == 0: 
+                                strength = getattr(self, "steering_strength", 1.0)
+                                out_emb += (self.steering_vectors[layer_idx] * strength)
+                    # ---------------------------------------
+
                     out_emb += after_first_residual
 
                     outputs_embeds.append(out_emb)

@@ -252,6 +252,36 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
+    def apply_steering_vector(self, multi_layer_clusters: dict[int, list[int]], strength: float = 1.0):
+        """
+        Calculates and injects steering vectors across MULTIPLE layers based on a dictionary of VLM FFN neurons.
+        """
+        steering_vectors = {}
+        total_injected = 0
+        
+        for layer_idx, target_neurons in multi_layer_clusters.items():
+            if not target_neurons:
+                continue
+                
+            vlm_layer = self.model.vlm_with_expert.get_vlm_model().text_model.layers[layer_idx]
+            vlm_W_value = vlm_layer.mlp.down_proj.weight.data
+            
+            selected_vectors = vlm_W_value[:, target_neurons]
+            steering_vector = selected_vectors.mean(dim=1).unsqueeze(0).unsqueeze(0)
+            
+            steering_vectors[layer_idx] = steering_vector
+            total_injected += len(target_neurons)
+            
+        self.model.vlm_with_expert.steering_vectors = steering_vectors
+        self.model.vlm_with_expert.steering_strength = strength
+        
+        print(f"[*] Multi-Layer Steering Active | Layers affected: {list(steering_vectors.keys())} | Total Neurons: {total_injected} | Strength: {strength}")
+
+    def remove_steering(self):
+        """Removes the active multi-layer steering intervention."""
+        self.model.vlm_with_expert.steering_vectors = None
+        print("[*] Multi-Layer Steering Removed.")
+
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None
