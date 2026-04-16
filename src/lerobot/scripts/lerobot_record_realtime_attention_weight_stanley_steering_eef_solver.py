@@ -93,6 +93,7 @@ import cv2
 import numpy as np
 import rerun as rr
 import torch
+import mujoco
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 _CONTROL_RE = re.compile(r"[\x00-\x1F\x7F]")
@@ -203,41 +204,6 @@ class RecordConfig:
                                V
                   ( Rerun Log / Loop Wait )
 """
-#top token
-def get_top_tokens_from_hidden(hidden_states, embedding_matrix, tokenizer, top_k=5):
-    """
-    將 hidden_states (B, seq, dim) 投影回詞表並取得 top_k tokens
-    """
-    # 進行矩陣相乘 (B, seq, dim) @ (dim, vocab_size) -> (B, seq, vocab_size)
-    logits = torch.matmul(hidden_states, embedding_matrix.t())
-    top_values, top_ids = torch.topk(logits, k=top_k, dim=-1)
-    
-    # 轉為文字
-    top_ids_list = top_ids.detach().cpu().numpy()
-    batch_tokens = []
-    for batch in top_ids_list:
-        seq_tokens = []
-        for token_ids in batch:
-            # 將 5 個 token_id 轉為文字串
-            decoded = [tokenizer.decode([tid]) for tid in token_ids]
-            seq_tokens.append(decoded)
-        batch_tokens.append(seq_tokens)
-    return batch_tokens
-
-def draw_token_overlay(img, top_tokens_list):
-    """
-    將解碼出的 token 繪製在影像畫面上
-    """
-    out = img.copy()
-    # 假設我們只取序列最後一個 token 的預測 (通常是當前決策的關鍵)
-    # top_tokens_list 結構: [batch][seq_len][top_k]
-    tokens = top_tokens_list[0][-1] 
-    
-    text = "Top Tokens: " + ", ".join(tokens)
-    x, y = 16, img.shape[0] - 20
-    cv2.putText(out, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
-    cv2.putText(out, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1, cv2.LINE_AA)
-    return out
 
 def extract_cross_attention_maps(attn_matrix, token_layout):
     if attn_matrix is None or token_layout is None:
@@ -391,6 +357,117 @@ def get_policy_image_keys(policy, obs_processed):
 
     return sorted(key for key in obs_processed if key.startswith("observation.images."))
 
+def _extract_joint_positions(obs_dict, use_site_pose=True):
+    # 先嘗試找「整包 vector」格式
+    candidate_keys = [
+        "observation.state",
+        "state",
+        "joint_positions",
+        "observation.joint_positions",
+        "joints",
+        "observation.joints",
+    ]
+
+    for k in candidate_keys:
+        if k in obs_dict:
+            q = np.asarray(obs_dict[k], dtype=np.float64).reshape(-1)
+            if q.size >= 6:
+                return q[:6]
+
+    # 再處理 Koch follower 這種「分散 scalar keys」格式
+    scalar_joint_keys = [
+        "shoulder_pan.pos",
+        "shoulder_lift.pos",
+        "elbow_flex.pos",
+        "wrist_flex.pos",
+        "wrist_roll.pos",
+    ]
+
+    missing = [k for k in scalar_joint_keys if k not in obs_dict]
+    if missing:
+        raise KeyError(
+            f"Missing joint keys for EEF FK: {missing}. Available keys: {list(obs_dict.keys())}"
+        )
+
+    q = [float(np.asarray(obs_dict[k]).reshape(-1)[0]) for k in scalar_joint_keys]
+
+    # 這個 XML 的 end_effector_site 掛在 link_5 下，
+    # joint_6 / gripper 對 site pose 不影響，所以補一個固定值即可。
+    if use_site_pose:
+        q.append(0.0)
+        return np.asarray(q, dtype=np.float64)
+
+    # 如果你真的要算到 link_6 body，再把 gripper.pos 補進來
+    if "gripper.pos" not in obs_dict:
+        raise KeyError(
+            f"Missing key 'gripper.pos'. Available keys: {list(obs_dict.keys())}"
+        )
+
+    gripper_q = float(np.asarray(obs_dict["gripper.pos"]).reshape(-1)[0])
+    q.append(gripper_q)
+    return np.asarray(q, dtype=np.float64)
+
+def _compute_eef_pose_from_xml(q, mj_model, mj_data, use_site=False):
+    joint_names = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
+
+    for i, joint_name in enumerate(joint_names):
+        joint_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        qpos_adr = mj_model.jnt_qposadr[joint_id]
+        mj_data.qpos[qpos_adr] = float(q[i])
+
+    mujoco.mj_fwdPosition(mj_model, mj_data)
+
+    if use_site:
+        # 注意：這會讀 XML 裡的 end_effector_site。
+        # 你的 XML 裡這個 site 在 link_5 下，所以 joint_6 不會影響它。
+        site_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_SITE, "end_effector_site")
+        pos = mj_data.site_xpos[site_id].copy()
+        mat = mj_data.site_xmat[site_id].reshape(3, 3).copy()
+    else:
+        # 這個比較像「真正最後一節末端」
+        body_id = mujoco.mj_name2id(mj_model, mujoco.mjtObj.mjOBJ_BODY, "link_6")
+        pos = mj_data.xpos[body_id].copy()
+        mat = mj_data.xmat[body_id].reshape(3, 3).copy()
+
+    quat_wxyz = np.empty(4, dtype=np.float64)
+    mujoco.mju_mat2Quat(quat_wxyz, mat.reshape(-1))
+
+    return pos, quat_wxyz
+
+def _smooth_eef_pose_for_viz(
+    pos,
+    quat_wxyz,
+    prev_pos=None,
+    prev_quat=None,
+    alpha_pos=0.15,
+    alpha_quat=0.20,
+    pos_deadband=0.0010,   # 1 mm
+):
+    pos = np.asarray(pos, dtype=np.float64).copy()
+    quat_wxyz = np.asarray(quat_wxyz, dtype=np.float64).copy()
+    quat_wxyz /= (np.linalg.norm(quat_wxyz) + 1e-12)
+
+    # Position smoothing + deadband
+    if prev_pos is None:
+        pos_out = pos
+    else:
+        delta = pos - prev_pos
+        delta[np.abs(delta) < pos_deadband] = 0.0
+        pos_out = prev_pos + alpha_pos * delta
+
+    # Quaternion smoothing
+    if prev_quat is None:
+        quat_out = quat_wxyz
+    else:
+        # Keep quaternion sign continuous
+        if np.dot(prev_quat, quat_wxyz) < 0:
+            quat_wxyz = -quat_wxyz
+
+        quat_out = (1.0 - alpha_quat) * prev_quat + alpha_quat * quat_wxyz
+        quat_out /= (np.linalg.norm(quat_out) + 1e-12)
+
+    return pos_out, quat_out
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -415,9 +492,7 @@ def record_loop(
     display_data: bool = False,
     listener = None,
     debug_freq: bool = False,
-):  
-    model = policy.model.vlm_with_expert
-
+):
     if policy:
         print("record loop, policy is not None:")
     else:
@@ -456,16 +531,30 @@ def record_loop(
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
-        def hook_fn(module, input, output):
-            # output 通常是一個 tuple，第一項是 hidden_states [batch, seq, dim]
-            if isinstance(output, tuple):
-                model._last_hidden_states = output[0]
-            else:
-                model._last_hidden_states = output
 
-        # 將 Hook 註冊在語言模型的最後一層
-        # 對於 SmolVLA/Llama 結構，通常是 model.vlm.model.layers[-1]
-        handle = model.vlm.language_model.model.layers[-1].register_forward_hook(hook_fn)
+        # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
+        print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
+        
+        # Your newly discovered 36-neuron, 13-layer cluster!
+        # high 
+        multi_layer_cluster = {2: [826], 4: [134], 7: [1151]}
+
+        # low
+        #multi_layer_cluster = {0: [828, 1028, 1422, 1575, 1801, 1992, 2521], 1: [14, 524, 1222, 1662, 1864, 2208, 2251, 2291, 2495, 2514], 2: [903, 1051, 1512, 1523, 1540, 1554, 1789, 1917, 2001], 3: [1328, 1591, 1754, 2003, 2021, 2022, 2498], 4: [691, 1010, 1258, 2185], 5: [107, 199, 207, 495, 718, 828, 1014, 1877, 1935, 2357, 2394], 6: [104, 285, 1743, 2117], 7: [114, 575, 962, 1011, 1151, 1354, 1522, 1593, 1979, 2187, 2428], 8: [519, 615, 718, 1006, 1255, 1457, 1741, 1849, 1863, 2321], 9: [3, 934, 1430, 1891, 1924, 2046, 2124, 2142, 2298, 2554], 10: [220, 511, 793, 1263, 1499, 1558, 1683, 1813, 1871, 2056, 2277, 2349, 2456], 11: [113, 419, 503, 797, 1253, 1628, 1820, 1823, 2025, 2504, 2533], 12: [280, 381, 470, 550, 1820, 2514], 13: [1400, 1744, 1749, 2077], 14: [364, 785, 988, 1343, 1463, 1806, 1823, 2191, 2199], 15: [51, 321, 655, 1036, 1157, 1231, 1274, 1443, 2315, 2356]}
+
+        # fast
+        #multi_layer_cluster = {12: [2109], 10: [1169], 13: [1759], 1: [1943]
+
+        # Start with your successful negative value
+        # fast:-20, slow:16
+        steering_strength = 0.0 
+         
+        if hasattr(policy, "apply_steering_vector"):
+            policy.apply_steering_vector(
+                multi_layer_clusters=multi_layer_cluster, 
+                strength=steering_strength
+            )
+        print("--------------------------------\n")
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -478,6 +567,19 @@ def record_loop(
     smoothed_infer_ms = None
     smoothed_dataset_ms = None
     smoothed_rerun_ms = None
+
+    # Load MuJoCo model only once. 不要放在 while 裡，不然每圈都重載會很慢。
+    script_dir = Path(__file__).resolve().parent
+    xml_path = script_dir / "follower.xml"   # 改成你實際的 xml 檔名
+
+    mj_model = mujoco.MjModel.from_xml_path(str(xml_path))
+    mj_data = mujoco.MjData(mj_model)
+
+    # False = 用 link_6 body pose（通常比較像真正末端）
+    # True  = 用 XML 裡的 end_effector_site
+    use_site_pose = True
+    eef_pos_viz = None
+    eef_quat_viz = None
 
     while timestamp < control_time_s:
 
@@ -595,6 +697,47 @@ def record_loop(
         # Applies a pipeline to the raw robot observation, default is IdentityProcessor
         obs_processed = robot_observation_processor(obs)
 
+        eef_pos = None
+        eef_quat = None
+
+        try:
+            q = _extract_joint_positions(obs_processed, use_site_pose=use_site_pose)
+
+            q_deg = q.copy()
+            q = np.deg2rad(q)
+
+            eef_pos, eef_quat = _compute_eef_pose_from_xml(
+                q=q,
+                mj_model=mj_model,
+                mj_data=mj_data,
+                use_site=use_site_pose,
+            )
+
+            eef_pos_viz, eef_quat_viz = _smooth_eef_pose_for_viz(
+                eef_pos,
+                eef_quat,
+                prev_pos=eef_pos_viz,
+                prev_quat=eef_quat_viz,
+                alpha_pos=0.15,
+                alpha_quat=0.20,
+                pos_deadband=0.0010,
+            )
+            print(
+                f"q = [{q[0]:.4f}, {q[1]:.4f}, {q[2]:.4f}, {q[3]:.4f}, {q[4]:.4f}, {q[5]:.4f}] | "
+                f"EEF = [{eef_pos[0]:.4f}, {eef_pos[1]:.4f}, {eef_pos[2]:.4f}]"
+            )
+
+            print(
+                "joints:",
+                f"shoulder_pan={float(np.asarray(obs_processed['shoulder_pan.pos']).reshape(-1)[0]):.4f}",
+                f"shoulder_lift={float(np.asarray(obs_processed['shoulder_lift.pos']).reshape(-1)[0]):.4f}",
+                f"elbow_flex={float(np.asarray(obs_processed['elbow_flex.pos']).reshape(-1)[0]):.4f}",
+                f"wrist_flex={float(np.asarray(obs_processed['wrist_flex.pos']).reshape(-1)[0]):.4f}",
+                f"wrist_roll={float(np.asarray(obs_processed['wrist_roll.pos']).reshape(-1)[0]):.4f}",
+            )
+        except Exception as e:
+            logging.warning(f"Failed to compute EEF pose: {e}")
+
         if policy is not None or dataset is not None:
             observation_frame = build_dataset_frame(dataset.features, obs_processed, prefix=OBS_STR)
 
@@ -602,17 +745,16 @@ def record_loop(
         if policy is not None and preprocessor is not None and postprocessor is not None:
             
             # Check the prompt, to see if there any incorrect char
-            print(
-                "[DEBUG] task repr:",
-                repr(task_holder["text"]),
-                "len:",
-                len(task_holder["text"]),
-            )
-            
+            # print(
+            #     "[DEBUG] task repr:",
+            #     repr(task_holder["text"]),
+            #     "len:",
+            #     len(task_holder["text"]),
+            # )
+            model = policy.model.vlm_with_expert
             model.record_attn = True
             model.debug_attn = True
             model.attention_mode = "cross_attn"
-            emb_matrix = model.vlm.get_input_embeddings().weight
 
             if not hasattr(model, "attn_records") or model.attn_records is None:
                 model.attn_records = {}
@@ -622,7 +764,7 @@ def record_loop(
                 model._last_vis_num_img_tokens = None
             if not hasattr(model, "_last_vis_token_layout"):
                 model._last_vis_token_layout = None
-
+            
             #print("attn_records keys before predict:", model.attn_records.keys())
 
             infer_t0 = time.perf_counter()
@@ -636,24 +778,6 @@ def record_loop(
                 task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
-            if display_data and hasattr(model, "_last_hidden_states"):
-                # 只取序列的最後一個 token 以節省計算量 [1, dim]
-                last_hidden = model._last_hidden_states[:, -1, :] 
-                
-                # 投影回詞表
-                top_tokens = get_top_tokens_from_hidden(
-                    last_hidden, 
-                    emb_matrix, 
-                    policy.model.tokenizer, # 使用模型自帶的 tokenizer
-                    top_k=5
-                )
-                
-                # 在 Rerun 或影像上顯示
-                if display_data:
-                    # 修改你原本的 vis 繪製邏輯
-                    vis = draw_token_overlay(vis, top_tokens)
-                    rr.log(f"attention/cam{cam_idx}", rr.Image(vis))
-                    
             infer_ms = (time.perf_counter() - infer_t0) * 1000.0
             if smoothed_infer_ms is None:
                 smoothed_infer_ms = infer_ms
@@ -700,10 +824,11 @@ def record_loop(
                 attn = getattr(model, "_last_vis_attn", None)
                 num_img_tokens = getattr(model, "_last_vis_num_img_tokens", None)
                 token_layout = getattr(model, "_last_vis_token_layout", None)
-                if attn is None:
-                    print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
-                else:
-                    print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
+                # if attn is None:
+                #     print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
+                # else:
+                #     pass
+                #     print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
 
             if display_data and attn is not None:
                 image_obs_keys = get_policy_image_keys(policy, observation_frame)
@@ -826,6 +951,27 @@ def record_loop(
         if display_data:
             rerun_t0 = time.perf_counter()
             log_rerun_data(observation=obs_processed, action=action_values)
+
+            if eef_pos_viz is not None and eef_quat_viz is not None:
+                quat_xyzw = np.array(
+                    [
+                        eef_quat_viz[1],
+                        eef_quat_viz[2],
+                        eef_quat_viz[3],
+                        eef_quat_viz[0],
+                    ],
+                    dtype=np.float64,
+                )
+
+                rr.log("observation.eef.pos.x", rr.Scalars([float(eef_pos_viz[0])]))
+                rr.log("observation.eef.pos.y", rr.Scalars([float(eef_pos_viz[1])]))
+                rr.log("observation.eef.pos.z", rr.Scalars([float(eef_pos_viz[2])]))
+
+                rr.log("observation.eef.quat.x", rr.Scalars([float(quat_xyzw[0])]))
+                rr.log("observation.eef.quat.y", rr.Scalars([float(quat_xyzw[1])]))
+                rr.log("observation.eef.quat.z", rr.Scalars([float(quat_xyzw[2])]))
+                rr.log("observation.eef.quat.w", rr.Scalars([float(quat_xyzw[3])]))
+
             rerun_ms = (time.perf_counter() - rerun_t0) * 1000.0
             if smoothed_rerun_ms is None:
                 smoothed_rerun_ms = rerun_ms
