@@ -765,11 +765,11 @@ def main():
     plot_paper_low_high_height_trajectories(
         all_rows,
         out_dir / "paper_low_high_height_10episodes.png",
-        low_label="low",
+        low_label="baseline",
         high_label="high",
-        n_episodes=1,
-        start_time=0,
-        end_time=6,
+        n_episodes=10,
+        start_time=2,
+        end_time=7,
     )
 
     print("\nSaved:")

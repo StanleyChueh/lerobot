@@ -7,7 +7,7 @@ from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
 @torch.no_grad()
 def load_smolvla_and_extract_semantic_embeddings(
-    policy_path="ethanCSL/svla_koch_pick_n_place_vla_steering_height",
+    policy_path="ethanCSL/svla_koch_sorting_n_stacking_vla_steering",
     top_k_tokens=5,
     device=None,
 ):
