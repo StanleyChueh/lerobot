@@ -486,6 +486,10 @@ if __name__ == "__main__":
         "Fast Transport": {
             "pos": ["fast", "risk"],
             "neg": ["breakfast"] # 排除早餐
+        },
+        "Green" : {
+            "pos": ["green","verdant","leafy"],
+            "neg": ["red","yellow","blue","pink"]
         }
     }
     

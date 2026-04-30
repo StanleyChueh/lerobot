@@ -423,48 +423,26 @@ def record_loop(
         # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
         print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
         
-        # high {7: [1151], 2: [826], 9: [2554]}
+        # high (negative: stronger)
+        multi_layer_cluster = {7: [1151], 2: [826], 9: [2554]}
 
-        # low {5: [1877], 13: [1744], 5: [1904], 10: [2349], 3: [2003], 1: [1222]}
+        # low
+        #multi_layer_cluster = {5: [1877], 13: [1744], 5: [1904], 10: [2349], 3: [2003], 1: [1222]}
 
-        # fast {7: [884], 8: [735], 12: [287], 14: [1994]}
+        # fast
+        #multi_layer_cluster = {7: [884], 8: [735], 12: [287], 14: [1994]}
 
-        # slow {0: [435], 5: [779], 8: [2269], 10: [1333], 11: [2157], 13: [1456]}
-
-        ## Color
-
-        # red (negative(-16): stronger, positive(16):weaker,but can pick green and khaki)
-        # {1: [1986,67], 4: [688], 8: [216], 13:[268]}
-
-        # black
-        # {10: [865], 4: [1026, 794]}
-
-        # green
-        # {9: [863], 13: [1589], 2:[1968]}
-
-        ## Shape(cube, block)  {3: [1742], 5: [2272], 14: [1980]}
+        # slow
+        #multi_layer_cluster = {0: [435], 5: [779], 8: [2269], 10: [1333], 11: [2157], 13: [1456]}
 
         # Start with your successful negative value
         # high:-25, low:16
-        red_strength = 0.0  #-16
-        green_strength = 100.0 #20 
-        cube_strength = -20
-
-        multi_layer_steering_config = {
-            1: {1986: red_strength, 67: red_strength},
-            2: {1968: green_strength},
-            4: {688: red_strength},
-            8: {216: red_strength},
-            9: {863: green_strength},
-            13: {268: red_strength, 1589: green_strength} ,
-            3: {1742: cube_strength},
-            5: {2272: cube_strength},
-            14: {1980: cube_strength},
-        }
+        steering_strength = -20.0 
          
         if hasattr(policy, "apply_steering_vector"):
             policy.apply_steering_vector(
-                multi_layer_clusters=multi_layer_steering_config
+                multi_layer_clusters=multi_layer_cluster, 
+                strength=steering_strength
             )
         print("--------------------------------\n")
 
