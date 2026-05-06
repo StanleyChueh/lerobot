@@ -423,7 +423,7 @@ def record_loop(
         # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
         print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
         
-        # high {7: [1151], 2: [826], 9: [2554]}
+        # high {7: [1151], 2: [826], 9: [2554], 3:[369], 1:[1390], 13:[414]}
 
         # low {5: [1877], 13: [1744], 5: [1904], 10: [2349], 3: [2003], 1: [1222]}
 
@@ -446,21 +446,33 @@ def record_loop(
 
         # Start with your successful negative value
         # high:-25, low:16
-        red_strength = 0.0  #-16
-        green_strength = 100.0 #20 
-        cube_strength = -20
+
+        high_strength = 1
+        low_strength = 4
 
         multi_layer_steering_config = {
-            1: {1986: red_strength, 67: red_strength},
-            2: {1968: green_strength},
-            4: {688: red_strength},
-            8: {216: red_strength},
-            9: {863: green_strength},
-            13: {268: red_strength, 1589: green_strength} ,
-            3: {1742: cube_strength},
-            5: {2272: cube_strength},
-            14: {1980: cube_strength},
+            1: {1222: low_strength},
+            2: {826: high_strength},
+            3: {369: high_strength, 2003: low_strength},
+            5: {1877: low_strength, 1904: low_strength, 2102: high_strength},
+            7: {1151: high_strength},
+            9: {2554: high_strength},
+            13:{414: high_strength},
+            15:{1157: low_strength},
         }
+
+        # red_strength = 0
+        # green_strength = 0
+
+        # multi_layer_steering_config = {
+        #     1: {1986: red_strength, 67: red_strength, 798: green_strength},
+        #     4: {688: red_strength},
+        #     7: {230: green_strength},
+        #     8: {216: red_strength},
+        #     9: {863: green_strength},
+        #     11:{1182: green_strength},
+        #     13:{268: red_strength},
+        # }
          
         if hasattr(policy, "apply_steering_vector"):
             policy.apply_steering_vector(

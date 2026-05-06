@@ -170,7 +170,7 @@ def rank_color_neurons(
     # Optional synonyms. Add more if useful.
     color_aliases = {
         "red": {"red", "reddish", "scarlet", "crimson"},
-        "black": {"black", "blackish"},
+        "green": {"green", "olive","lime", "mint"},
     }
 
     target_words = color_aliases.get(target_color, {target_color})
@@ -351,10 +351,10 @@ if __name__ == "__main__":
         min_clean_ratio=0.50,
     )
 
-    black_neurons = rank_color_neurons(
+    green_neurons = rank_color_neurons(
         metadata=bundle["metadata"],
-        target_color="black",
-        other_colors=["red", "blue", "green", "yellow", "white"],
+        target_color="green",
+        other_colors=["red", "blue", "pink", "yellow", "white"],
         top_n=10,
         max_color_rank=3,
         min_color_hits=1,
@@ -363,7 +363,7 @@ if __name__ == "__main__":
 
     color_ranking_results = {
         "Red Object": red_neurons,
-        "Black Object": black_neurons,
+        "Green Object": green_neurons,
     }
 
     print_color_ranking_summary(color_ranking_results)

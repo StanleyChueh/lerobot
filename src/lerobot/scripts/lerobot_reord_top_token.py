@@ -7,7 +7,7 @@ from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
 @torch.no_grad()
 def load_smolvla_and_extract_semantic_embeddings(
-    policy_path="ethanCSL/svla_koch_sorting_n_stacking_vla_steering",
+    policy_path="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
     top_k_tokens=5,
     device=None,
 ):
@@ -461,7 +461,8 @@ def print_keyword_ranking_summary(results):
             print(f"{neuron['rank']:<5} | {neuron['match_count']:<11} | L{neuron['layer']:<4} | {neuron['neuron']:<6} | [{tokens_str}]")
 
 if __name__ == "__main__":
-    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height"
+    #policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2"
+    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2_unfrozen"
     
     bundle = load_smolvla_and_extract_semantic_embeddings(
         policy_path=policy_path,
@@ -491,6 +492,15 @@ if __name__ == "__main__":
             "pos": ["green","verdant","leafy"],
             "neg": ["red","yellow","blue","pink"]
         }
+        # "Push": {
+        #     "pos" : ["push", "press"],
+        #     "neg" : []
+        # },
+        # "Sorting" : {
+        #     "pos" : ["sorting", "sort", "arrange", "classify", "organize"],
+        #     "neg" : []
+        # }
+
     }
     
     # 執行關鍵字頻率排名
@@ -503,5 +513,7 @@ if __name__ == "__main__":
     # 印出結果
     print_keyword_ranking_summary(keyword_ranking_results)
     print_top_neurons_overall_by_logit(bundle["metadata"], top_n=15)
+
+
 
 

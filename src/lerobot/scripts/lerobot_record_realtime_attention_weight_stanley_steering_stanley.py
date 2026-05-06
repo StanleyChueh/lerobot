@@ -424,20 +424,23 @@ def record_loop(
         print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
         
         # high (negative: stronger)
-        multi_layer_cluster = {7: [1151], 2: [826], 9: [2554]}
+        #multi_layer_cluster = {7: [1151], 2: [826], 9: [2554]}
 
         # low
         #multi_layer_cluster = {5: [1877], 13: [1744], 5: [1904], 10: [2349], 3: [2003], 1: [1222]}
 
         # fast
-        #multi_layer_cluster = {7: [884], 8: [735], 12: [287], 14: [1994]}
+        #multi_layer_cluster = {7: [884], 8: [735], 13: [273], 14: [1994], 15: [1623, 2517]}
 
         # slow
         #multi_layer_cluster = {0: [435], 5: [779], 8: [2269], 10: [1333], 11: [2157], 13: [1456]}
 
+        #red
+        multi_layer_cluster = {1: [67,1986], 4: [688], 8: [216], 13: [268]}
+
         # Start with your successful negative value
         # high:-25, low:16
-        steering_strength = -20.0 
+        steering_strength = 0.0 
          
         if hasattr(policy, "apply_steering_vector"):
             policy.apply_steering_vector(
@@ -445,6 +448,7 @@ def record_loop(
                 strength=steering_strength
             )
         print("--------------------------------\n")
+
 
     timestamp = 0
     start_episode_t = time.perf_counter()
