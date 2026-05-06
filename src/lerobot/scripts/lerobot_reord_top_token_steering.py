@@ -104,14 +104,17 @@ def print_steered_neurons_info(metadata, config, title="Target Neurons Info"):
     print("=" * 115 + "\n")
 
 
-if __name__ == "__main__":
-    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2_unfrozen"
+if  __name__ == "__main__":
+    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height"
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     print(f"[*] Loading policy: {policy_path}")
     policy = SmolVLAPolicy.from_pretrained(policy_path)
     policy.eval()
     policy.to(device)
+
+    # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
+    print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
 
     multi_layer_steering_config = {
         1: {1222: 10.0},
@@ -124,49 +127,49 @@ if __name__ == "__main__":
         15:{1157: 10.0},
     }
 
+    # # Extract the original weights and scale them so their L2 Norm matches the config target
+    # steering_tensors = {}
+    # vlm_model = policy.model.vlm_with_expert.get_vlm_model()
+    
+    # for layer_idx, neurons in multi_layer_steering_config.items():
+    #     steering_tensors[layer_idx] = {}
+    #     for neuron_idx, target_norm in neurons.items():
+    #         # Get the original vector
+    #         original_vec = vlm_model.text_model.layers[layer_idx].mlp.down_proj.weight.data[:, neuron_idx]
+            
+    #         # Calculate the current L2 Norm
+    #         current_norm = original_vec.norm(p=2)
+            
+    #         # Create the target vector by normalizing and scaling to target_norm
+    #         if current_norm > 0:
+    #             steering_tensors[layer_idx][neuron_idx] = (original_vec / current_norm) * target_norm
+    #         else:
+    #             # 避免全為 0 的向量導致除以零的錯誤
+    #             steering_tensors[layer_idx][neuron_idx] = original_vec
+
+    # ---------------------------------------------------------
+    # 1. 取得干預前 (BEFORE) 的特徵與 Logits
+    # ---------------------------------------------------------
     print("[*] Extracting embeddings BEFORE steering...")
     _, metadata_before, _ = extract_semantic_embeddings_from_policy(policy, top_k_tokens=5, device=device)
     
     # 顯示干預前的結果
     print_steered_neurons_info(metadata_before, multi_layer_steering_config, title="[BEFORE] Steered Neurons: Logits & Top Tokens")
 
-
-    # 1. 萃取干預前的特徵 (這會給我們基礎的 Semantic Embeddings)
-    print("[*] Extracting base semantic embeddings...")
-    sem_embs, metadata_before, _ = extract_semantic_embeddings_from_policy(policy, top_k_tokens=10, device=device)
-    
-    # 建立 lookup table: (layer, neuron) -> index_in_sem_embs
-    lookup = {(m["layer"], m["neuron"]): i for i, m in enumerate(metadata_before)}
-
-    # 3. 核心邏輯：將「強度」轉換為「縮放後的向量」
-    prepared_steering_data = {}
-    for layer_idx, neurons in multi_layer_steering_config.items():
-        prepared_steering_data[layer_idx] = {}
-        for neuron_idx, strength in neurons.items():
-            idx = lookup.get((layer_idx, neuron_idx))
-            if idx is not None:
-                # 取得該神經元的語義方向 (單位向量)
-                base_vec = torch.from_numpy(sem_embs[idx]).to(device)
-                
-                # 根據強度縮放：
-                # 如果 strength > 0, 向量變強
-                # 如果 strength < 0, 向量反轉縮小 (如你的需求)
-                # 如果 strength == 0, 這裡可以決定是要設為 0 還是維持原樣
-                multiplier = strength if strength >= 0 else (1.0 / abs(strength))
-                
-                prepared_steering_data[layer_idx][neuron_idx] = base_vec * multiplier
-            else:
-                print(f"[!] Warning: Neuron L{layer_idx}_N{neuron_idx} not found.")
-
-    # 4. 執行權重干預 (修正關鍵字參數名稱)
+    # ---------------------------------------------------------
+    # 2. 進行權重干預
+    # ---------------------------------------------------------
     if hasattr(policy, "apply_steering_vector"):
         policy.apply_steering_vector(
-            steering_data=prepared_steering_data  # 這裡名稱要對應函式定義
+            steering_data=multi_layer_steering_config
         )
-    else:
-        print("[WARN] Policy does not have 'apply_steering_vector' method.")
+        print("[INFO] apply_steering_vector executed successfully.")
 
-    # 5. 驗證干預後的結果
+    # ---------------------------------------------------------
+    # 3. 取得干預後 (AFTER) 的特徵與 Logits
+    # ---------------------------------------------------------
     print("[*] Extracting embeddings AFTER steering...")
     _, metadata_after, _ = extract_semantic_embeddings_from_policy(policy, top_k_tokens=5, device=device)
-    print_steered_neurons_info(metadata_after, multi_layer_steering_config, title="[AFTER] Steered Neurons")
+    
+    # 顯示干預後的結果
+    print_steered_neurons_info(metadata_after, multi_layer_steering_config, title="[AFTER] Steered Neurons: Logits & Top Tokens")

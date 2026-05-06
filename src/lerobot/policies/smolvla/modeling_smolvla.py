@@ -259,10 +259,31 @@ class SmolVLAPolicy(PreTrainedPolicy):
         直接將 FFN 的 down_proj 權重替換為指定的向量。
         steering_data: { layer_idx: { neuron_idx: vector_tensor } }
         """
+        # Extract the original weights and scale them so their L2 Norm matches the config target
+        steering_tensors = {}
+        vlm_model = self.model.vlm_with_expert.get_vlm_model()
+        
+        for layer_idx, neurons in steering_data.items():
+            steering_tensors[layer_idx] = {}
+            for neuron_idx, target_norm in neurons.items():
+                # Get the original vector
+                original_vec = vlm_model.text_model.layers[layer_idx].mlp.down_proj.weight.data[:, neuron_idx]
+                
+                # Calculate the current L2 Norm
+                current_norm = original_vec.norm(p=2)
+                
+                # Create the target vector by normalizing and scaling to target_norm
+                if current_norm > 0:
+                    steering_tensors[layer_idx][neuron_idx] = (original_vec / current_norm) * target_norm
+                else:
+                    # 避免全為 0 的向量導致除以零的錯誤
+                    steering_tensors[layer_idx][neuron_idx] = original_vec
+
         total_modified = 0
         layers_affected = []
 
-        for layer_idx, target_neurons_dict in steering_data.items():
+        # FIX: Iterate over steering_tensors instead of steering_data
+        for layer_idx, target_neurons_dict in steering_tensors.items():
             if not target_neurons_dict:
                 continue
                 
@@ -272,7 +293,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
             
             layer_modified_count = 0
             for neuron_idx, steering_vec in target_neurons_dict.items():
-                # 確保向量格式與裝置正確
+                # 確保向量格式與裝置正確 (steering_vec is now a Tensor)
                 target_vec = steering_vec.to(
                     device=vlm_layer.mlp.down_proj.weight.device,
                     dtype=vlm_layer.mlp.down_proj.weight.dtype
