@@ -447,8 +447,8 @@ def record_loop(
         # Start with your successful negative value
         # high:-25, low:16
 
-        high_strength = 1
-        low_strength = 4
+        high_strength = 0
+        low_strength = -10
 
         multi_layer_steering_config = {
             1: {1222: low_strength},

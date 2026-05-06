@@ -252,103 +252,44 @@ class SmolVLAPolicy(PreTrainedPolicy):
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
 
-    import torch
-    # def apply_steering_vector(self, multi_layer_clusters: dict[int, dict[int, float]]):
-    #     """
-    #     Directly modifies the weights of specific VLM FFN neurons based on the custom target logic.
-    #     - target == 0: No change
-    #     - target > 0 (e.g., 100): Multiply weight vector by target
-    #     - target < 0 (e.g., -20): Divide weight vector by abs(target)
-    #     Format: {layer_idx: {neuron_idx: strength, neuron_idx2: strength2, ...}}
-    #     """
-    #     total_modified = 0
-    #     layers_affected = []
-        
-    #     for layer_idx, target_neurons_dict in multi_layer_clusters.items():
-    #         if not target_neurons_dict:
-    #             continue
-                
-    #         # 取得該層的物件
-    #         vlm_layer = self.model.vlm_with_expert.get_vlm_model().text_model.layers[layer_idx]
-            
-    #         layer_modified_count = 0
-            
-    #         # 針對該層設定的神經元逐一處理
-    #         for neuron_idx, target_val in target_neurons_dict.items():
-    #             # 1. 當 target == 0 時，不做任何修改
-    #             if target_val == 0.0:
-    #                 continue
-                
-    #             # 2. 當 target > 0 時，乘上對應的倍數 (例如 100)
-    #             elif target_val > 0.0:
-    #                 multiplier = float(target_val)
-                    
-    #             # 3. 當 target < 0 時，除以對應數值的絕對值 (減少倍數，例如 -20 變成除以 20)
-    #             else:
-    #                 multiplier = 1.0 / abs(float(target_val))
-                
-    #             # 執行直接修改權重矩陣的操作
-    #             vlm_layer.mlp.down_proj.weight.data[:, neuron_idx] *= multiplier
-                
-    #             layer_modified_count += 1
-    #             total_modified += 1
-                
-    #         if layer_modified_count > 0:
-    #             layers_affected.append(layer_idx)
-                
-    #     # 由於我們直接修改了權重，就不需要再儲存 steering_vectors 作為動態注入用了
-    #     self.model.vlm_with_expert.steering_vectors = {}
-    #     self.model.vlm_with_expert.steering_strength = 0.0 
-        
-    #     print(f"[*] Weight Editing Active | Layers affected: {layers_affected} | Total Neurons Modified: {total_modified} | (Weights directly scaled based on custom logic)")
 
+    @torch.no_grad()
+    def apply_steering_vector(self, steering_data: dict[int, dict[int, torch.Tensor]]):
+        """
+        直接將 FFN 的 down_proj 權重替換為指定的向量。
+        steering_data: { layer_idx: { neuron_idx: vector_tensor } }
+        """
+        total_modified = 0
+        layers_affected = []
 
-    def apply_steering_vector(self, multi_layer_clusters: dict[int, dict[int, float]]):
-        """
-        Calculates and injects steering vectors across MULTIPLE layers based on a dictionary of VLM FFN neurons.
-        Format: {layer_idx: {neuron_idx: strength, neuron_idx2: strength2, ...}}
-        """
-        steering_vectors = {}
-        total_injected = 0
-        
-        for layer_idx, target_neurons_dict in multi_layer_clusters.items():
+        for layer_idx, target_neurons_dict in steering_data.items():
             if not target_neurons_dict:
                 continue
                 
-            vlm_layer = self.model.vlm_with_expert.get_vlm_model().text_model.layers[layer_idx]
-            vlm_W_value = vlm_layer.mlp.down_proj.weight.data
+            # 取得模型層 (根據 SmolVLA 結構)
+            vlm_model = self.model.vlm_with_expert.get_vlm_model()
+            vlm_layer = vlm_model.text_model.layers[layer_idx]
             
+            layer_modified_count = 0
+            for neuron_idx, steering_vec in target_neurons_dict.items():
+                # 確保向量格式與裝置正確
+                target_vec = steering_vec.to(
+                    device=vlm_layer.mlp.down_proj.weight.device,
+                    dtype=vlm_layer.mlp.down_proj.weight.dtype
+                )
 
-            for neuron_idx, strength in target_neurons_dict.items():
-                vlm_layer.mlp.down_proj.weight.data[:, neuron_idx] *= strength
+                # 執行權重手術：down_proj.weight 的尺寸是 [hidden_size, intermediate_size]
+                # 我們要修改第 neuron_idx 個神經元寫回隱藏層的向量
+                vlm_layer.mlp.down_proj.weight.data[:, neuron_idx] = target_vec
+                
+                layer_modified_count += 1
+                total_modified += 1
+                
+            if layer_modified_count > 0:
+                layers_affected.append(layer_idx)
+                    
+        print(f"[*] Weight Surgery Complete | Total Neurons Overwritten: {total_modified}")
 
-            # 提取 keys (neuron_idx) 和 values (對應的 strength)
-            neurons = list(target_neurons_dict.keys())
-            # 將 strengths 轉成 tensor 以便進行矩陣運算
-            strengths = torch.tensor(
-                list(target_neurons_dict.values()), 
-                device=vlm_W_value.device, 
-                dtype=vlm_W_value.dtype
-            )
-            
-            # 提取目標神經元的向量: shape [hidden_size, num_target_neurons]
-            selected_vectors = vlm_W_value[:, neurons]
-            selected_vectors = vlm_W_value[:, neurons]
-            
-            # 將每個向量乘上其專屬的強度 (利用 PyTorch Broadcasting)
-            weighted_vectors = selected_vectors * strengths.unsqueeze(0)
-            
-            # 計算平均值並增加維度以符合原本的 shape: [1, 1, hidden_size]
-            steering_vector = weighted_vectors.mean(dim=1).unsqueeze(0).unsqueeze(0)
-            
-            steering_vectors[layer_idx] = steering_vector
-            total_injected += len(neurons)
-            
-        self.model.vlm_with_expert.steering_vectors = steering_vectors
-        # 將全局強度設為 1.0，因為不同的強度已經提前乘進 vector 裡面了
-        self.model.vlm_with_expert.steering_strength = 1.0 
-        
-        print(f"[*] Multi-Layer Steering Active | Layers affected: {list(steering_vectors.keys())} | Total Neurons: {total_injected} | (Strengths baked into vectors)")
 
     def remove_steering(self):
         """Removes the active multi-layer steering intervention."""
