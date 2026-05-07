@@ -266,6 +266,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
         for layer_idx, neurons in steering_data.items():
             steering_tensors[layer_idx] = {}
             for neuron_idx, target_norm in neurons.items():
+                # IMPORTANT:
+                # target_norm == 0.0 means no-intervention baseline.
+                # Do NOT overwrite the value vector with a zero vector.
+                if float(target_norm) == 0.0:
+                    print(
+                        f"[BASELINE] Skip L{layer_idx} neuron {neuron_idx}: "
+                        "target_norm=0.0 means no steering."
+                    )
+                    continue
+
                 # Get the original vector
                 original_vec = vlm_model.text_model.layers[layer_idx].mlp.down_proj.weight.data[:, neuron_idx]
                 

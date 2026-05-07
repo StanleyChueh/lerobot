@@ -105,7 +105,7 @@ def print_steered_neurons_info(metadata, config, title="Target Neurons Info"):
 
 
 if  __name__ == "__main__":
-    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height"
+    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2_unfrozen"
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     print(f"[*] Loading policy: {policy_path}")
