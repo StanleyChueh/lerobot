@@ -251,81 +251,274 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+    
+############################################################################
+    '''
+        The following code block is the correct, paper-alike method to set neuron's activation to fixed scalar, instead of
+        modifing value vector(down proj), down proj is model weight, so previous method change model weight, not activation!!
+    '''
 
-
-    @torch.no_grad()
-    def apply_steering_vector(self, steering_data: dict[int, dict[int, torch.Tensor]]):
+    def clear_activation_steering(self):
         """
-        直接將 FFN 的 down_proj 權重替換為指定的向量。
-        steering_data: { layer_idx: { neuron_idx: vector_tensor } }
+        Remove all activation-steering hooks.
+        This restores normal no-intervention inference.
         """
-        # Extract the original weights and scale them so their L2 Norm matches the config target
-        steering_tensors = {}
-        vlm_model = self.model.vlm_with_expert.get_vlm_model()
-        
-        for layer_idx, neurons in steering_data.items():
-            steering_tensors[layer_idx] = {}
-            for neuron_idx, target_norm in neurons.items():
-                # IMPORTANT:
-                # target_norm == 0.0 means no-intervention baseline.
-                # Do NOT overwrite the value vector with a zero vector.
-                if float(target_norm) == 0.0:
-                    print(
-                        f"[BASELINE] Skip L{layer_idx} neuron {neuron_idx}: "
-                        "target_norm=0.0 means no steering."
-                    )
-                    continue
+        if hasattr(self, "_activation_steering_handles"):
+            for handle in self._activation_steering_handles:
+                handle.remove()
 
-                # Get the original vector
-                original_vec = vlm_model.text_model.layers[layer_idx].mlp.down_proj.weight.data[:, neuron_idx]
-                
-                # Calculate the current L2 Norm
-                current_norm = original_vec.norm(p=2)
-                
-                # Create the target vector by normalizing and scaling to target_norm
-                if current_norm > 0:
-                    steering_tensors[layer_idx][neuron_idx] = (original_vec / current_norm) * target_norm
-                else:
-                    # 避免全為 0 的向量導致除以零的錯誤
-                    steering_tensors[layer_idx][neuron_idx] = original_vec
+        self._activation_steering_handles = []
+        self._activation_steering_debug = {}
 
-        total_modified = 0
-        layers_affected = []
+        print("[*] Activation steering hooks cleared.")
 
-        # FIX: Iterate over steering_tensors instead of steering_data
-        for layer_idx, target_neurons_dict in steering_tensors.items():
-            if not target_neurons_dict:
-                continue
-                
-            # 取得模型層 (根據 SmolVLA 結構)
-            vlm_model = self.model.vlm_with_expert.get_vlm_model()
-            vlm_layer = vlm_model.text_model.layers[layer_idx]
-            
-            layer_modified_count = 0
-            for neuron_idx, steering_vec in target_neurons_dict.items():
-                # 確保向量格式與裝置正確 (steering_vec is now a Tensor)
-                target_vec = steering_vec.to(
-                    device=vlm_layer.mlp.down_proj.weight.device,
-                    dtype=vlm_layer.mlp.down_proj.weight.dtype
+
+    def _make_activation_steering_pre_hook(
+        self,
+        layer_idx: int,
+        neuron_ids: list[int],
+        alpha: float,
+        record_debug: bool = False,
+    ):
+        """
+        Paper-style FFN activation intervention.
+
+        For selected FFN neurons:
+            activation[..., neuron_idx] = alpha
+
+        This modifies the input activation to down_proj.
+        It does NOT modify down_proj.weight.
+        """
+        neuron_ids_cpu = torch.tensor(neuron_ids, dtype=torch.long)
+
+        def hook(module, inputs):
+            # inputs[0] is the FFN intermediate activation before down_proj.
+            # Shape: [batch, seq_len, intermediate_dim]
+            act = inputs[0]
+
+            if act is None:
+                return inputs
+
+            neuron_ids_device = neuron_ids_cpu.to(act.device)
+
+            if neuron_ids_device.max().item() >= act.shape[-1]:
+                raise IndexError(
+                    f"Layer {layer_idx}: neuron index out of range. "
+                    f"Max requested neuron={neuron_ids_device.max().item()}, "
+                    f"intermediate_dim={act.shape[-1]}"
                 )
 
-                # 執行權重手術：down_proj.weight 的尺寸是 [hidden_size, intermediate_size]
-                # 我們要修改第 neuron_idx 個神經元寫回隱藏層的向量
-                vlm_layer.mlp.down_proj.weight.data[:, neuron_idx] = target_vec
+            debug_record = None
+
+            if record_debug:
+                before = act[..., neuron_ids_device].detach().float()
+                debug_record = {
+                    "alpha": float(alpha),
+                    "neurons": neuron_ids,
+                    "before_mean": before.mean().item(),
+                    "before_max": before.max().item(),
+                    "before_min": before.min().item(),
+                    "shape": tuple(before.shape),
+                }
+
+            steered_act = act.clone()
+            steered_act[..., neuron_ids_device] = torch.tensor(
+                alpha,
+                device=steered_act.device,
+                dtype=steered_act.dtype,
+            )
+
+            if record_debug:
+                after = steered_act[..., neuron_ids_device].detach().float()
+                debug_record.update(
+                    {
+                        "after_mean": after.mean().item(),
+                        "after_max": after.max().item(),
+                        "after_min": after.min().item(),
+                    }
+                )
+                self._activation_steering_debug.setdefault(layer_idx, []).append(debug_record)
+
+            return (steered_act, *inputs[1:])
+
+        return hook
+
+
+    def set_activation_steering(
+        self,
+        steering_neurons: dict[int, list[int]],
+        alpha: float,
+        record_debug: bool = False,
+    ):
+        """
+        Register paper-style activation steering hooks on VLM FFN down_proj modules.
+
+        steering_neurons format:
+            {
+                layer_idx: [neuron_idx_1, neuron_idx_2, ...],
+                ...
+            }
+
+        alpha:
+            fixed scalar activation value.
+
+        Important:
+            This does NOT modify weights.
+            This modifies selected FFN activations during forward pass.
+        """
+        self.clear_activation_steering()
+
+        self._activation_steering_handles = []
+        self._activation_steering_debug = {}
+
+        text_model = self.model.vlm_with_expert.get_vlm_model().text_model
+
+        for layer_idx, neuron_ids in steering_neurons.items():
+            if len(neuron_ids) == 0:
+                continue
+
+            down_proj = text_model.layers[layer_idx].mlp.down_proj
+
+            handle = down_proj.register_forward_pre_hook(
+                self._make_activation_steering_pre_hook(
+                    layer_idx=layer_idx,
+                    neuron_ids=neuron_ids,
+                    alpha=alpha,
+                    record_debug=record_debug,
+                )
+            )
+
+            self._activation_steering_handles.append(handle)
+
+            print(
+                f"[ACTIVATION STEERING] L{layer_idx}: "
+                f"set neurons {neuron_ids} to alpha={alpha}"
+            )
+
+        print(
+            f"[*] Activation steering ready | "
+            f"Total hooked layers: {len(self._activation_steering_handles)}"
+        )
+
+
+    def print_activation_steering_debug(self):
+        """
+        Print recorded pre-intervention activation statistics.
+        Only works if set_activation_steering(..., record_debug=True).
+        """
+        if not hasattr(self, "_activation_steering_debug") or not self._activation_steering_debug:
+            print("[DEBUG] No activation steering debug records found.")
+            return
+
+        print("\n" + "=" * 100)
+        print("Activation Steering Debug: Before-Intervention Activation Stats")
+        print("=" * 100)
+
+        for layer_idx, records in sorted(self._activation_steering_debug.items()):
+            print(f"\n[LAYER {layer_idx}] hook calls: {len(records)}")
+            for call_idx, rec in enumerate(records[:10]):
+                print(
+                    f"  call={call_idx:<3} "
+                    f"alpha={rec['alpha']:<6.2f} "
+                    f"neurons={rec['neurons']} "
+                    f"before_mean={rec['before_mean']:.4f} "
+                    f"before_max={rec['before_max']:.4f} "
+                    f"before_min={rec['before_min']:.4f} "
+                    f"after_mean={rec['after_mean']:.4f} "
+                    f"after_max={rec['after_max']:.4f} "
+                    f"after_min={rec['after_min']:.4f} "
+                    f"shape={rec['shape']}"
+                )
+
+        print("=" * 100 + "\n")
+
+####################################################################################
+
+    '''
+        This apply_steering_vector does not set neuron's activation to fixed scalar, it overwrites neuron's value vector instead
+        , but based on "Mechanistic interpretability for steering vision-language-action models", value vector should be fixed,
+        Only the activation can be changed!!
+    '''
+    # @torch.no_grad()
+    # def apply_steering_vector(self, steering_data: dict[int, dict[int, torch.Tensor]]):
+    #     """
+    #         直接將 FFN 的 down_proj 權重替換為指定的向量。
+    #         steering_data: { layer_idx: { neuron_idx: vector_tensor } }
+
+    #         FFN(x) = Σ_i activation_i(x) · value_vector_i
+    #     """
+    #     # Extract the original weights and scale them so their L2 Norm matches the config target
+    #     steering_tensors = {}
+    #     vlm_model = self.model.vlm_with_expert.get_vlm_model()
+        
+    #     for layer_idx, neurons in steering_data.items():
+    #         steering_tensors[layer_idx] = {}
+    #         for neuron_idx, target_norm in neurons.items():
+    #             # IMPORTANT:
+    #             # target_norm == 0.0 means no-intervention baseline.
+    #             # Do NOT overwrite the value vector with a zero vector.
+    #             if float(target_norm) == 0.0:
+    #                 print(
+    #                     f"[BASELINE] Skip L{layer_idx} neuron {neuron_idx}: "
+    #                     "target_norm=0.0 means no steering."
+    #                 )
+    #                 continue
+
+    #             # Get the original extracted value vector from one transformer block
+    #             # vlm_model.text_model.layers[layer_idx] -> select one transformer block
+    #             # mlp.down_proj -> select FFN down projection layer(hidden layer)
+    #             # down_proj.weight -> learned weight matrix maps FFN hidden activations back to model hidden size
+    #             original_vec = vlm_model.text_model.layers[layer_idx].mlp.down_proj.weight.data[:, neuron_idx]
                 
-                layer_modified_count += 1
-                total_modified += 1
+    #             # Calculate the current L2 Norm
+    #             current_norm = original_vec.norm(p=2)
                 
-            if layer_modified_count > 0:
-                layers_affected.append(layer_idx)
+    #             # Create the target vector by normalizing and scaling to target_norm
+    #             if current_norm > 0:
+    #                 steering_tensors[layer_idx][neuron_idx] = (original_vec / current_norm) * target_norm
+    #             else:
+    #                 # 避免全為 0 的向量導致除以零的錯誤
+    #                 steering_tensors[layer_idx][neuron_idx] = original_vec
+
+    #     total_modified = 0
+    #     layers_affected = []
+
+    #     # FIX: Iterate over steering_tensors instead of steering_data
+    #     for layer_idx, target_neurons_dict in steering_tensors.items():
+    #         if not target_neurons_dict:
+    #             continue
+                
+    #         # 取得模型層 (根據 SmolVLA 結構)
+    #         vlm_model = self.model.vlm_with_expert.get_vlm_model()
+    #         vlm_layer = vlm_model.text_model.layers[layer_idx]
+            
+    #         layer_modified_count = 0
+    #         for neuron_idx, steering_vec in target_neurons_dict.items():
+    #             # 確保向量格式與裝置正確 (steering_vec is now a Tensor)
+    #             target_vec = steering_vec.to(
+    #                 device=vlm_layer.mlp.down_proj.weight.device,
+    #                 dtype=vlm_layer.mlp.down_proj.weight.dtype
+    #             )
+
+    #             # 執行權重手術：down_proj.weight 的尺寸是 [hidden_size, intermediate_size]
+    #             # 我們要修改第 neuron_idx 個神經元寫回隱藏層的向量
+    #             vlm_layer.mlp.down_proj.weight.data[:, neuron_idx] = target_vec
+                
+    #             layer_modified_count += 1
+    #             total_modified += 1
+                
+    #         if layer_modified_count > 0:
+    #             layers_affected.append(layer_idx)
                     
-        print(f"[*] Weight Surgery Complete | Total Neurons Overwritten: {total_modified}")
+    #     print(f"[*] Weight Surgery Complete | Total Neurons Overwritten: {total_modified}")
 
 
-    def remove_steering(self):
-        """Removes the active multi-layer steering intervention."""
-        self.model.vlm_with_expert.steering_vectors = None
-        print("[*] Multi-Layer Steering Removed.")
+    # def remove_steering(self):
+    #     """Removes the active multi-layer steering intervention."""
+    #     self.model.vlm_with_expert.steering_vectors = None
+    #     print("[*] Multi-Layer Steering Removed.")
+
+
 
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
