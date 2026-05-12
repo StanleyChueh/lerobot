@@ -447,8 +447,8 @@ def record_loop(
         # Start with your successful negative value
         # high:-25, low:16
 
-        high_strength = 0
-        low_strength = -10
+        high_strength = -10
+        low_strength = 0
 
         multi_layer_steering_config = {
             1: {1222: low_strength},
@@ -476,7 +476,7 @@ def record_loop(
          
         if hasattr(policy, "apply_steering_vector"):
             policy.apply_steering_vector(
-                multi_layer_clusters=multi_layer_steering_config
+                steering_data=multi_layer_steering_config
             )
         print("--------------------------------\n")
 

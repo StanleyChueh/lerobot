@@ -4,17 +4,11 @@ from sklearn.neighbors import NearestNeighbors
 
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 import re
-
-def normalize_token(token):
-    token = token.strip().lower()
-    token = token.replace("Ġ", "")
-    token = token.replace("▁", "")
-    token = token.strip(".,;:!?()[]{}'\"`-_/\\")
-    return token
+import math
 
 @torch.no_grad()
 def load_smolvla_and_extract_semantic_embeddings(
-    policy_path="ethanCSL/svla_koch_sorting_n_stacking_vla_steering",
+    policy_path="ethanCSL/svla_koch_pick_n_place_vla_steering_color_unfrozen",
     top_k_tokens=5,
     device=None,
 ):
@@ -118,6 +112,23 @@ def load_smolvla_and_extract_semantic_embeddings(
         "metadata": metadata,
     }
 
+
+@torch.no_grad()
+def build_concept_embedding(concept_text, tokenizer, W_out, device):
+    """
+    Tokenize the concept word/phrase and average output embeddings.
+    """
+    enc = tokenizer(concept_text, add_special_tokens=False, return_tensors="pt")
+    input_ids = enc["input_ids"][0].to(device)
+
+    if input_ids.numel() == 0:
+        raise ValueError(f"Tokenizer produced no tokens for concept: {concept_text}")
+
+    concept_vec = W_out[input_ids].mean(dim=0)
+    concept_vec = torch.nn.functional.normalize(concept_vec, p=2, dim=0)
+
+    return concept_vec.cpu().numpy()
+
 def print_top_neurons_overall_by_logit(metadata, top_n=15):
     """
     不依賴任何輸入概念。
@@ -143,167 +154,49 @@ def print_top_neurons_overall_by_logit(metadata, top_n=15):
         print(f"{i+1:<12} | {max_logit:.4f}    | L{neuron['layer']:<4} | {neuron['neuron']:<6} | [{tokens_str}]")
 
 
-def rank_color_neurons(
-    metadata,
-    target_color,
-    other_colors=None,
-    top_n=10,
-    max_color_rank=3,
-    min_color_hits=1,
-    min_clean_ratio=0.20,
-):
-    """
-    Stricter color-neuron selector.
+def rank_neurons_by_keyword_frequency(metadata, keywords_dict, top_n=6):
+    pos_keywords = [kw.lower() for kw in keywords_dict.get("pos", [])]
+    neg_keywords = [kw.lower() for kw in keywords_dict.get("neg", [])]
 
-    Keeps neurons only if:
-      1. target color appears in top max_color_rank tokens
-      2. target color appears at least min_color_hits times
-      3. no other color appears
-      4. top tokens are not too noisy
-    """
-    if other_colors is None:
-        other_colors = []
-
-    target_color = target_color.lower()
-    other_colors = set([c.lower() for c in other_colors])
-
-    # Optional synonyms. Add more if useful.
-    color_aliases = {
-        "red": {"red", "reddish", "scarlet", "crimson"},
-        "green": {"green", "olive","lime", "mint"},
-    }
-
-    target_words = color_aliases.get(target_color, {target_color})
-
-    candidates = []
-
+    scored_neurons = []
     for neuron in metadata:
-        top_tokens = neuron["top_tokens"]
-        top_logits = neuron["top_logits"]
+        match_count = 0
+        for token in neuron["top_tokens"]:
+            # Strip punctuation and whitespace to handle tokens like "Red," or " red"
+            token_clean = token.lower().strip(" .,!?;:\"'()[]{}")
+            
+            # 1. Negative filter (keep as is)
+            if any(neg_kw in token_clean for neg_kw in neg_keywords):
+                continue 
 
-        target_hits = []
-        other_hits = []
-        clean_token_count = 0
-
-        for rank, (token, logit) in enumerate(zip(top_tokens, top_logits)):
-            token_clean = normalize_token(token)
-
-            if token_clean == "":
-                continue
-
-            # Count readable word-like tokens.
-            if token_clean.isalpha() and len(token_clean) >= 3:
-                clean_token_count += 1
-
-            if token_clean in target_words:
-                target_hits.append({
-                    "rank": rank,
-                    "token": token,
-                    "logit": float(logit),
-                })
-
-            if token_clean in other_colors:
-                other_hits.append({
-                    "rank": rank,
-                    "token": token,
-                    "logit": float(logit),
-                })
-
-        if len(target_hits) == 0:
-            continue
-
-        best_hit = min(target_hits, key=lambda x: x["rank"])
-        best_rank = best_hit["rank"] + 1
-        best_logit = best_hit["logit"]
-
-        clean_ratio = clean_token_count / max(len(top_tokens), 1)
-
-        # Hard filters.
-        if best_rank > max_color_rank:
-            continue
-
-        if len(target_hits) < min_color_hits:
-            continue
-
-        if len(other_hits) > 0:
-            continue
-
-        if clean_ratio < min_clean_ratio:
-            continue
-
-        # Strongly prefer:
-        # - color at rank 1
-        # - repeated color hits
-        # - high logit
-        # - cleaner token list
-        color_score = (
-            best_logit * (1.0 / best_rank)
-            + 0.25 * len(target_hits)
-            + 0.25 * clean_ratio
-        )
-
-        candidates.append({
+            # 2. STRICT Match: Use equality instead of 'in'
+            # This prevents "swered" or "paralleled" from matching "red"
+            if any(token_clean == pos_kw for pos_kw in pos_keywords):
+                match_count += 1
+        
+        scored_neurons.append({
             "layer": neuron["layer"],
             "neuron": neuron["neuron"],
-            "target_color": target_color,
-            "best_color_rank": best_rank,
-            "best_color_logit": best_logit,
-            "num_color_hits": len(target_hits),
-            "num_other_color_hits": len(other_hits),
-            "clean_ratio": clean_ratio,
-            "color_score": color_score,
-            "matched_tokens": [h["token"] for h in target_hits],
-            "other_color_tokens": [h["token"] for h in other_hits],
-            "top_tokens": top_tokens,
+            "match_count": match_count,
+            "top_tokens": neuron["top_tokens"],
+            "max_logit": neuron["top_logits"][0] 
         })
 
-    candidates.sort(
-        key=lambda x: (
-            x["best_color_rank"] == 1,
-            x["num_color_hits"],
-            x["color_score"],
-            x["clean_ratio"],
-        ),
-        reverse=True,
-    )
+    # 排序邏輯：優先比較 match_count (降冪)，若次數相同，則比較 max_logit (降冪)
+    scored_neurons.sort(key=lambda x: (x["match_count"], x["max_logit"]), reverse=True)
 
-    return candidates[:top_n]
-
-def print_color_ranking_summary(results):
-    print("\n" + "=" * 110)
-    print("Top Neurons by Color Token Ranking")
-    print("=" * 110)
-
-    for concept, ranked_neurons in results.items():
-        print(f"\n[INTERVENTION TASK] {concept}")
-        print(
-            f"{'Rank':<5} | "
-            f"{'Color Score':<12} | "
-            f"{'Color Rank':<10} | "
-            f"{'Clean':<8} | "
-            f"{'Logit':<8} | "
-            f"{'Layer':<5} | "
-            f"{'Neuron':<6} | "
-            f"{'Matched':<12} | "
-            f"{'Top Tokens'}"
-        )
-        print("-" * 110)
-
-        for rank, neuron in enumerate(ranked_neurons, start=1):
-            tokens_str = ", ".join(neuron["top_tokens"])
-            matched_str = ", ".join(neuron["matched_tokens"])
-
-            print(
-                f"{rank:<5} | "
-                f"{neuron['color_score']:<12.4f} | "
-                f"{neuron['best_color_rank']:<10} | "
-                f"{neuron['clean_ratio']:<8.2f} | "
-                f"{neuron['best_color_logit']:<8.4f} | "
-                f"L{neuron['layer']:<4} | "
-                f"{neuron['neuron']:<6} | "
-                f"{matched_str:<12} | "
-                f"[{tokens_str}]"
-            )
+    # 提取前 top_n 名
+    ranked_results = []
+    for rank, neuron in enumerate(scored_neurons[:top_n]):
+        ranked_results.append({
+            "rank": rank + 1,
+            "match_count": neuron["match_count"],
+            "layer": neuron["layer"],
+            "neuron": neuron["neuron"],
+            "top_tokens": neuron["top_tokens"]
+        })
+    
+    return ranked_results
 
 def run_keyword_based_ranking(metadata, concept_keywords_map, top_n=6):
     """
@@ -333,38 +226,91 @@ def print_keyword_ranking_summary(results):
             tokens_str = ", ".join(neuron["top_tokens"])
             print(f"{neuron['rank']:<5} | {neuron['match_count']:<11} | L{neuron['layer']:<4} | {neuron['neuron']:<6} | [{tokens_str}]")
 
+def calculate_purity(top_tokens, pos_keywords):
+    """
+    Calculates the 'Purity': What percentage of top tokens are strictly the concept.
+    """
+    clean_tokens = [t.lower().strip(" .,!?;:\"'()[]{}") for t in top_tokens]
+    matches = sum(1 for t in clean_tokens if any(kw == t for kw in pos_keywords))
+    return matches / len(top_tokens)
+
+def run_pure_neuron_search(bundle, concept_map, top_n=6):
+    metadata = bundle["metadata"]
+    semantic_embeddings = bundle["semantic_embeddings"]
+    tokenizer = bundle["tokenizer"]
+    W_out = bundle["W_out"]
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    results = {}
+
+    for concept_name, config in concept_map.items():
+        # Get vector for just the first word (e.g., 'Red')
+        concept_vec = build_concept_embedding(concept_name.split()[0], tokenizer, W_out, device)
+        
+        scored_neurons = []
+        for i, neuron in enumerate(metadata):
+            # LAYER PRUNING: Focus on the 'semantic belly' (L4 to L14)
+            # This removes shallow L0-L1 noise and final action-bin noise.
+            if not (4 <= neuron["layer"] <= 14):
+                continue
+                
+            # Cosine Similarity
+            sim = float(semantic_embeddings[i] @ concept_vec)
+            # Purity Score
+            purity = calculate_purity(neuron["top_tokens"], config["pos"])
+            
+            # Combined Score: Similarity weighted heavily by Purity
+            combined_score = sim * (purity ** 2) 
+            
+            if purity > 0.1: # Threshold to filter out random noise
+                scored_neurons.append({
+                    "rank": 0, # Placeholder
+                    "match_count": int(purity * len(neuron["top_tokens"])),
+                    "layer": neuron["layer"],
+                    "neuron": neuron["neuron"],
+                    "top_tokens": neuron["top_tokens"],
+                    "score": combined_score,
+                    "purity": purity
+                })
+
+        # Sort by the new combined score
+        scored_neurons.sort(key=lambda x: x["score"], reverse=True)
+        for idx, n in enumerate(scored_neurons[:top_n]):
+            n["rank"] = idx + 1
+        results[concept_name] = scored_neurons[:top_n]
+        
+    return results
+
 if __name__ == "__main__":
-    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height"
+    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_color_unfrozen"
     
     bundle = load_smolvla_and_extract_semantic_embeddings(
         policy_path=policy_path,
-        top_k_tokens=10, 
+        top_k_tokens=10, # Keeping k=10 is better for finding pure clusters
     )
-
-    red_neurons = rank_color_neurons(
-        metadata=bundle["metadata"],
-        target_color="red",
-        other_colors=["black", "blue", "green", "yellow", "white"],
-        top_n=10,
-        max_color_rank=2,
-        min_color_hits=2,
-        min_clean_ratio=0.50,
-    )
-
-    green_neurons = rank_color_neurons(
-        metadata=bundle["metadata"],
-        target_color="green",
-        other_colors=["red", "blue", "pink", "yellow", "white"],
-        top_n=10,
-        max_color_rank=3,
-        min_color_hits=1,
-        min_clean_ratio=0.40,
-    )
-
-    color_ranking_results = {
-        "Red Object": red_neurons,
-        "Green Object": green_neurons,
-    }
-
-    print_color_ranking_summary(color_ranking_results)
     
+    intervention_keywords_map = {
+        "Red Color": {
+            "pos": ["red", "crimson", "scarlet", "RED", "Red"],
+            "neg": ["predict", "ordered", "hundred"]
+        },
+        "Green Color": {
+            "pos": ["green", "emerald", "lime", "GREEN", "Green"],
+            "neg": ["agreement"]
+        },
+        "Blue Color": {
+            "pos": ["blue", "azure", "navy", "BLUE", "Blue"],
+            "neg": ["value"]
+        }
+    }
+    
+    # NEW: Run the Pure Search
+    pure_results = run_pure_neuron_search(
+        bundle=bundle,
+        concept_map=intervention_keywords_map,
+        top_n=6
+    )
+
+    # Print using your existing summary function
+    print_keyword_ranking_summary(pure_results)
+    print_top_neurons_overall_by_logit(bundle["metadata"], top_n=15)

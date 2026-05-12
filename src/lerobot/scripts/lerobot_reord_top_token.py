@@ -3,11 +3,12 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
-
+import re
+import math
 
 @torch.no_grad()
 def load_smolvla_and_extract_semantic_embeddings(
-    policy_path="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
+    policy_path="ethanCSL/svla_koch_pick_n_place_vla_steering_color_unfrozen",
     top_k_tokens=5,
     device=None,
 ):
@@ -462,7 +463,7 @@ def print_keyword_ranking_summary(results):
 
 if __name__ == "__main__":
     #policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2"
-    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2_unfrozen"
+    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_color_unfrozen"
     
     bundle = load_smolvla_and_extract_semantic_embeddings(
         policy_path=policy_path,
@@ -471,36 +472,42 @@ if __name__ == "__main__":
     
     # 升級版的字典結構：加入 neg (負向排除字)
     # 將會導致字串誤判的字詞放入 neg 列表中
+    # intervention_keywords_map = {
+    #     "Low Transport": {
+    #         "pos": ["low"],
+    #         "neg": ["follow", "allow", "slow", "blow", "glow", "yellow", "hollow"] # 排除包含 low 的無關字
+    #     },
+    #     "High Transport": {
+    #         "pos": ["high"],
+    #         "neg": ["thigh"] # 排除大腿 (雖然不一定會出現，但作為防呆示範)
+    #     },
+    #     "Slow Transport": {
+    #         "pos": ["slow", "safe"],
+    #         "neg": []
+    #     },
+    #     "Fast Transport": {
+    #         "pos": ["fast", "risk"],
+    #         "neg": ["breakfast"] # 排除早餐
+    #     },
+        
+    # }
     intervention_keywords_map = {
-        "Low Transport": {
-            "pos": ["low"],
-            "neg": ["follow", "allow", "slow", "blow", "glow", "yellow", "hollow"] # 排除包含 low 的無關字
+        "Red Color": {
+            "pos": ["red", "crimson", "scarlet"],
+            "neg": ["predict", "ordered", "hundred", "tired", "shared", "ingredients", "reduction"]
         },
-        "High Transport": {
-            "pos": ["high"],
-            "neg": ["thigh"] # 排除大腿 (雖然不一定會出現，但作為防呆示範)
+        "Green Color": {
+            "pos": ["green", "emerald", "lime"],
+            "neg": ["agreement", "screen", "greensboro"]
         },
-        "Slow Transport": {
-            "pos": ["slow", "safe"],
-            "neg": []
+        "Blue Color": {
+            "pos": ["blue", "azure", "navy"],
+            "neg": ["value", "blueprint", "blues"]
         },
-        "Fast Transport": {
-            "pos": ["fast", "risk"],
-            "neg": ["breakfast"] # 排除早餐
-        },
-        "Green" : {
-            "pos": ["green","verdant","leafy"],
-            "neg": ["red","yellow","blue","pink"]
+        "Yellow Color": {
+            "pos": ["yellow", "gold", "lemon"],
+            "neg": ["mellow", "bellow"]
         }
-        # "Push": {
-        #     "pos" : ["push", "press"],
-        #     "neg" : []
-        # },
-        # "Sorting" : {
-        #     "pos" : ["sorting", "sort", "arrange", "classify", "organize"],
-        #     "neg" : []
-        # }
-
     }
     
     # 執行關鍵字頻率排名

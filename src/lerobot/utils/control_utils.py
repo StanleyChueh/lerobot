@@ -140,6 +140,10 @@ def init_keyboard_listener():
     events["change_task"] = False
     events["in_task_input"] = False
 
+    # activate switching
+    events["change_activate"] = False
+    events["in_activate_input"] = False
+
     if is_headless():
         logging.warning(
             "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
@@ -153,6 +157,8 @@ def init_keyboard_listener():
     def on_press(key):
         try:
             if events.get("in_task_input", False):
+                return
+            if events.get("in_activate_input", False):
                 return
 
             if key == keyboard.Key.right:
@@ -169,6 +175,10 @@ def init_keyboard_listener():
             elif hasattr(key, "char") and key.char == "t":
                 print("Task change key pressed. Entering task switch mode...")
                 events["change_task"] = True
+            elif hasattr(key, "char") and key.char == "a":
+                print("Activate change key pressed. Entering Activate switch mode...")
+                events["change_activate"] = True
+                
         except Exception as e:
             print(f"Error handling key press: {e}")
 

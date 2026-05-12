@@ -77,6 +77,86 @@ def extract_semantic_embeddings_from_policy(policy, top_k_tokens=10, device=None
     return semantic_embeddings, metadata, tokenizer
 
 
+def run_activation_steering_demo():
+    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2_unfrozen"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    print(f"[*] Loading policy: {policy_path}")
+    policy = SmolVLAPolicy.from_pretrained(policy_path)
+    policy.eval()
+    policy.to(device)
+
+    # 1. 定義要干預的神經元 (Layer ID: [Neuron IDs])
+    # 這裡選擇你之前感興趣的神經元
+    steering_config = {
+        1: [1222],
+        3: [2003],
+        5: [1877, 1904],
+        15: [1157]
+    }
+    
+    # 2. 設定干預數值 (Alpha)
+    # 例如：將這些神經元的激活值強制固定為 10.0
+    alpha_value = 10.0
+    
+    print(f"\n[STEP 1] Applying Activation Steering (Alpha={alpha_value})...")
+    policy.set_activation_steering(
+        steering_neurons=steering_config,
+        alpha=alpha_value,
+        record_debug=True  # 必須開啟才能記錄前後數值
+    )
+
+    # 3. 執行一次 Dummy Forward Pass
+    # 激活干預只有在模型「跑起來」的時候才會發生
+    print("[STEP 2] Running dummy inference to trigger hooks...")
+    
+    # 建立模擬輸入 (根據 SmolVLA 的輸入格式，這裡簡化處理)
+    # 注意：實際使用時請帶入真實的 observation
+    batch_size = 1
+    dummy_observation = {
+        "observation.image": torch.randn(batch_size, 3, 224, 224).to(device),
+        "observation.state": torch.randn(batch_size, 6).to(device), # 假設 state dim 為 6
+    }
+
+    with torch.no_grad():
+        # 執行一次動作預測，這會觸發 Hook
+        _ = policy.select_action(dummy_observation)
+
+    # 4. 印出干預後的調試資訊
+    # 這會調用你提供的 print_activation_steering_debug 函式
+    print("\n[STEP 3] Printing Steered Neuron Statistics:")
+    policy.print_activation_steering_debug()
+
+    # 5. (選用) 如果想看這些被干預神經元「代表什麼」
+    # 我們可以抓取之前程式碼中的 metadata 來輔助閱讀
+    try:
+        from lerobot_reord_top_token_steering import extract_semantic_embeddings_from_policy
+        print("[STEP 4] Correlating with Semantic Meaning (Top Tokens)...")
+        _, metadata, _ = extract_semantic_embeddings_from_policy(policy, top_k_tokens=3, device=device)
+        
+        lookup = {(m["layer"], m["neuron"]): m for m in metadata}
+        
+        print("\n" + "=" * 80)
+        print(f"{'Layer':<6} | {'Neuron':<7} | {'Fixed Alpha':<12} | {'Top Tokens (Semantic Meaning)'}")
+        print("-" * 80)
+        for layer_idx, neurons in steering_config.items():
+            for n_id in neurons:
+                info = lookup.get((layer_idx, n_id))
+                tokens = ", ".join(info["top_tokens"]) if info else "Unknown"
+                print(f"L{layer_idx:<5} | {n_id:<7} | {alpha_value:<12.1f} | [{tokens}]")
+        print("=" * 80)
+        
+    except ImportError:
+        print("\n[Note] Could not find semantic extraction function to print tokens.")
+
+    # 6. 清除 Hook (還原模型)
+    policy.clear_activation_steering()
+    print("\n[*] Demo completed. Hooks cleared.")
+
+if __name__ == "__main__":
+    run_activation_steering_demo()
+
+
 def print_steered_neurons_info(metadata, config, title="Target Neurons Info"):
     """
     針對 multi_layer_steering_config 中指定的神經元，
@@ -104,72 +184,169 @@ def print_steered_neurons_info(metadata, config, title="Target Neurons Info"):
     print("=" * 115 + "\n")
 
 
-if  __name__ == "__main__":
-    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2_unfrozen"
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    print(f"[*] Loading policy: {policy_path}")
-    policy = SmolVLAPolicy.from_pretrained(policy_path)
-    policy.eval()
-    policy.to(device)
+####################################################################################################
 
-    # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
-    print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
+def activation_steering_config_for_print(steering_neurons, alpha):
+    """
+    Convert activation-steering format:
 
-    multi_layer_steering_config = {
-        1: {1222: 10.0},
-        2: {826: 0.0},
-        3: {369: 0.0, 2003: 10.0},
-        5: {1877: 10.0, 1904: 10.0, 2102: 0.0},
-        7: {1151: 0.0},
-        9: {2554: 0.0},
-        13:{414: 0.0},
-        15:{1157: 10.0},
+        {layer_idx: [neuron_ids]}
+
+    into print format:
+
+        {layer_idx: {neuron_idx: alpha}}
+
+    This is only for display. The alpha here is activation target,
+    not value-vector norm.
+    """
+    return {
+        layer_idx: {neuron_idx: alpha for neuron_idx in neuron_ids}
+        for layer_idx, neuron_ids in steering_neurons.items()
     }
 
-    # # Extract the original weights and scale them so their L2 Norm matches the config target
-    # steering_tensors = {}
-    # vlm_model = policy.model.vlm_with_expert.get_vlm_model()
-    
-    # for layer_idx, neurons in multi_layer_steering_config.items():
-    #     steering_tensors[layer_idx] = {}
-    #     for neuron_idx, target_norm in neurons.items():
-    #         # Get the original vector
-    #         original_vec = vlm_model.text_model.layers[layer_idx].mlp.down_proj.weight.data[:, neuron_idx]
-            
-    #         # Calculate the current L2 Norm
-    #         current_norm = original_vec.norm(p=2)
-            
-    #         # Create the target vector by normalizing and scaling to target_norm
-    #         if current_norm > 0:
-    #             steering_tensors[layer_idx][neuron_idx] = (original_vec / current_norm) * target_norm
-    #         else:
-    #             # 避免全為 0 的向量導致除以零的錯誤
-    #             steering_tensors[layer_idx][neuron_idx] = original_vec
 
-    # ---------------------------------------------------------
-    # 1. 取得干預前 (BEFORE) 的特徵與 Logits
-    # ---------------------------------------------------------
-    print("[*] Extracting embeddings BEFORE steering...")
-    _, metadata_before, _ = extract_semantic_embeddings_from_policy(policy, top_k_tokens=5, device=device)
-    
-    # 顯示干預前的結果
-    print_steered_neurons_info(metadata_before, multi_layer_steering_config, title="[BEFORE] Steered Neurons: Logits & Top Tokens")
+def _make_steering_key(intervention_name, steering_neurons, alpha):
+    """
+    Stable key used to avoid printing/registering the same steering setup
+    every time record_loop starts.
+    """
+    return (
+        intervention_name,
+        float(alpha),
+        tuple(
+            (layer_idx, tuple(neuron_ids))
+            for layer_idx, neuron_ids in sorted(steering_neurons.items())
+        ),
+    )
 
-    # ---------------------------------------------------------
-    # 2. 進行權重干預
-    # ---------------------------------------------------------
-    if hasattr(policy, "apply_steering_vector"):
-        policy.apply_steering_vector(
-            steering_data=multi_layer_steering_config
+
+def setup_activation_steering_with_terminal_log(
+    policy,
+    steering_neurons,
+    alpha,
+    intervention_name="activation_steering",
+    top_k_tokens=5,
+    device=None,
+    print_top_tokens=True,
+    record_debug=True,
+):
+    """
+    1. Print selected neurons with value-vector top tokens.
+    2. Register paper-alike activation steering.
+    3. Store persistent state on policy so logging does not repeat
+       every time record_loop is entered.
+
+    Important:
+        Top tokens come from value vectors.
+        Activation before/after is recorded later during forward pass.
+    """
+    if device is None:
+        try:
+            device = next(policy.parameters()).device
+        except StopIteration:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    steering_key = _make_steering_key(
+        intervention_name=intervention_name,
+        steering_neurons=steering_neurons,
+        alpha=alpha,
+    )
+
+    already_configured = (
+        getattr(policy, "_stanley_steering_key", None) == steering_key
+    )
+
+    if already_configured:
+        print(
+            "[STEERING] Same activation steering already configured. "
+            "Skip setup/top-token logging."
         )
-        print("[INFO] apply_steering_vector executed successfully.")
+        return
 
-    # ---------------------------------------------------------
-    # 3. 取得干預後 (AFTER) 的特徵與 Logits
-    # ---------------------------------------------------------
-    print("[*] Extracting embeddings AFTER steering...")
-    _, metadata_after, _ = extract_semantic_embeddings_from_policy(policy, top_k_tokens=5, device=device)
-    
-    # 顯示干預後的結果
-    print_steered_neurons_info(metadata_after, multi_layer_steering_config, title="[AFTER] Steered Neurons: Logits & Top Tokens")
+    if hasattr(policy, "clear_activation_steering"):
+        policy.clear_activation_steering()
+
+    if alpha == 0.0:
+        print("[BASELINE] alpha=0.0: no activation steering hook registered.")
+        policy._stanley_steering_key = steering_key
+        policy._stanley_steering_neurons = steering_neurons
+        policy._stanley_steering_alpha = float(alpha)
+        policy._stanley_activation_debug_printed = True
+        return
+
+    if not hasattr(policy, "set_activation_steering"):
+        raise AttributeError(
+            "Policy does not have set_activation_steering(). "
+            "Make sure modeling_smolvla.py contains the hook-based activation steering code."
+        )
+
+    if print_top_tokens:
+        _, metadata, _ = extract_semantic_embeddings_from_policy(
+            policy,
+            top_k_tokens=top_k_tokens,
+            device=device,
+        )
+
+        print_steered_neurons_info(
+            metadata,
+            activation_steering_config_for_print(steering_neurons, alpha),
+            title=(
+                f"[SELECTED BEFORE STEERING] "
+                f"{intervention_name}: Value-Vector Top Tokens"
+            ),
+        )
+
+    policy.set_activation_steering(
+        steering_neurons=steering_neurons,
+        alpha=alpha,
+        record_debug=record_debug,
+    )
+
+    policy._stanley_steering_key = steering_key
+    policy._stanley_steering_neurons = steering_neurons
+    policy._stanley_steering_alpha = float(alpha)
+    policy._stanley_activation_debug_printed = False
+
+
+def print_activation_steering_debug_once(
+    policy,
+    disable_debug_after_print=True,
+):
+    """
+    Print selected neurons' before/after activation once.
+
+    This must be called AFTER the first real forward pass, e.g. after:
+
+        action_values = predict_action(...)
+
+    because activation only exists during forward.
+    """
+    if getattr(policy, "_stanley_activation_debug_printed", False):
+        return False
+
+    if not hasattr(policy, "print_activation_steering_debug"):
+        print("[DEBUG] Policy does not have print_activation_steering_debug().")
+        return False
+
+    policy.print_activation_steering_debug()
+    policy._stanley_activation_debug_printed = True
+
+    if (
+        disable_debug_after_print
+        and hasattr(policy, "set_activation_steering")
+        and getattr(policy, "_stanley_steering_alpha", 0.0) != 0.0
+        and hasattr(policy, "_stanley_steering_neurons")
+    ):
+        # Re-register hooks without debug recording.
+        # Steering continues, but before/after activation records stop accumulating.
+        policy.set_activation_steering(
+            steering_neurons=policy._stanley_steering_neurons,
+            alpha=policy._stanley_steering_alpha,
+            record_debug=False,
+        )
+        print(
+            "[STEERING DEBUG] Printed activation debug once. "
+            "Continuing steering with debug recording disabled."
+        )
+
+    return True

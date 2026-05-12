@@ -11,7 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+'''
+    Usage: 
 
+    python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test.py   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  }'   --dataset.single_task="Put the red cube in the box."   --dataset.repo_id=ethanCSL/eval_steering_top_token_0   --dataset.episode_time_s=500000   --dataset.num_episodes=5   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2_unfrozen --dataset.reset_time_s=5    --steering_json=keyword_steering_neurons.json 
+  --steering_intervention="Low Transport" 
+  --steering_alpha=0.0
+
+
+'''
 import logging
 import math
 import time
@@ -19,6 +31,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
 from typing import Any
+import json
 
 from lerobot.cameras import (  # noqa: F401
     CameraConfig,  # noqa: F401
@@ -97,6 +110,13 @@ import torch
 _ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 _CONTROL_RE = re.compile(r"[\x00-\x1F\x7F]")
 
+
+## Show top token
+from lerobot.scripts.lerobot_reord_top_token_steering import (
+    extract_semantic_embeddings_from_policy,
+    print_steered_neurons_info,
+)
+
 @dataclass
 class DatasetRecordConfig:
     # Dataset identifier. By convention it should match '{hf_username}/{dataset_name}' (e.g. `lerobot/test`).
@@ -157,6 +177,11 @@ class RecordConfig:
     resume: bool = False
     #Debug freq
     debug_freq: bool = False
+    # --- Activation steering config ---
+    steering_enabled: bool = True
+    steering_json: str | Path | None = "keyword_steering_neurons.json"
+    steering_intervention: str = "Low Transport"
+    steering_alpha: float = 10.0
 
     def __post_init__(self):
         # HACK: We parse again the cli args here to get the pretrained path if there was one.
@@ -356,6 +381,163 @@ def get_policy_image_keys(policy, obs_processed):
 
     return sorted(key for key in obs_processed if key.startswith("observation.images."))
 
+# Helper for showing top token
+def activation_steering_config_for_print(steering_neurons, alpha):
+    return {
+        layer_idx: {neuron_idx: alpha for neuron_idx in neuron_ids}
+        for layer_idx, neuron_ids in steering_neurons.items()
+    }
+
+##############################################################################################
+'''
+    This code block is to load json for VLA steering,instead of hard coding neuron id and strength in the script.
+'''
+def canonical_intervention_name(name: str) -> str:
+    """
+    Convert names like:
+        'Low Transport' -> 'low_transport'
+        'low_transport' -> 'low_transport'
+        'Fast-Transport' -> 'fast_transport'
+    """
+    name = name.strip().lower()
+    name = re.sub(r"[^a-z0-9]+", "_", name)
+    return name.strip("_")
+
+
+def load_steering_neurons_from_json(
+    json_path: str | Path,
+    intervention_name: str,
+) -> tuple[dict[int, list[int]], str]:
+    """
+    Load steering neurons from JSON.
+
+    Supported format A, old format:
+    {
+      "Low Transport": {
+        "1": [1222],
+        "3": [2003]
+      }
+    }
+
+    Supported format B, debug/ranked format:
+    {
+      "Low Transport": [
+        {"rank": 1, "layer": 5, "neuron": 1877, ...},
+        {"rank": 2, "layer": 10, "neuron": 2349, ...}
+      ]
+    }
+
+    Return format required by policy.set_activation_steering:
+    {
+      5: [1877],
+      10: [2349]
+    }
+    """
+    path = Path(json_path).expanduser()
+
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Steering JSON not found: {path}. "
+            "Check --steering_json path."
+        )
+
+    with path.open("r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+
+    if not isinstance(raw_data, dict):
+        raise ValueError(f"Expected top-level JSON object in {path}, got {type(raw_data)}")
+
+    # 1. Exact key match
+    if intervention_name in raw_data:
+        matched_key = intervention_name
+        raw_neurons = raw_data[matched_key]
+    else:
+        # 2. Canonicalized key match: "Low Transport" == "low_transport"
+        wanted = canonical_intervention_name(intervention_name)
+        canonical_to_original = {
+            canonical_intervention_name(key): key
+            for key in raw_data.keys()
+        }
+
+        if wanted not in canonical_to_original:
+            available = ", ".join(raw_data.keys())
+            raise KeyError(
+                f"Intervention '{intervention_name}' not found in {path}. "
+                f"Available interventions: {available}"
+            )
+
+        matched_key = canonical_to_original[wanted]
+        raw_neurons = raw_data[matched_key]
+
+    steering_neurons_sets: dict[int, set[int]] = {}
+
+    # Format A:
+    # {
+    #   "Low Transport": {
+    #     "1": [1222],
+    #     "3": [2003]
+    #   }
+    # }
+    if isinstance(raw_neurons, dict):
+        for layer_idx_str, neuron_ids in raw_neurons.items():
+            layer_idx = int(layer_idx_str)
+
+            if not isinstance(neuron_ids, list):
+                raise ValueError(
+                    f"Layer {layer_idx} should map to a list of neuron ids, "
+                    f"got {type(neuron_ids)}"
+                )
+
+            for neuron_id in neuron_ids:
+                steering_neurons_sets.setdefault(layer_idx, set()).add(int(neuron_id))
+
+    # Format B:
+    # {
+    #   "Low Transport": [
+    #     {"rank": 1, "layer": 5, "neuron": 1877, ...}
+    #   ]
+    # }
+    elif isinstance(raw_neurons, list):
+        for i, item in enumerate(raw_neurons):
+            if not isinstance(item, dict):
+                raise ValueError(
+                    f"Entry {i} under '{matched_key}' should be a dict, "
+                    f"got {type(item)}"
+                )
+
+            if "layer" not in item or "neuron" not in item:
+                raise ValueError(
+                    f"Entry {i} under '{matched_key}' must contain "
+                    f"'layer' and 'neuron'. Got keys: {list(item.keys())}"
+                )
+
+            layer_idx = int(item["layer"])
+            neuron_idx = int(item["neuron"])
+
+            steering_neurons_sets.setdefault(layer_idx, set()).add(neuron_idx)
+
+    else:
+        raise ValueError(
+            f"Expected '{matched_key}' to map to either:\n"
+            f"  1. dict of layer -> neurons, or\n"
+            f"  2. list of ranked neuron entries with 'layer' and 'neuron'.\n"
+            f"Got {type(raw_neurons)}"
+        )
+
+    steering_neurons: dict[int, list[int]] = {
+        layer_idx: sorted(neuron_ids)
+        for layer_idx, neuron_ids in sorted(steering_neurons_sets.items())
+        if len(neuron_ids) > 0
+    }
+
+    if len(steering_neurons) == 0:
+        raise ValueError(f"No valid steering neurons found for '{matched_key}' in {path}")
+
+    return steering_neurons, matched_key
+
+##############################################################################################
+
+
 @safe_stop_image_writer
 def record_loop(
     robot: Robot,
@@ -380,6 +562,12 @@ def record_loop(
     display_data: bool = False,
     listener = None,
     debug_freq: bool = False,
+
+    # VLA steering with json
+    steering_enabled: bool = True,
+    steering_json: str | Path | None = "keyword_steering_neurons.json",
+    steering_intervention: str = "Low Transport",
+    steering_alpha: float = 10.0,
 ):
     if policy:
         print("record loop, policy is not None:")
@@ -422,33 +610,78 @@ def record_loop(
 
         # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
         print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
-        
-        # high (negative: stronger)
-        #multi_layer_cluster = {7: [1151], 2: [826], 9: [2554]}
 
-        # low
-        #multi_layer_cluster = {5: [1877], 13: [1744], 5: [1904], 10: [2349], 3: [2003], 1: [1222]}
+#########################################################################################
 
-        # fast
-        #multi_layer_cluster = {7: [884], 8: [735], 13: [273], 14: [1994], 15: [1623, 2517]}
+        # --- Paper-alike FFN activation steering setup ---
+        # Important:
+        #   steering_enabled=False or alpha=0.0 -> no-steering baseline
+        #   alpha != 0.0                       -> activation steering
 
-        # slow
-        #multi_layer_cluster = {0: [435], 5: [779], 8: [2269], 10: [1333], 11: [2157], 13: [1456]}
+        intervention_name = steering_intervention
+        alpha = float(steering_alpha)
 
-        #red
-        multi_layer_cluster = {1: [67,1986], 4: [688], 8: [216], 13: [268]}
+        if hasattr(policy, "clear_activation_steering"):
+            policy.clear_activation_steering()
 
-        # Start with your successful negative value
-        # high:-25, low:16
-        steering_strength = 0.0 
-         
-        if hasattr(policy, "apply_steering_vector"):
-            policy.apply_steering_vector(
-                multi_layer_clusters=multi_layer_cluster, 
-                strength=steering_strength
+        if (not steering_enabled) or alpha == 0.0:
+            print(
+                f"[BASELINE] No activation steering registered | "
+                f"steering_enabled={steering_enabled}, alpha={alpha}"
             )
+        else:
+            if not hasattr(policy, "set_activation_steering"):
+                raise AttributeError(
+                    "Policy does not have set_activation_steering(). "
+                    "Make sure modeling_smolvla.py contains the hook-based steering code."
+                )
+
+            if steering_json is None:
+                raise ValueError(
+                    "steering_json is None but steering is enabled. "
+                    "Provide --steering_json=/path/to/keyword_steering_neurons.json"
+                )
+
+            selected_neurons, matched_intervention_key = load_steering_neurons_from_json(
+                steering_json,
+                intervention_name,
+            )
+
+            print(
+                f"[*] Loaded steering neurons from JSON: {steering_json}\n"
+                f"    requested intervention : {intervention_name}\n"
+                f"    matched JSON key        : {matched_intervention_key}\n"
+                f"    alpha                   : {alpha}\n"
+                f"    selected_neurons        : {selected_neurons}"
+            )
+
+            # 1. Print selected neurons and their value-vector top tokens.
+            # This is semantic meaning, not runtime activation.
+            _, metadata, _ = extract_semantic_embeddings_from_policy(
+                policy,
+                top_k_tokens=5,
+                device=get_safe_torch_device(policy.config.device),
+            )
+
+            print_steered_neurons_info(
+                metadata,
+                activation_steering_config_for_print(selected_neurons, alpha),
+                title=(
+                    f"[SELECTED BEFORE STEERING] "
+                    f"{matched_intervention_key}: Value-Vector Top Tokens"
+                ),
+            )
+
+            # 2. Register paper-alike activation steering hook.
+            policy.set_activation_steering(
+                steering_neurons=selected_neurons,
+                alpha=alpha,
+                record_debug=True,
+            )
+
         print("--------------------------------\n")
 
+#########################################################################################
 
     timestamp = 0
     start_episode_t = time.perf_counter()
@@ -461,6 +694,7 @@ def record_loop(
     smoothed_infer_ms = None
     smoothed_dataset_ms = None
     smoothed_rerun_ms = None
+    printed_activation_debug = False
 
     while timestamp < control_time_s:
 
@@ -490,7 +724,7 @@ def record_loop(
             if new_task.startswith("t"):
                 new_task = new_task[1:].lstrip()
 
-            print("[DEBUG][SANITIZED] task repr:", repr(new_task), "len:", len(new_task))
+            #print("[DEBUG][SANITIZED] task repr:", repr(new_task), "len:", len(new_task))
 
             if len(new_task) > 0:
                 task_holder["text"] = new_task
@@ -585,12 +819,12 @@ def record_loop(
         if policy is not None and preprocessor is not None and postprocessor is not None:
             
             # Check the prompt, to see if there any incorrect char
-            print(
-                "[DEBUG] task repr:",
-                repr(task_holder["text"]),
-                "len:",
-                len(task_holder["text"]),
-            )
+            # print(
+            #     "[DEBUG] task repr:",
+            #     repr(task_holder["text"]),
+            #     "len:",
+            #     len(task_holder["text"]),
+            # )
             model = policy.model.vlm_with_expert
             model.record_attn = True
             model.debug_attn = True
@@ -618,6 +852,16 @@ def record_loop(
                 task = task_holder["text"],
                 robot_type=robot.robot_type,
             )
+
+            ## Show activation steering (Before and After)
+            if (
+                not printed_activation_debug
+                and hasattr(policy, "print_activation_steering_debug")
+            ):
+                policy.print_activation_steering_debug()
+                printed_activation_debug = True
+                
+
             infer_ms = (time.perf_counter() - infer_t0) * 1000.0
             if smoothed_infer_ms is None:
                 smoothed_infer_ms = infer_ms
@@ -664,10 +908,10 @@ def record_loop(
                 attn = getattr(model, "_last_vis_attn", None)
                 num_img_tokens = getattr(model, "_last_vis_num_img_tokens", None)
                 token_layout = getattr(model, "_last_vis_token_layout", None)
-                if attn is None:
-                    print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
-                else:
-                    print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
+                # if attn is None:
+                #     print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
+                # else:
+                #     print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
 
             if display_data and attn is not None:
                 image_obs_keys = get_policy_image_keys(policy, observation_frame)
@@ -808,12 +1052,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     # Check the prompt, to see if there any incorrect char
     current_task = {"text": cfg.dataset.single_task}
 
-    print(
-        "[DEBUG][CLI] task repr:",
-        repr(cfg.dataset.single_task),
-        "len:",
-        len(cfg.dataset.single_task),
-    )
+    # print(
+    #     "[DEBUG][CLI] task repr:",
+    #     repr(cfg.dataset.single_task),
+    #     "len:",
+    #     len(cfg.dataset.single_task),
+    # )
 
     init_logging()
     logging.info(pformat(asdict(cfg)))
@@ -921,6 +1165,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     display_data=cfg.display_data,
                     debug_freq=cfg.debug_freq,
                     listener=listener,
+
+                    # VLA steering w json
+                    steering_enabled=cfg.steering_enabled,
+                    steering_json=cfg.steering_json,
+                    steering_intervention=cfg.steering_intervention,
+                    steering_alpha=cfg.steering_alpha,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment

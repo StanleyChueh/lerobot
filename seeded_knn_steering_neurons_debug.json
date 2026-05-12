@@ -1,0 +1,342 @@
+{
+  "Low Transport": [
+    {
+      "rank": 1,
+      "layer": 5,
+      "neuron": 1877,
+      "seed_similarity": 0.8607397079467773,
+      "keyword_score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "lower",
+        "Lower",
+        "lowest"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "miracul",
+        "lower",
+        "worst",
+        "lev",
+        "heric",
+        "iting",
+        "Lower",
+        "lowest",
+        "worse",
+        "Prepar"
+      ]
+    },
+    {
+      "rank": 2,
+      "layer": 10,
+      "neuron": 2349,
+      "seed_similarity": 0.8083912134170532,
+      "keyword_score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "low",
+        "low",
+        "Low"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "och",
+        "low",
+        "Fine",
+        "count",
+        "nd",
+        "low",
+        "Low",
+        "optic",
+        "ancel",
+        "fine"
+      ]
+    },
+    {
+      "rank": 3,
+      "layer": 11,
+      "neuron": 1628,
+      "seed_similarity": 0.7256803512573242,
+      "keyword_score": 6.0,
+      "purity": 0.2,
+      "hard_match_count": 2,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "lower",
+        "Lower"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "sense",
+        "lower",
+        "rum",
+        "Suff",
+        "Lower",
+        "Sense",
+        "heav",
+        "EMENT",
+        "Nah",
+        "art"
+      ]
+    },
+    {
+      "rank": 4,
+      "layer": 3,
+      "neuron": 2003,
+      "seed_similarity": 0.6950090527534485,
+      "keyword_score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "lower",
+        "lower",
+        "Lower"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "lower",
+        "--",
+        "picture",
+        "lower",
+        "As",
+        "As",
+        "system",
+        "Lower",
+        "hand",
+        "—"
+      ]
+    },
+    {
+      "rank": 5,
+      "layer": 12,
+      "neuron": 1886,
+      "seed_similarity": 0.6814827919006348,
+      "keyword_score": 3.0,
+      "purity": 0.1,
+      "hard_match_count": 1,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "lower"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "iko",
+        "inical",
+        "acher",
+        "�",
+        "\")",
+        "\"—",
+        "lower",
+        "were",
+        "weaker",
+        "ourge"
+      ]
+    },
+    {
+      "rank": 6,
+      "layer": 5,
+      "neuron": 2376,
+      "seed_similarity": 0.6792374849319458,
+      "keyword_score": 3.0,
+      "purity": 0.1,
+      "hard_match_count": 1,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "lower"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "lessness",
+        "aign",
+        "leigh",
+        "sacr",
+        "’,",
+        "lactic",
+        "otle",
+        "istan",
+        "lower",
+        "zyg"
+      ]
+    }
+  ],
+  "High Transport": [
+    {
+      "rank": 1,
+      "layer": 2,
+      "neuron": 826,
+      "seed_similarity": 1.0,
+      "keyword_score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "high",
+        "high",
+        "High"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "high",
+        "high",
+        "asyncio",
+        "search",
+        "in",
+        "frust",
+        "High",
+        "ä",
+        "center",
+        "nee"
+      ]
+    },
+    {
+      "rank": 2,
+      "layer": 1,
+      "neuron": 1390,
+      "seed_similarity": 0.5618858933448792,
+      "keyword_score": 6.0,
+      "purity": 0.2,
+      "hard_match_count": 2,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "High",
+        "high"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "doorstep",
+        "conclud",
+        "arp",
+        "upuncture",
+        "High",
+        "ler",
+        "oons",
+        "hurd",
+        "high",
+        "proverb"
+      ]
+    },
+    {
+      "rank": 3,
+      "layer": 12,
+      "neuron": 1197,
+      "seed_similarity": 0.5280461311340332,
+      "keyword_score": 3.0,
+      "purity": 0.1,
+      "hard_match_count": 1,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "high"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "Dover",
+        "hard",
+        "jurisdiction",
+        "high",
+        "implement",
+        "Query",
+        "rad",
+        "maj",
+        "ovascular",
+        "index"
+      ]
+    },
+    {
+      "rank": 4,
+      "layer": 5,
+      "neuron": 2408,
+      "seed_similarity": 0.5208977460861206,
+      "keyword_score": 6.75,
+      "purity": 0.2,
+      "hard_match_count": 2,
+      "soft_match_count": 1,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "high",
+        "above",
+        "High"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "high",
+        "bridge",
+        "Sun",
+        "unningham",
+        "above",
+        "ilio",
+        "White",
+        "*",
+        "2",
+        "High"
+      ]
+    },
+    {
+      "rank": 5,
+      "layer": 1,
+      "neuron": 2506,
+      "seed_similarity": 0.500777542591095,
+      "keyword_score": 3.0,
+      "purity": 0.1,
+      "hard_match_count": 1,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "high"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "istos",
+        "con",
+        "ref",
+        "morning",
+        "emphasis",
+        "dest",
+        "high",
+        "absentee",
+        "exposure",
+        "Essay"
+      ]
+    },
+    {
+      "rank": 6,
+      "layer": 11,
+      "neuron": 2471,
+      "seed_similarity": 0.4934898614883423,
+      "keyword_score": 3.0,
+      "purity": 0.1,
+      "hard_match_count": 1,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "matched_tokens": [
+        "high"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "flour",
+        "arval",
+        "high",
+        "sticks",
+        "large",
+        "rapid",
+        "Pie",
+        "ُ",
+        "far",
+        "�"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "Low Transport": [
+    {
+      "rank": 1,
+      "score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "layer": 5,
+      "neuron": 1877,
+      "matched_tokens": [
+        "lower",
+        "Lower",
+        "lowest"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "miracul",
+        "lower",
+        "worst",
+        "lev",
+        "heric",
+        "iting",
+        "Lower",
+        "lowest",
+        "worse",
+        "Prepar"
+      ]
+    },
+    {
+      "rank": 2,
+      "score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "layer": 10,
+      "neuron": 2349,
+      "matched_tokens": [
+        "low",
+        "low",
+        "Low"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "och",
+        "low",
+        "Fine",
+        "count",
+        "nd",
+        "low",
+        "Low",
+        "optic",
+        "ancel",
+        "fine"
+      ]
+    },
+    {
+      "rank": 3,
+      "score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "layer": 3,
+      "neuron": 2003,
+      "matched_tokens": [
+        "lower",
+        "lower",
+        "Lower"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "lower",
+        "--",
+        "picture",
+        "lower",
+        "As",
+        "As",
+        "system",
+        "Lower",
+        "hand",
+        "—"
+      ]
+    }
+  ],
+  "High Transport": [
+    {
+      "rank": 1,
+      "score": 9.0,
+      "purity": 0.3,
+      "hard_match_count": 3,
+      "soft_match_count": 0,
+      "neg_match_count": 0,
+      "layer": 2,
+      "neuron": 826,
+      "matched_tokens": [
+        "high",
+        "high",
+        "High"
+      ],
+      "negative_tokens": [],
+      "top_tokens": [
+        "high",
+        "high",
+        "asyncio",
+        "search",
+        "in",
+        "frust",
+        "High",
+        "ä",
+        "center",
+        "nee"
+      ]
+    }
+  ]
+}

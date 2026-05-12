@@ -215,29 +215,46 @@ def extract_cross_attention_maps(attn_matrix, token_layout):
     if attn_matrix is None or token_layout is None:
         return [], {}
 
+    # attn_matrix: [Q, K]
+    # Q = action/query tokens
+    # K = prefix tokens: image/language/state/etc.
     mean_action_attn = attn_matrix.mean(dim=0)   # [K]
+
     image_maps = []
     contrib = {}
 
-    total = mean_action_attn.sum().item() + 1e-8
+    total_sum = mean_action_attn.sum().item() + 1e-8
 
     for seg in token_layout:
         start, end = seg["start"], seg["end"]
         seg_attn = mean_action_attn[start:end]
+
         seg_sum = seg_attn.sum().item()
-        ratio = seg_sum / total
+        seg_mean = seg_attn.mean().item() if seg_attn.numel() > 0 else 0.0
+        seg_max = seg_attn.max().item() if seg_attn.numel() > 0 else 0.0
+        seg_tokens = int(seg_attn.numel())
+        seg_ratio = seg_sum / total_sum
+
+        stats = {
+            "sum": seg_sum,
+            "mean": seg_mean,
+            "max": seg_max,
+            "tokens": seg_tokens,
+            "ratio": seg_ratio,
+        }
 
         if seg["type"] == "image":
             image_maps.append({
                 "image_index": seg["image_index"],
                 "heat_1d": seg_attn,
-                "ratio": ratio,
+                "stats": stats,
             })
 
         key = seg["type"]
         if seg["type"] == "image":
             key = f'image_{seg["image_index"]}'
-        contrib[key] = contrib.get(key, 0.0) + ratio
+
+        contrib[key] = stats
 
     return image_maps, contrib
 
@@ -296,9 +313,9 @@ def to_hwc_uint8(img):
 
     return np.ascontiguousarray(img)
 
-def draw_ratio_overlay(
+def draw_attention_stats_overlay(
     img,
-    cam_ratio,
+    cam_stats,
     contrib,
     debug_freq: bool = False,
     control_hz: float | None = None,
@@ -311,12 +328,25 @@ def draw_ratio_overlay(
 ):
     out = img.copy()
 
+    def fmt_stats(name, stats):
+        if stats is None:
+            return f"{name}: none"
+
+        return (
+            f"{name}: "
+            f"sum={stats.get('sum', 0.0):.4f}, "
+            f"mean={stats.get('mean', 0.0):.6f}, "
+            f"max={stats.get('max', 0.0):.6f}, "
+            f"n={stats.get('tokens', 0)}"
+        )
+
     lines = [
-        f"this_cam: {cam_ratio * 100:.1f}%",
-        f"image1: {contrib.get('image_0', 0.0) * 100:.1f}%",
-        f"image2: {contrib.get('image_1', 0.0) * 100:.1f}%",
-        f"prompt: {contrib.get('language', 0.0) * 100:.1f}%",
-        f"state: {contrib.get('state', 0.0) * 100:.1f}%",
+        fmt_stats("this_cam", cam_stats),
+        # fmt_stats("image1", contrib.get("image_0")),
+        # fmt_stats("image2", contrib.get("image_1")),
+        # fmt_stats("image3", contrib.get("image_2")),
+        fmt_stats("prompt", contrib.get("language")),
+        fmt_stats("state", contrib.get("state")),
     ]
 
     if debug_freq:
@@ -337,9 +367,9 @@ def draw_ratio_overlay(
     x, y = 16, 28
     dy = 26
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.7
+    font_scale = 0.55
     thickness_bg = 4
-    thickness_fg = 2
+    thickness_fg = 1
 
     for i, text in enumerate(lines):
         yy = y + i * dy
@@ -446,22 +476,23 @@ def record_loop(
         #   alpha = 0.0 with hook     -> activation ablation
         #   alpha != 0.0 with hook    -> activation steering
 
-        intervention_name = "low_transport"
-        alpha = 10.0
+        intervention_name = "green"
+        alpha = 0.0
 
         semantic_neuron_sets = {
             "low_transport": {
                 1: [1222],
                 3: [2003],
-                5: [1877, 1904],
-                15: [1157],
+                5: [1877,1904],
+                10: [2349],
+                13: [1744],
             },
             "high_transport": {
+                1: [1390],
                 2: [826],
                 3: [369],
-                5: [2102],
                 7: [1151],
-                9: [2554],
+                9:[2554],
                 13: [414],
             },
             "fast_transport": {
@@ -479,10 +510,18 @@ def record_loop(
                 13: [1456],
             },
             "green": {
-                2: [1968],
+                1: [798],
+                7: [230],
+                8: [1527],
                 9: [863],
-                13: [1589],
             },
+            "red" : {
+                1: [67, 1986],
+                4: [688],
+                8: [216],
+                10: [2283],
+                13: [268],
+            }
         }
 
         if hasattr(policy, "clear_activation_steering"):
@@ -660,12 +699,12 @@ def record_loop(
         if policy is not None and preprocessor is not None and postprocessor is not None:
             
             # Check the prompt, to see if there any incorrect char
-            print(
-                "[DEBUG] task repr:",
-                repr(task_holder["text"]),
-                "len:",
-                len(task_holder["text"]),
-            )
+            # print(
+            #     "[DEBUG] task repr:",
+            #     repr(task_holder["text"]),
+            #     "len:",
+            #     len(task_holder["text"]),
+            # )
             model = policy.model.vlm_with_expert
             model.record_attn = True
             model.debug_attn = True
@@ -749,10 +788,10 @@ def record_loop(
                 attn = getattr(model, "_last_vis_attn", None)
                 num_img_tokens = getattr(model, "_last_vis_num_img_tokens", None)
                 token_layout = getattr(model, "_last_vis_token_layout", None)
-                if attn is None:
-                    print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
-                else:
-                    print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
+                # if attn is None:
+                #     print("[DEBUG] no cross-attn recorded yet (likely action queue reused cached actions)")
+                # else:
+                #     print("[DEBUG] no new cross-attn this step; reusing cached attention for visualization")
 
             if display_data and attn is not None:
                 image_obs_keys = get_policy_image_keys(policy, observation_frame)
@@ -786,7 +825,7 @@ def record_loop(
                 for item in image_attn_list:
                     image_index = item["image_index"]
                     heat_1d = item["heat_1d"]
-                    ratio = item["ratio"]
+                    cam_stats = item["stats"]
 
                     if image_index >= len(image_obs_keys):
                         continue
@@ -803,9 +842,9 @@ def record_loop(
                     heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
                     heatmap_rgb = cv2.cvtColor(heatmap, cv2.COLOR_BGR2RGB)
                     vis = cv2.addWeighted(img_hwc, 0.6, heatmap_rgb, 0.4, 0)
-                    vis = draw_ratio_overlay(
+                    vis = draw_attention_stats_overlay(
                         vis,
-                        ratio,
+                        cam_stats,
                         contrib,
                         debug_freq=debug_freq,
                         control_hz=smoothed_control_hz,
@@ -893,12 +932,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
     # Check the prompt, to see if there any incorrect char
     current_task = {"text": cfg.dataset.single_task}
 
-    print(
-        "[DEBUG][CLI] task repr:",
-        repr(cfg.dataset.single_task),
-        "len:",
-        len(cfg.dataset.single_task),
-    )
+    # print(
+    #     "[DEBUG][CLI] task repr:",
+    #     repr(cfg.dataset.single_task),
+    #     "len:",
+    #     len(cfg.dataset.single_task),
+    # )
 
     init_logging()
     logging.info(pformat(asdict(cfg)))
