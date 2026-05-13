@@ -422,6 +422,7 @@ def record_loop(
     postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
     control_time_s: int | None = None,
     task_holder: dict | None = None, 
+    steering_holder: dict | None = None,
     display_data: bool = False,
     listener = None,
     debug_freq: bool = False,
@@ -476,8 +477,11 @@ def record_loop(
         #   alpha = 0.0 with hook     -> activation ablation
         #   alpha != 0.0 with hook    -> activation steering
 
-        intervention_name = "right"
-        alpha = 1.0
+        if steering_holder is None:
+            steering_holder = {"alpha": 0.0, "intervention_name": "green"}
+        
+        intervention_name = steering_holder["intervention_name"]
+        alpha = steering_holder["alpha"]
 
         semantic_neuron_sets = {
             "low_transport": {
@@ -488,9 +492,9 @@ def record_loop(
                 13: [1744],
             },
             "high_transport": {
+                1: [1390],
                 2: [826],
                 3: [369],
-                5: [2102],
                 7: [1151],
                 9:[2554],
                 13: [414],
@@ -521,20 +525,6 @@ def record_loop(
                 8: [216],
                 10: [2283],
                 13: [268],
-            },
-            "right" : {
-                4: [1897, 1400],
-                10: [1257],
-                13: [1122],
-                14: [479,1650]
-            },
-            "left" : {
-                3: [583],
-                4: [1936],
-                5: [1872],
-                6: [2374],
-                9: [1941],
-                11: [1367],
             }
         }
 
@@ -627,6 +617,48 @@ def record_loop(
                 events["rerecord_episode"] = True
             else:
                 print("[WARN] Empty input, task unchanged")
+
+        if events.get("change_alpha", False) == True:
+            events["change_alpha"] = False
+            events["in_alpha_input"] = True
+            try:
+                print("\n=== ALPHA SWITCH MODE ===")
+                print(f"Current Intervention: {steering_holder['intervention_name']}, Current Alpha: {steering_holder['alpha']}")
+                print("Type new alpha value (float) and press Enter:")
+                raw_alpha = input(">> ")
+            finally:
+                events["in_alpha_input"] = False
+            
+            raw_alpha = _ANSI_ESCAPE_RE.sub("", raw_alpha)
+            raw_alpha = _CONTROL_RE.sub("", raw_alpha)
+            raw_alpha = raw_alpha.strip()
+
+            if len(raw_alpha) > 0:
+                try:
+                    new_alpha = float(raw_alpha)
+                    steering_holder["alpha"] = new_alpha
+                    print(f"[INFO] Alpha updated to: {new_alpha}")
+                    
+                    # 動態重新註冊 / 清除 Hook
+                    if hasattr(policy, "set_activation_steering"):
+                        selected_neurons = semantic_neuron_sets[steering_holder["intervention_name"]]
+                        if new_alpha == 0.0:
+                            policy.clear_activation_steering()
+                            print(f"[INFO] alpha=0.0: Activation steering hook cleared.")
+                        else:
+                            policy.set_activation_steering(
+                                steering_neurons=selected_neurons,
+                                alpha=new_alpha,
+                                record_debug=True,
+                            )
+                            print(f"[INFO] Hook updated dynamically with alpha: {new_alpha}")
+                        events["exit_early"] = True
+                        events["rerecord_episode"] = True
+                    
+                except ValueError:
+                    print("[WARN] Invalid input! Alpha must be a number. Unchanged.")
+            else:
+                print("[WARN] Empty input, alpha unchanged")
 
         attn = None
         num_img_tokens = None
@@ -945,7 +977,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Check the prompt, to see if there any incorrect char
     current_task = {"text": cfg.dataset.single_task}
-
+    current_steering = {"alpha": 0.0, "intervention_name": "green"}
     # print(
     #     "[DEBUG][CLI] task repr:",
     #     repr(cfg.dataset.single_task),
@@ -1056,6 +1088,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     dataset=dataset,
                     control_time_s=cfg.dataset.episode_time_s,
                     task_holder=current_task,
+                    steering_holder=current_steering,
                     display_data=cfg.display_data,
                     debug_freq=cfg.debug_freq,
                     listener=listener,
@@ -1079,6 +1112,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         teleop=teleop,
                         control_time_s=cfg.dataset.reset_time_s,
                         task_holder=current_task, 
+                        steering_holder=current_steering,
                         display_data=cfg.display_data,
                         debug_freq=cfg.debug_freq,
                         listener=listener,

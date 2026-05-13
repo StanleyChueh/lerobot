@@ -140,9 +140,8 @@ def init_keyboard_listener():
     events["change_task"] = False
     events["in_task_input"] = False
 
-    # activate switching
-    events["change_activate"] = False
-    events["in_activate_input"] = False
+    events["change_alpha"] = False
+    events["in_alpha_input"] = False
 
     if is_headless():
         logging.warning(
@@ -158,7 +157,7 @@ def init_keyboard_listener():
         try:
             if events.get("in_task_input", False):
                 return
-            if events.get("in_activate_input", False):
+            if events.get("in_alpha_input", False):
                 return
 
             if key == keyboard.Key.right:
@@ -176,8 +175,8 @@ def init_keyboard_listener():
                 print("Task change key pressed. Entering task switch mode...")
                 events["change_task"] = True
             elif hasattr(key, "char") and key.char == "a":
-                print("Activate change key pressed. Entering Activate switch mode...")
-                events["change_activate"] = True
+                print("Alpha change key pressed. Entering Alpha switch mode...")
+                events["change_alpha"] = True
                 
         except Exception as e:
             print(f"Error handling key press: {e}")
@@ -280,67 +279,67 @@ def sanity_check_dataset_robot_compatibility(
 
     return action
 
-def init_keyboard_listener():
-    """
-    Initializes a non-blocking keyboard listener for real-time user interaction.
+# def init_keyboard_listener():
+#     """
+#     Initializes a non-blocking keyboard listener for real-time user interaction.
 
-    This function sets up a listener for specific keys (right arrow, left arrow, escape) to control
-    the program flow during execution, such as stopping recording or exiting loops. It gracefully
-    handles headless environments where keyboard listening is not possible.
+#     This function sets up a listener for specific keys (right arrow, left arrow, escape) to control
+#     the program flow during execution, such as stopping recording or exiting loops. It gracefully
+#     handles headless environments where keyboard listening is not possible.
 
-    Returns:
-        A tuple containing:
-        - The `pynput.keyboard.Listener` instance, or `None` if in a headless environment.
-        - A dictionary of event flags (e.g., `exit_early`) that are set by key presses.
-    """
-    # Allow to exit early while recording an episode or resetting the environment,
-    # by tapping the right arrow key '->'. This might require a sudo permission
-    # to allow your terminal to monitor keyboard events.
-    events = {}
-    events["exit_early"] = False
-    events["rerecord_episode"] = False
-    events["stop_recording"] = False
+#     Returns:
+#         A tuple containing:
+#         - The `pynput.keyboard.Listener` instance, or `None` if in a headless environment.
+#         - A dictionary of event flags (e.g., `exit_early`) that are set by key presses.
+#     """
+#     # Allow to exit early while recording an episode or resetting the environment,
+#     # by tapping the right arrow key '->'. This might require a sudo permission
+#     # to allow your terminal to monitor keyboard events.
+#     events = {}
+#     events["exit_early"] = False
+#     events["rerecord_episode"] = False
+#     events["stop_recording"] = False
 
-    # Task switching
-    events["change_task"] = False
-    events["in_task_input"] = False
+#     # Task switching
+#     events["change_task"] = False
+#     events["in_task_input"] = False
 
-    if is_headless():
-        logging.warning(
-            "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
-        )
-        listener = None
-        return listener, events
+#     if is_headless():
+#         logging.warning(
+#             "Headless environment detected. On-screen cameras display and keyboard inputs will not be available."
+#         )
+#         listener = None
+#         return listener, events
 
-    # Only import pynput if not in a headless environment
-    from pynput import keyboard
+#     # Only import pynput if not in a headless environment
+#     from pynput import keyboard
 
-    def on_press(key):
-        try:
-            if events.get("in_task_input", False):
-                return
+#     def on_press(key):
+#         try:
+#             if events.get("in_task_input", False):
+#                 return
 
-            if key == keyboard.Key.right:
-                print("Right arrow key pressed. Exiting loop...")
-                events["exit_early"] = True
-            elif key == keyboard.Key.left:
-                print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
-                events["rerecord_episode"] = True
-                events["exit_early"] = True
-            elif key == keyboard.Key.esc:
-                print("Escape key pressed. Stopping data recording...")
-                events["stop_recording"] = True
-                events["exit_early"] = True
-            elif hasattr(key, "char") and key.char == "t":
-                print("Task change key pressed. Entering task switch mode...")
-                events["change_task"] = True
-        except Exception as e:
-            print(f"Error handling key press: {e}")
+#             if key == keyboard.Key.right:
+#                 print("Right arrow key pressed. Exiting loop...")
+#                 events["exit_early"] = True
+#             elif key == keyboard.Key.left:
+#                 print("Left arrow key pressed. Exiting loop and rerecord the last episode...")
+#                 events["rerecord_episode"] = True
+#                 events["exit_early"] = True
+#             elif key == keyboard.Key.esc:
+#                 print("Escape key pressed. Stopping data recording...")
+#                 events["stop_recording"] = True
+#                 events["exit_early"] = True
+#             elif hasattr(key, "char") and key.char == "t":
+#                 print("Task change key pressed. Entering task switch mode...")
+#                 events["change_task"] = True
+#         except Exception as e:
+#             print(f"Error handling key press: {e}")
 
-    listener = keyboard.Listener(on_press=on_press)
-    listener.start()
+#     listener = keyboard.Listener(on_press=on_press)
+#     listener.start()
 
-    return listener, events
+#     return listener, events
 
 
 def sanity_check_dataset_name(repo_id, policy_cfg):
