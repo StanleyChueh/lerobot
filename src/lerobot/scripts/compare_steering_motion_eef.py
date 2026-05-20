@@ -1,11 +1,19 @@
 '''
- python src/lerobot/scripts/compare_steering_motion_eef.py \
+python src/lerobot/scripts/compare_steering_motion_eef.py \
   --repo-ids \
-    ethanCSL/eval_koch_baseline \
-    ethanCSL/eval_koch_high \
-    ethanCSL/eval_koch_low \
-  --labels baseline high low \
-  --out-dir compare_baseline_high_low
+    ethanCSL/eval_steering_paper_baseline \
+    ethanCSL/eval_steering_ours_high_6 \
+    ethanCSL/eval_steering_ours_low_4 \
+  --labels baseline eval_high eval_low \
+  --demo-repo-id ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --demo-high-start 0 \
+  --demo-high-end 29 \
+  --demo-low-start 30 \
+  --demo-n-episodes 20 \
+  --plot-start-time 3 \
+  --plot-end-time 10 \
+  --out-dir compare_baseline_high_low_with_dataset
+
 '''
 import argparse
 import csv
@@ -344,6 +352,71 @@ def plot_paper_low_high_height_trajectories(
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
+
+def plot_paper_height_trajectories_multi(
+    rows_by_label,
+    out_path,
+    labels_to_plot,
+    titles=None,
+    n_episodes=20,
+    start_time=None,
+    end_time=None,
+):
+    available_labels = [label for label in labels_to_plot if label in rows_by_label]
+
+    if len(available_labels) == 0:
+        raise ValueError(
+            f"No requested labels are available. "
+            f"Requested: {labels_to_plot}. Available: {list(rows_by_label.keys())}"
+        )
+
+    if titles is None:
+        titles = {label: label for label in available_labels}
+
+    fig, axes = plt.subplots(
+        1,
+        len(available_labels),
+        figsize=(5 * len(available_labels), 5),
+        sharey=True,
+    )
+
+    if len(available_labels) == 1:
+        axes = [axes]
+
+    for ax, label in zip(axes, available_labels):
+        rows = rows_by_label[label][:n_episodes]
+        drawn = 0
+
+        for row in rows:
+            h = extract_height_trace_from_row(
+                row,
+                start_time=start_time,
+                end_time=end_time,
+                use_cm=True,
+            )
+
+            if h is None or len(h) == 0:
+                continue
+
+            x = np.arange(len(h))
+            ax.plot(x, h, linewidth=1.4, alpha=0.9)
+            drawn += 1
+
+        ax.set_title(titles.get(label, label))
+        ax.set_xlabel("Action Step")
+        ax.grid(True, alpha=0.25)
+
+        if drawn > 0:
+            ax.set_xlim(left=0)
+
+    axes[0].set_ylabel("EE Height (cm)")
+
+    fig.suptitle("Eval vs Dataset EEF Height Trajectories", fontsize=16, fontweight="bold")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
 def bootstrap_mean_diff_ci(a, b, n_boot=3000, seed=0):
     rng = np.random.default_rng(seed)
     a = np.asarray(a, dtype=np.float64)
@@ -440,6 +513,23 @@ def load_episodes(repo_id, root=None, max_frames=None):
         }
 
     return cleaned
+
+
+def select_episode_range(eps, start_idx=None, end_idx=None, n_episodes=None):
+    selected = {}
+
+    for ep_idx, ep in sorted(eps.items()):
+        if start_idx is not None and ep_idx < start_idx:
+            continue
+        if end_idx is not None and ep_idx > end_idx:
+            continue
+
+        selected[ep_idx] = ep
+
+        if n_episodes is not None and len(selected) >= n_episodes:
+            break
+
+    return selected
 
 
 def compute_episode_metrics(ep_idx, episode):
@@ -606,7 +696,12 @@ def save_csv(path, rows):
         writer.writerows(rows)
 
 
-def plot_metric_boxplots_multi(rows_by_label, out_path):
+def plot_metric_boxplots_multi(
+    rows_by_label,
+    out_path,
+    height_start_time=None,
+    height_end_time=None,
+):
     metrics = [
         "action_mean_speed",
         "action_mean_jerk",
@@ -625,7 +720,27 @@ def plot_metric_boxplots_multi(rows_by_label, out_path):
         grouped = []
         valid_labels = []
         for label in labels:
-            vals = [r[m] for r in rows_by_label[label] if m in r and np.isfinite(r[m])]
+            vals = []
+
+            for r in rows_by_label[label]:
+                if (
+                    m == "eef_height_range"
+                    and (height_start_time is not None or height_end_time is not None)
+                ):
+                    h = extract_height_trace_from_row(
+                        r,
+                        start_time=height_start_time,
+                        end_time=height_end_time,
+                        use_cm=False,   # keep meters, same as original eef_height_range
+                    )
+
+                    if h is not None and len(h) > 0:
+                        vals.append(float(np.max(h) - np.min(h)))
+
+                else:
+                    if m in r and np.isfinite(r[m]):
+                        vals.append(r[m])
+
             if len(vals) > 0:
                 grouped.append(vals)
                 valid_labels.append(label)
@@ -732,11 +847,61 @@ def strip_trace_fields(rows):
 
 def main():
     parser = argparse.ArgumentParser()
+    # Dataset comparison
     parser.add_argument("--repo-ids", type=str, nargs=3, required=True)
-    parser.add_argument("--labels", type=str, nargs=3, default=["baseline", "high", "low"])
+    parser.add_argument("--labels", type=str, nargs=3, default=["baseline", "eval_high", "eval_low"])
+
+    parser.add_argument(
+        "--demo-repo-id",
+        type=str,
+        default=None,
+        help="Optional dataset repo used as reference/demo trajectories.",
+    )
+
+    parser.add_argument(
+        "--demo-high-start",
+        type=int,
+        default=0,
+        help="First episode index for high trajectories in the demo dataset.",
+    )
+
+    parser.add_argument(
+        "--demo-high-end",
+        type=int,
+        default=29,
+        help="Last episode index for high trajectories in the demo dataset, inclusive.",
+    )
+
+    parser.add_argument(
+        "--demo-low-start",
+        type=int,
+        default=30,
+        help="First episode index for low trajectories in the demo dataset.",
+    )
+
+    parser.add_argument(
+        "--demo-n-episodes",
+        type=int,
+        default=20,
+        help="Number of demo high/low episodes to use.",
+    )
+
     parser.add_argument("--root", type=str, default=None)
     parser.add_argument("--out-dir", type=str, default="steering_compare")
     parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument(
+        "--plot-start-time",
+        type=float,
+        default=None,
+        help="Start time in seconds for interval-based height plots and eef_height_range boxplot.",
+    )
+
+    parser.add_argument(
+        "--plot-end-time",
+        type=float,
+        default=None,
+        help="End time in seconds for interval-based height plots and eef_height_range boxplot.",
+    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -755,22 +920,94 @@ def main():
         save_csv(out_dir / f"{label}_episode_metrics.csv", strip_trace_fields(rows))
         with (out_dir / f"{label}_summary.json").open("w") as f:
             json.dump(all_summaries[label], f, indent=2)
+    
+    # Dataset comparison
+    if args.demo_repo_id is not None:
+        print(f"Loading demo/reference dataset: {args.demo_repo_id}")
+        demo_eps = load_episodes(args.demo_repo_id, root=args.root, max_frames=args.max_frames)
+
+        demo_high_eps = select_episode_range(
+            demo_eps,
+            start_idx=args.demo_high_start,
+            end_idx=args.demo_high_end,
+            n_episodes=args.demo_n_episodes,
+        )
+
+        demo_low_eps = select_episode_range(
+            demo_eps,
+            start_idx=args.demo_low_start,
+            end_idx=None,
+            n_episodes=args.demo_n_episodes,
+        )
+
+        demo_groups = {
+            "dataset_high": demo_high_eps,
+            "dataset_low": demo_low_eps,
+        }
+
+        for label, eps_subset in demo_groups.items():
+            print(f"Processing {label}: {len(eps_subset)} episodes")
+            rows = [compute_episode_metrics(ep_idx, ep) for ep_idx, ep in sorted(eps_subset.items())]
+            all_rows[label] = rows
+            all_summaries[label] = summarize_metrics(rows, label)
+
+            save_csv(out_dir / f"{label}_episode_metrics.csv", strip_trace_fields(rows))
+            with (out_dir / f"{label}_summary.json").open("w") as f:
+                json.dump(all_summaries[label], f, indent=2)
 
     comparisons = compare_summaries_multi(all_rows)
     save_csv(out_dir / "comparison_summary.csv", comparisons)
 
-    plot_metric_boxplots_multi(all_rows, out_dir / "metric_boxplots.png")
+    interval_tag = "full"
+    if args.plot_start_time is not None or args.plot_end_time is not None:
+        start_tag = "start" if args.plot_start_time is None else f"{args.plot_start_time:g}s"
+        end_tag = "end" if args.plot_end_time is None else f"{args.plot_end_time:g}s"
+        interval_tag = f"{start_tag}_to_{end_tag}"
+
+    boxplot_path = out_dir / f"metric_boxplots_{interval_tag}.png"
+
+    plot_metric_boxplots_multi(
+        all_rows,
+        boxplot_path,
+        height_start_time=args.plot_start_time,
+        height_end_time=args.plot_end_time,
+    )
     plot_trace_comparison_multi(all_rows, out_dir / "trace_comparison.png")
     plot_eef_trace_comparison_multi(all_rows, out_dir / "eef_trace_comparison.png")
-    plot_paper_low_high_height_trajectories(
-        all_rows,
-        out_dir / "paper_low_high_height_10episodes.png",
-        low_label="baseline",
-        high_label="high",
-        n_episodes=10,
-        start_time=2,
-        end_time=7,
-    )
+
+    # Daraset comparison
+    if args.demo_repo_id is not None:
+        plot_paper_height_trajectories_multi(
+            all_rows,
+            out_dir / f"paper_low_high_baseline_dataset_height_20episodes_{interval_tag}.png",
+            labels_to_plot=[
+                "baseline",
+                "eval_high",
+                "eval_low",
+                "dataset_high",
+                "dataset_low",
+            ],
+            titles={
+                "baseline": "Eval Baseline",
+                "eval_high": "Eval High",
+                "eval_low": "Eval Low",
+                "dataset_high": "Dataset High",
+                "dataset_low": "Dataset Low",
+            },
+            n_episodes=20,
+            start_time=args.plot_start_time,
+            end_time=args.plot_end_time,
+        )
+
+        plot_paper_low_high_height_trajectories(
+            all_rows,
+            out_dir / f"paper_low_high_height_20episodes_{interval_tag}.png",
+            low_label="eval_low",
+            high_label="eval_high",
+            n_episodes=20,
+            start_time=args.plot_start_time,
+            end_time=args.plot_end_time,
+        )
 
     print("\nSaved:")
     for label in args.labels:
@@ -780,7 +1017,14 @@ def main():
     print(f"  {out_dir / 'metric_boxplots.png'}")
     print(f"  {out_dir / 'trace_comparison.png'}")
     print(f"  {out_dir / 'eef_trace_comparison.png'}")
-    print(f"  {out_dir / 'paper_low_high_height_10episodes.png'}")
+    print(f"  {out_dir / 'paper_low_high_height_20episodes.png'}")
+
+    if args.demo_repo_id is not None:
+        print(f"  {out_dir / 'dataset_high_episode_metrics.csv'}")
+        print(f"  {out_dir / 'dataset_low_episode_metrics.csv'}")
+        print(f"  {out_dir / 'dataset_high_summary.json'}")
+        print(f"  {out_dir / 'dataset_low_summary.json'}")
+        print(f"  {out_dir / 'paper_low_high_baseline_dataset_height_20episodes.png'}")
 
     interesting = [
         "action_mean_speed",

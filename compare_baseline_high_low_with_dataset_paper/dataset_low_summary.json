@@ -1,0 +1,274 @@
+{
+  "duration_s": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 7.694999957084656,
+    "std": 0.36213707181999333,
+    "median": 7.666666507720947,
+    "p95": 8.268333101272583
+  },
+  "action_path_len": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 403.6166604734876,
+    "std": 23.015612749448962,
+    "median": 403.87675337298094,
+    "p95": 440.6042833672287
+  },
+  "action_mean_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 52.475481650422736,
+    "std": 2.342982726768418,
+    "median": 51.869833494357735,
+    "p95": 55.999994973132864
+  },
+  "action_p95_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 128.05315771234584,
+    "std": 6.903825743328501,
+    "median": 129.0778128026488,
+    "p95": 136.5867982813656
+  },
+  "action_max_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 262.20107429493066,
+    "std": 36.40735964909564,
+    "median": 257.633813045785,
+    "p95": 327.3937252309903
+  },
+  "action_mean_jerk": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 304.67994335707397,
+    "std": 17.90943850840554,
+    "median": 305.0045134738465,
+    "p95": 334.6234782921269
+  },
+  "action_p95_jerk": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 1047.2860204305011,
+    "std": 130.83293132691276,
+    "median": 1049.554210752428,
+    "p95": 1220.7808782375876
+  },
+  "action_speed_spikiness": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 6.190161888308603,
+    "std": 1.3747738489516947,
+    "median": 5.855230201953782,
+    "p95": 8.64023323922964
+  },
+  "state_path_len": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 302.1265031907566,
+    "std": 25.087826136611284,
+    "median": 305.14371860032975,
+    "p95": 338.3845518900742
+  },
+  "state_mean_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 39.237174901284995,
+    "std": 2.284940113789776,
+    "median": 38.80947116746853,
+    "p95": 42.87209023224542
+  },
+  "state_p95_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 110.83368653284019,
+    "std": 9.624228711488374,
+    "median": 113.02731745846984,
+    "p95": 122.34441545976911
+  },
+  "state_max_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 148.71670092260112,
+    "std": 7.576807828060094,
+    "median": 148.676133044472,
+    "p95": 159.20388699205955
+  },
+  "state_mean_jerk": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 192.4190743267785,
+    "std": 14.383007527130887,
+    "median": 194.81202564300082,
+    "p95": 208.66328091931098
+  },
+  "state_p95_jerk": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 584.2070178093106,
+    "std": 67.09718903085012,
+    "median": 579.1356205354502,
+    "p95": 688.7067739777816
+  },
+  "state_speed_spikiness": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 4.693075989395826,
+    "std": 0.5862626647945024,
+    "median": 4.710419808570931,
+    "p95": 5.735424943205101
+  },
+  "state_endpoint_delta": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 4.092584814173048,
+    "std": 2.1160176293657607,
+    "median": 3.6813332535724497,
+    "p95": 6.685774260557304
+  },
+  "eef_pos_path_len": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.4168055395275915,
+    "std": 0.05256352073905595,
+    "median": 0.41135376194111073,
+    "p95": 0.48452936219690773
+  },
+  "eef_pos_mean_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.05407288683054636,
+    "std": 0.00538150811143653,
+    "median": 0.05315081870832637,
+    "p95": 0.06446378367352973
+  },
+  "eef_pos_p95_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.15297891701792724,
+    "std": 0.012973794465031847,
+    "median": 0.1525076940381035,
+    "p95": 0.17175737056786722
+  },
+  "eef_pos_max_speed": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.19849761390350787,
+    "std": 0.032131472040518375,
+    "median": 0.19108073636209372,
+    "p95": 0.2542191861416549
+  },
+  "eef_pos_mean_jerk": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.2942979101811237,
+    "std": 0.021041267061863166,
+    "median": 0.28892778962342136,
+    "p95": 0.3206478912048398
+  },
+  "eef_pos_p95_jerk": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.9745230932396126,
+    "std": 0.06950740692673886,
+    "median": 0.9725766097382893,
+    "p95": 1.07006697888634
+  },
+  "eef_pos_speed_spikiness": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 6.712754092848366,
+    "std": 1.6667016159494359,
+    "median": 6.673069531960361,
+    "p95": 9.446588031888721
+  },
+  "eef_pos_endpoint_delta": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.0020689956503978963,
+    "std": 0.00240761651804253,
+    "median": 0.0008275354422730063,
+    "p95": 0.005585893893667305
+  },
+  "eef_height_mean": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.16074457431918324,
+    "std": 0.0022900246284689144,
+    "median": 0.16064490303987483,
+    "p95": 0.1644258602401448
+  },
+  "eef_height_min": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.11967970543365761,
+    "std": 0.0005247401919230441,
+    "median": 0.11955205272036984,
+    "p95": 0.12075524234032249
+  },
+  "eef_height_max": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.2052246793999039,
+    "std": 0.0053501195856888355,
+    "median": 0.2054867101218133,
+    "p95": 0.21186639476238098
+  },
+  "eef_height_range": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.08554497396624634,
+    "std": 0.0052624464945678524,
+    "median": 0.08617300165334524,
+    "p95": 0.09119105819411577
+  },
+  "eef_height_final": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.1203378624647455,
+    "std": 0.001063170485735996,
+    "median": 0.11995433923866897,
+    "p95": 0.12274267766285173
+  },
+  "eef_displacement_mean": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.059040768187515635,
+    "std": 0.008395658580611047,
+    "median": 0.05616154114485786,
+    "p95": 0.07386583505153077
+  },
+  "eef_displacement_min": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.0,
+    "std": 0.0,
+    "median": 0.0,
+    "p95": 0.0
+  },
+  "eef_displacement_max": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.10135641665930409,
+    "std": 0.014600726575340407,
+    "median": 0.09543851629464212,
+    "p95": 0.12474569249166799
+  },
+  "eef_displacement_range": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.10135641665930409,
+    "std": 0.014600726575340407,
+    "median": 0.09543851629464212,
+    "p95": 0.12474569249166799
+  },
+  "eef_displacement_final": {
+    "dataset": "dataset_low",
+    "n_episodes": 20,
+    "mean": 0.0020689956503978963,
+    "std": 0.00240761651804253,
+    "median": 0.0008275354422730063,
+    "p95": 0.005585893893667305
+  }
+}

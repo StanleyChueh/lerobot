@@ -11,7 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+'''
 
+python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test.py  --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 7, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 11, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  }'   --dataset.single_task="Put the red cube in the box."   --dataset.repo_id=ethanCSL/eval_steering_ours_high_6   --dataset.episode_time_s=500000   --dataset.num_episodes=20   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 --dataset.reset_time_s=5 
+
+
+'''
 import logging
 import math
 import time
@@ -476,25 +485,69 @@ def record_loop(
         #   alpha = 0.0 with hook     -> activation ablation
         #   alpha != 0.0 with hook    -> activation steering
 
-        intervention_name = "right"
-        alpha = 1.0
+        intervention_name = "high_transport"
+        alpha = 6.0
+
+        # intervention_name = "low_transport"
+        # alpha = 4.0
 
         semantic_neuron_sets = {
-            "low_transport": {
-                1: [1222],
-                3: [2003],
-                5: [1877,1904],
-                10: [2349],
-                13: [1744],
-            },
+            # "low_transport": {
+            #     1: [1222],
+            #     3: [2003],
+            #     5: [1877,1904],
+            #     10: [2349],
+            #     13: [1744],
+            # },
+            # "high_transport": {
+            #     2: [826],
+            #     3: [369],
+            #     5: [2102],
+            #     7: [1151],
+            #     9:[2554],
+            #     13: [414],
+            # },
+
+            # # eef Z (python src/lerobot/scripts/physical_neuron_picking_test_Z.py)
+            # "high_transport": {
+            #     8:[333],
+            #     9:[327,163,756],
+            #     12:[45,902,54],
+            #     13:[93,106],
+            #     14:[426],
+            # },
+            # "low_transport": {
+            #     8:[640,607],
+            #     9:[396],
+            #     10:[87],
+            #     11:[43,546],
+            #     12:[544,652,781,87],
+            # },
+
+            ### Constrative
             "high_transport": {
-                2: [826],
-                3: [369],
-                5: [2102],
-                7: [1151],
-                9:[2554],
-                13: [414],
+                0: [1293],
+                1: [1050],
+                3: [2259],
+                4: [1183],
+                7: [295],
+                11: [1115,1595],
+                13: [431],
+                14: [736,805]
             },
+            "low_transport": {
+                3: [962],
+                4: [1627],
+                6: [587],
+                7: [1007],
+                9: [149],
+                11: [1066],
+                12:[629,1164],
+                14: [423],
+                15:[1886],
+            },
+
+            #####################
             "fast_transport": {
                 7: [884],
                 8: [735],
@@ -542,7 +595,17 @@ def record_loop(
             policy.clear_activation_steering()
 
         if alpha == 0.0:
-            print("[BASELINE] alpha=0.0: no activation steering hook registered.")
+            print("[BASELINE DEBUG] alpha=0.0: observe activation only, no steering.")
+
+            selected_neurons = semantic_neuron_sets[intervention_name]
+
+            policy.set_activation_steering(
+                steering_neurons=selected_neurons,
+                alpha=0.0,
+                record_debug=True,
+                top_k_runtime=10,
+                enable_steering=False,
+            )
         else:
             if not hasattr(policy, "set_activation_steering"):
                 raise AttributeError(
@@ -752,9 +815,13 @@ def record_loop(
                 not printed_activation_debug
                 and hasattr(policy, "print_activation_steering_debug")
             ):
-                policy.print_activation_steering_debug()
+                policy.print_activation_steering_debug(latest_only=True)
+
+                if hasattr(policy, "reset_activation_steering_debug_records"):
+                    policy.reset_activation_steering_debug_records()
+
                 printed_activation_debug = True
-                
+                            
 
             infer_ms = (time.perf_counter() - infer_t0) * 1000.0
             if smoothed_infer_ms is None:

@@ -8,7 +8,7 @@ import math
 
 @torch.no_grad()
 def load_smolvla_and_extract_semantic_embeddings(
-    policy_path="ethanCSL/svla_koch_pick_n_place_vla_steering_direction_unfrozen",
+    policy_path="ethanCSL/svla_koch_pick_n_place_vla_steering_color",
     top_k_tokens=5,
     device=None,
 ):
@@ -462,7 +462,7 @@ def print_keyword_ranking_summary(results):
             print(f"{neuron['rank']:<5} | {neuron['match_count']:<11} | L{neuron['layer']:<4} | {neuron['neuron']:<6} | [{tokens_str}]")
 
 if __name__ == "__main__":
-    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_direction_unfrozen"
+    policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2"
     #policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_color_unfrozen"
     
     bundle = load_smolvla_and_extract_semantic_embeddings(
@@ -479,26 +479,27 @@ if __name__ == "__main__":
         },
         "High Transport": {
             "pos": ["high"],
-            "neg": ["thigh"] # 排除大腿 (雖然不一定會出現，但作為防呆示範)
+            "neg": ["thigh","low","slow","lower"] # 排除大腿 (雖然不一定會出現，但作為防呆示範)
         },
-        "Slow Transport": {
-            "pos": ["slow", "safe"],
-            "neg": []
-        },
-        "Fast Transport": {
-            "pos": ["fast", "risk"],
-            "neg": ["breakfast"] # 排除早餐
-        },
-        "Left Transport": {
-            "pos": ["left"],
-            "neg": ["leftover", "leftist", "cleft","right","correct","alright"]
-        },
-        "Right Transport": {
-            "pos": ["right"],
-            "neg": ["copyright", "alright", "upright", "bright", "fright", "left", "leftover", "leftist","cleft"]
-        },
+    #     "Slow Transport": {
+    #         "pos": ["slow", "safe"],
+    #         "neg": []
+    #     },
+    #     "Fast Transport": {
+    #         "pos": ["fast", "risk"],
+    #         "neg": ["breakfast"] # 排除早餐
+    #     },
+    #     "Left Transport": {
+    #         "pos": ["left"],
+    #         "neg": ["leftover", "leftist", "cleft","right","correct","alright"]
+    #     },
+    #     "Right Transport": {
+    #         "pos": ["right"],
+    #         "neg": ["copyright", "alright", "upright", "bright", "fright", "left", "leftover", "leftist","cleft"]
+    #     },
             
     }
+
     # intervention_keywords_map = {
     #     "Red Color": {
     #         "pos": ["red", "crimson", "scarlet"],
@@ -517,6 +518,7 @@ if __name__ == "__main__":
     #         "neg": ["mellow", "bellow"]
     #     }
     # }
+
     
     # 執行關鍵字頻率排名
     keyword_ranking_results = run_keyword_based_ranking(

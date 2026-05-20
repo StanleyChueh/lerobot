@@ -265,12 +265,26 @@ class SmolVLAPolicy(PreTrainedPolicy):
         """
         if hasattr(self, "_activation_steering_handles"):
             for handle in self._activation_steering_handles:
-                handle.remove()
+                try:
+                    handle.remove()
+                except Exception:
+                    pass
 
         self._activation_steering_handles = []
         self._activation_steering_debug = {}
+        self._activation_steering_config = {}
+        self._activation_steering_alpha = None
+        self._activation_steering_enable_steering = False
 
         print("[*] Activation steering hooks cleared.")
+
+
+    def reset_activation_steering_debug_records(self):
+        """
+        Clear activation debug records without removing hooks.
+        Use this after printing, so the next print reflects a fresh forward pass.
+        """
+        self._activation_steering_debug = {}
 
 
     def _make_activation_steering_pre_hook(
@@ -279,6 +293,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         neuron_ids: list[int],
         alpha: float,
         record_debug: bool = False,
+        top_k_runtime: int = 10,
+        enable_steering: bool = True,
     ):
         """
         Paper-style FFN activation intervention.
@@ -288,58 +304,214 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         This modifies the input activation to down_proj.
         It does NOT modify down_proj.weight.
+
+        Debug records:
+        1. top-k runtime neurons before steering
+        2. selected neuron activation before and after steering
         """
+        neuron_ids = [int(n) for n in neuron_ids]
         neuron_ids_cpu = torch.tensor(neuron_ids, dtype=torch.long)
 
         def hook(module, inputs):
+            if len(inputs) == 0:
+                return inputs
+
             # inputs[0] is the FFN intermediate activation before down_proj.
-            # Shape: [batch, seq_len, intermediate_dim]
+            # Expected shape: [batch, seq_len, intermediate_dim]
             act = inputs[0]
 
             if act is None:
                 return inputs
 
+            if not torch.is_tensor(act):
+                return inputs
+
+            if act.ndim < 2:
+                return inputs
+
+            d_ff = act.shape[-1]
             neuron_ids_device = neuron_ids_cpu.to(act.device)
 
-            if neuron_ids_device.max().item() >= act.shape[-1]:
+            if neuron_ids_device.numel() == 0:
+                return inputs
+
+            max_neuron_id = int(neuron_ids_device.max().item())
+            if max_neuron_id >= d_ff:
                 raise IndexError(
                     f"Layer {layer_idx}: neuron index out of range. "
-                    f"Max requested neuron={neuron_ids_device.max().item()}, "
-                    f"intermediate_dim={act.shape[-1]}"
+                    f"Max requested neuron={max_neuron_id}, "
+                    f"intermediate_dim={d_ff}. "
+                    f"This usually means you are hooking the wrong tensor."
                 )
 
-            debug_record = None
+            # -------- before steering --------
+            act_before = act.detach().float()
+            flat_before = act_before.reshape(-1, d_ff)
 
-            if record_debug:
-                before = act[..., neuron_ids_device].detach().float()
-                debug_record = {
-                    "alpha": float(alpha),
-                    "neurons": neuron_ids,
-                    "before_mean": before.mean().item(),
-                    "before_max": before.max().item(),
-                    "before_min": before.min().item(),
-                    "shape": tuple(before.shape),
-                }
+            # Top-k runtime neurons BEFORE steering.
+            # mean_abs is usually more informative than raw mean because FFN activations can be signed.
+            mean_act = flat_before.mean(dim=0)
+            mean_abs_act = flat_before.abs().mean(dim=0)
+            max_abs_act = flat_before.abs().amax(dim=0)
 
-            steered_act = act.clone()
-            steered_act[..., neuron_ids_device] = torch.tensor(
-                alpha,
-                device=steered_act.device,
-                dtype=steered_act.dtype,
+            k = min(int(top_k_runtime), d_ff)
+            top_vals, top_idx = torch.topk(mean_abs_act, k=k)
+
+            # Full ranking only for selected neurons.
+            # d_ff is small enough that this is fine for debugging.
+            sorted_idx = torch.argsort(mean_abs_act, descending=True)
+            runtime_rank = torch.empty_like(sorted_idx)
+            runtime_rank[sorted_idx] = torch.arange(
+                1,
+                d_ff + 1,
+                device=sorted_idx.device,
+                dtype=sorted_idx.dtype,
+            )
+
+            selected_before = act_before.index_select(-1, neuron_ids_device)
+            selected_before_flat = selected_before.reshape(-1, len(neuron_ids))
+
+            # -------- steering --------
+            if enable_steering:
+                steered_act = act.clone()
+                steered_act[..., neuron_ids_device] = torch.tensor(
+                    alpha,
+                    device=steered_act.device,
+                    dtype=steered_act.dtype,
+                )
+            else:
+                steered_act = act
+
+            # -------- after steering --------
+            act_after = steered_act.detach().float()
+            flat_after = act_after.reshape(-1, d_ff)
+
+            selected_after = act_after.index_select(-1, neuron_ids_device)
+            selected_after_flat = selected_after.reshape(-1, len(neuron_ids))
+
+            # Top-k runtime neurons AFTER steering.
+            mean_act_after = flat_after.mean(dim=0)
+            mean_abs_act_after = flat_after.abs().mean(dim=0)
+            max_abs_act_after = flat_after.abs().amax(dim=0)
+
+            top_vals_after, top_idx_after = torch.topk(mean_abs_act_after, k=k)
+
+            # Full after-ranking for selected neurons.
+            sorted_idx_after = torch.argsort(mean_abs_act_after, descending=True)
+            runtime_rank_after = torch.empty_like(sorted_idx_after)
+            runtime_rank_after[sorted_idx_after] = torch.arange(
+                1,
+                d_ff + 1,
+                device=sorted_idx_after.device,
+                dtype=sorted_idx_after.dtype,
             )
 
             if record_debug:
-                after = steered_act[..., neuron_ids_device].detach().float()
-                debug_record.update(
-                    {
-                        "after_mean": after.mean().item(),
-                        "after_max": after.max().item(),
-                        "after_min": after.min().item(),
-                    }
+                def make_top_rows(top_indices, mean_vec, mean_abs_vec, max_abs_vec):
+                    rows = []
+                    for rank, neuron_id in enumerate(top_indices.tolist(), start=1):
+                        rows.append(
+                            {
+                                "rank": int(rank),
+                                "neuron": int(neuron_id),
+                                "mean": float(mean_vec[neuron_id].item()),
+                                "mean_abs": float(mean_abs_vec[neuron_id].item()),
+                                "max_abs": float(max_abs_vec[neuron_id].item()),
+                            }
+                        )
+                    return rows
+
+                top_runtime_before_rows = make_top_rows(
+                    top_idx,
+                    mean_act,
+                    mean_abs_act,
+                    max_abs_act,
                 )
+
+                top_runtime_after_rows = make_top_rows(
+                    top_idx_after,
+                    mean_act_after,
+                    mean_abs_act_after,
+                    max_abs_act_after,
+                )
+
+                rank_before_lookup = {
+                    int(neuron_id): rank
+                    for rank, neuron_id in enumerate(sorted_idx.tolist(), start=1)
+                }
+                rank_after_lookup = {
+                    int(neuron_id): rank
+                    for rank, neuron_id in enumerate(sorted_idx_after.tolist(), start=1)
+                }
+
+                # Union of before-top and after-top neurons, so you can see order changes.
+                top_union = sorted(set(top_idx.tolist()) | set(top_idx_after.tolist()))
+
+                top_order_change_rows = []
+                for neuron_id in top_union:
+                    before_rank = rank_before_lookup[int(neuron_id)]
+                    after_rank = rank_after_lookup[int(neuron_id)]
+
+                    top_order_change_rows.append(
+                        {
+                            "neuron": int(neuron_id),
+                            "before_rank": int(before_rank),
+                            "after_rank": int(after_rank),
+                            # Positive means the neuron moved upward in the ranking.
+                            "rank_delta": int(before_rank - after_rank),
+                            "before_mean": float(mean_act[neuron_id].item()),
+                            "before_mean_abs": float(mean_abs_act[neuron_id].item()),
+                            "after_mean": float(mean_act_after[neuron_id].item()),
+                            "after_mean_abs": float(mean_abs_act_after[neuron_id].item()),
+                        }
+                    )
+
+                top_order_change_rows.sort(key=lambda row: row["after_rank"])
+
+                selected_rows = []
+                for local_i, neuron_id in enumerate(neuron_ids):
+                    before_vals = selected_before_flat[:, local_i]
+                    after_vals = selected_after_flat[:, local_i]
+
+                    selected_rows.append(
+                        {
+                            "neuron": int(neuron_id),
+                            "runtime_rank_before_by_mean_abs": int(runtime_rank[neuron_id].item()),
+                            "runtime_rank_after_by_mean_abs": int(runtime_rank_after[neuron_id].item()),
+                            "rank_delta": int(
+                                runtime_rank[neuron_id].item()
+                                - runtime_rank_after[neuron_id].item()
+                            ),
+                            "before_mean": float(before_vals.mean().item()),
+                            "before_abs_mean": float(before_vals.abs().mean().item()),
+                            "before_min": float(before_vals.min().item()),
+                            "before_max": float(before_vals.max().item()),
+                            "after_mean": float(after_vals.mean().item()),
+                            "after_abs_mean": float(after_vals.abs().mean().item()),
+                            "after_min": float(after_vals.min().item()),
+                            "after_max": float(after_vals.max().item()),
+                            "delta_mean": float((after_vals - before_vals).mean().item()),
+                        }
+                    )
+
+                debug_record = {
+                    "layer": int(layer_idx),
+                    "alpha": float(alpha),
+                    "enable_steering": bool(enable_steering),
+                    "activation_shape": tuple(act.shape),
+                    "top_runtime_before": top_runtime_before_rows,
+                    "top_runtime_after": top_runtime_after_rows,
+                    "top_order_change": top_order_change_rows,
+                    "selected": selected_rows,
+                }
+
                 self._activation_steering_debug.setdefault(layer_idx, []).append(debug_record)
 
-            return (steered_act, *inputs[1:])
+            if enable_steering:
+                return (steered_act, *inputs[1:])
+
+            # Returning original inputs is safest for observe-only mode.
+            return inputs
 
         return hook
 
@@ -349,6 +521,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
         steering_neurons: dict[int, list[int]],
         alpha: float,
         record_debug: bool = False,
+        top_k_runtime: int = 10,
+        enable_steering: bool = True,
     ):
         """
         Register paper-style activation steering hooks on VLM FFN down_proj modules.
@@ -362,6 +536,17 @@ class SmolVLAPolicy(PreTrainedPolicy):
         alpha:
             fixed scalar activation value.
 
+        record_debug:
+            If True, record runtime activation statistics.
+
+        top_k_runtime:
+            Print top-k highest runtime activation neurons per hooked layer.
+
+        enable_steering:
+            True  -> overwrite selected activations with alpha.
+            False -> observe only; do not modify activations.
+                    Useful for baseline activation inspection.
+
         Important:
             This does NOT modify weights.
             This modifies selected FFN activations during forward pass.
@@ -370,10 +555,16 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
         self._activation_steering_handles = []
         self._activation_steering_debug = {}
+        self._activation_steering_config = {
+            int(layer_idx): [int(n) for n in neuron_ids]
+            for layer_idx, neuron_ids in steering_neurons.items()
+        }
+        self._activation_steering_alpha = float(alpha)
+        self._activation_steering_enable_steering = bool(enable_steering)
 
         text_model = self.model.vlm_with_expert.get_vlm_model().text_model
 
-        for layer_idx, neuron_ids in steering_neurons.items():
+        for layer_idx, neuron_ids in self._activation_steering_config.items():
             if len(neuron_ids) == 0:
                 continue
 
@@ -385,52 +576,159 @@ class SmolVLAPolicy(PreTrainedPolicy):
                     neuron_ids=neuron_ids,
                     alpha=alpha,
                     record_debug=record_debug,
+                    top_k_runtime=top_k_runtime,
+                    enable_steering=enable_steering,
                 )
             )
 
             self._activation_steering_handles.append(handle)
 
+            mode = "STEER" if enable_steering else "OBSERVE_ONLY"
             print(
-                f"[ACTIVATION STEERING] L{layer_idx}: "
-                f"set neurons {neuron_ids} to alpha={alpha}"
+                f"[ACTIVATION {mode}] L{layer_idx}: "
+                f"neurons={neuron_ids}, alpha={alpha}, record_debug={record_debug}"
             )
 
         print(
             f"[*] Activation steering ready | "
-            f"Total hooked layers: {len(self._activation_steering_handles)}"
+            f"Total hooked layers: {len(self._activation_steering_handles)} | "
+            f"enable_steering={enable_steering}"
         )
 
 
-    def print_activation_steering_debug(self):
+    def print_activation_steering_debug(self, latest_only: bool = True):
         """
-        Print recorded pre-intervention activation statistics.
+        Print runtime FFN activation statistics.
+
+        Shows:
+        1. top runtime neurons before steering
+        2. top runtime neurons after steering
+        3. rank/order changes among top neurons
+        4. selected neurons before and after steering
+
         Only works if set_activation_steering(..., record_debug=True).
         """
         if not hasattr(self, "_activation_steering_debug") or not self._activation_steering_debug:
-            print("[DEBUG] No activation steering debug records found.")
+            print(
+                "[DEBUG] No activation steering debug records found. "
+                "Call this after predict_action()/select_action() triggers a real forward pass."
+            )
             return
 
-        print("\n" + "=" * 100)
-        print("Activation Steering Debug: Before-Intervention Activation Stats")
-        print("=" * 100)
+        print("\n" + "=" * 150)
+        print("Runtime FFN Activation Debug")
+        print("=" * 150)
 
         for layer_idx, records in sorted(self._activation_steering_debug.items()):
-            print(f"\n[LAYER {layer_idx}] hook calls: {len(records)}")
-            for call_idx, rec in enumerate(records[:10]):
+            records_to_print = [records[-1]] if latest_only else records
+
+            print(f"\n[LAYER {layer_idx}] hook calls recorded: {len(records)}")
+
+            for call_idx, rec in enumerate(records_to_print):
                 print(
-                    f"  call={call_idx:<3} "
-                    f"alpha={rec['alpha']:<6.2f} "
-                    f"neurons={rec['neurons']} "
-                    f"before_mean={rec['before_mean']:.4f} "
-                    f"before_max={rec['before_max']:.4f} "
-                    f"before_min={rec['before_min']:.4f} "
-                    f"after_mean={rec['after_mean']:.4f} "
-                    f"after_max={rec['after_max']:.4f} "
-                    f"after_min={rec['after_min']:.4f} "
-                    f"shape={rec['shape']}"
+                    f"\n  call={'latest' if latest_only else call_idx} | "
+                    f"activation_shape={rec['activation_shape']} | "
+                    f"alpha={rec['alpha']:.4f} | "
+                    f"enable_steering={rec['enable_steering']}"
                 )
 
-        print("=" * 100 + "\n")
+                # Backward compatibility with older records.
+                top_before = rec.get("top_runtime_before", rec.get("top_runtime", []))
+                top_after = rec.get("top_runtime_after", [])
+                top_order_change = rec.get("top_order_change", [])
+
+                print("\n  Top runtime neurons BEFORE steering, ranked by mean(|activation|):")
+                print("  " + "-" * 92)
+                print(
+                    f"  {'Rank':<6} | {'Neuron':<8} | "
+                    f"{'Mean':>12} | {'MeanAbs':>12} | {'MaxAbs':>12}"
+                )
+                print("  " + "-" * 92)
+
+                for row in top_before:
+                    print(
+                        f"  {row['rank']:<6} | {row['neuron']:<8} | "
+                        f"{row['mean']:>12.6f} | "
+                        f"{row['mean_abs']:>12.6f} | "
+                        f"{row['max_abs']:>12.6f}"
+                    )
+
+                print("\n  Top runtime neurons AFTER steering, ranked by mean(|activation|):")
+                print("  " + "-" * 92)
+                print(
+                    f"  {'Rank':<6} | {'Neuron':<8} | "
+                    f"{'Mean':>12} | {'MeanAbs':>12} | {'MaxAbs':>12}"
+                )
+                print("  " + "-" * 92)
+
+                for row in top_after:
+                    print(
+                        f"  {row['rank']:<6} | {row['neuron']:<8} | "
+                        f"{row['mean']:>12.6f} | "
+                        f"{row['mean_abs']:>12.6f} | "
+                        f"{row['max_abs']:>12.6f}"
+                    )
+
+                print("\n  Top-neuron order change, union of BEFORE-top and AFTER-top:")
+                print("  " + "-" * 126)
+                print(
+                    f"  {'Neuron':<8} | {'BeforeRank':<11} | {'AfterRank':<10} | "
+                    f"{'RankDelta':<9} | "
+                    f"{'BeforeMean':>12} | {'BeforeAbs':>12} | "
+                    f"{'AfterMean':>12} | {'AfterAbs':>12}"
+                )
+                print("  " + "-" * 126)
+
+                for row in top_order_change:
+                    print(
+                        f"  {row['neuron']:<8} | "
+                        f"{row['before_rank']:<11} | "
+                        f"{row['after_rank']:<10} | "
+                        f"{row['rank_delta']:<9} | "
+                        f"{row['before_mean']:>12.6f} | "
+                        f"{row['before_mean_abs']:>12.6f} | "
+                        f"{row['after_mean']:>12.6f} | "
+                        f"{row['after_mean_abs']:>12.6f}"
+                    )
+
+                print("\n  Selected neurons BEFORE -> AFTER steering:")
+                print("  " + "-" * 150)
+                print(
+                    f"  {'Neuron':<8} | "
+                    f"{'RankBefore':<10} | {'RankAfter':<9} | {'RankDelta':<9} | "
+                    f"{'BeforeMean':>12} | {'BeforeAbs':>12} | "
+                    f"{'BeforeMin':>12} | {'BeforeMax':>12} | "
+                    f"{'AfterMean':>12} | {'AfterAbs':>12} | "
+                    f"{'AfterMin':>12} | {'AfterMax':>12} | "
+                    f"{'DeltaMean':>12}"
+                )
+                print("  " + "-" * 150)
+
+                for row in rec["selected"]:
+                    rank_before = row.get(
+                        "runtime_rank_before_by_mean_abs",
+                        row.get("runtime_rank_by_mean_abs", -1),
+                    )
+                    rank_after = row.get("runtime_rank_after_by_mean_abs", -1)
+                    rank_delta = row.get("rank_delta", 0)
+
+                    print(
+                        f"  {row['neuron']:<8} | "
+                        f"{rank_before:<10} | "
+                        f"{rank_after:<9} | "
+                        f"{rank_delta:<9} | "
+                        f"{row['before_mean']:>12.6f} | "
+                        f"{row['before_abs_mean']:>12.6f} | "
+                        f"{row['before_min']:>12.6f} | "
+                        f"{row['before_max']:>12.6f} | "
+                        f"{row['after_mean']:>12.6f} | "
+                        f"{row['after_abs_mean']:>12.6f} | "
+                        f"{row['after_min']:>12.6f} | "
+                        f"{row['after_max']:>12.6f} | "
+                        f"{row['delta_mean']:>12.6f}"
+                    )
+
+        print("=" * 150 + "\n")
 
 ####################################################################################
 
