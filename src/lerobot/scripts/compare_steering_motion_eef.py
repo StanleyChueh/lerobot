@@ -1,3 +1,4 @@
+# Ours
 '''
 python src/lerobot/scripts/compare_steering_motion_eef.py \
   --repo-ids \
@@ -10,10 +11,28 @@ python src/lerobot/scripts/compare_steering_motion_eef.py \
   --demo-high-end 29 \
   --demo-low-start 30 \
   --demo-n-episodes 20 \
-  --plot-start-time 3 \
+  --plot-start-time 0 \
   --plot-end-time 10 \
-  --out-dir compare_baseline_high_low_with_dataset
+  --out-dir compare_baseline_high_low_with_dataset_ours
 
+'''
+
+# Paper
+'''
+python src/lerobot/scripts/compare_steering_motion_eef.py \
+  --repo-ids \
+    ethanCSL/eval_steering_paper_baseline \
+    ethanCSL/eval_steering_paper_high_10 \
+    ethanCSL/eval_steering_paper_low_10\
+  --labels baseline eval_high eval_low \
+  --demo-repo-id ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --demo-high-start 0 \
+  --demo-high-end 29 \
+  --demo-low-start 30 \
+  --demo-n-episodes 20 \
+  --plot-start-time 0 \
+  --plot-end-time 10 \
+  --out-dir compare_baseline_high_low_with_dataset_paper
 '''
 import argparse
 import csv
@@ -22,6 +41,7 @@ import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import numpy as np
 import torch
 import mujoco
@@ -555,6 +575,7 @@ def compute_episode_metrics(ep_idx, episode):
 
     if eef_height is not None:
         out.update(summarize_1d_trace(eef_height, prefix="eef_height"))
+        out["eef_height_max_cm"] = float(np.max(eef_height) * 100.0)
 
     if eef_displacement is not None:
         out.update(summarize_1d_trace(eef_displacement, prefix="eef_displacement"))
@@ -591,6 +612,7 @@ def summarize_metrics(rows, dataset_name):
         "eef_height_mean",
         "eef_height_min",
         "eef_height_max",
+        "eef_height_max_cm",
         "eef_height_range",
         "eef_height_final",
         "eef_displacement_mean",
@@ -710,7 +732,7 @@ def plot_metric_boxplots_multi(
         "state_mean_jerk",
         "state_speed_spikiness",
         "eef_height_range",
-        "eef_displacement_final",
+        "eef_height_max_cm",
     ]
 
     labels = list(rows_by_label.keys())
@@ -723,7 +745,18 @@ def plot_metric_boxplots_multi(
             vals = []
 
             for r in rows_by_label[label]:
-                if (
+                if m == "eef_height_max_cm":
+                    h = extract_height_trace_from_row(
+                        r,
+                        start_time=height_start_time,
+                        end_time=height_end_time,
+                        use_cm=True,   # paper uses cm
+                    )
+
+                    if h is not None and len(h) > 0:
+                        vals.append(float(np.max(h)))
+
+                elif (
                     m == "eef_height_range"
                     and (height_start_time is not None or height_end_time is not None)
                 ):
@@ -731,7 +764,7 @@ def plot_metric_boxplots_multi(
                         r,
                         start_time=height_start_time,
                         end_time=height_end_time,
-                        use_cm=False,   # keep meters, same as original eef_height_range
+                        use_cm=False,
                     )
 
                     if h is not None and len(h) > 0:
@@ -755,9 +788,47 @@ def plot_metric_boxplots_multi(
     if len(available) == 1:
         axes = [axes]
 
+    # Give each label a fixed color
+    cmap = plt.get_cmap("tab10")
+    label_colors = {
+        label: cmap(i % cmap.N)
+        for i, label in enumerate(labels)
+    }
+
     for ax, (metric, grouped, valid_labels) in zip(axes, available):
-        ax.boxplot(grouped, tick_labels=valid_labels)
-        ax.set_title(metric)
+        bp = ax.boxplot(
+            grouped,
+            tick_labels=valid_labels,
+            patch_artist=True,
+        )
+
+        for box, label in zip(bp["boxes"], valid_labels):
+            box.set_facecolor(label_colors[label])
+            box.set_edgecolor("black")
+            box.set_alpha(0.75)
+
+        legend_handles = [
+            Patch(
+                facecolor=label_colors[label],
+                edgecolor="black",
+                label=label,
+                alpha=0.75,
+            )
+            for label in valid_labels
+        ]
+
+        ax.legend(
+            handles=legend_handles,
+            title="Label",
+            loc="best",
+        )
+
+        if metric == "eef_height_max_cm":
+            ax.set_title("Max EE Height")
+            ax.set_ylabel("Max EE Height (cm)")
+        else:
+            ax.set_title(metric)
+
         ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
@@ -1034,6 +1105,7 @@ def main():
         "state_mean_jerk",
         "state_speed_spikiness",
         "eef_height_range",
+        "eef_height_max_cm",
         "eef_displacement_final",
     ]
 

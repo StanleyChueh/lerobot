@@ -215,6 +215,14 @@
     "median": 0.22304649441671834,
     "p95": 0.22773491732393084
   },
+  "eef_height_max_cm": {
+    "dataset": "eval_high",
+    "n_episodes": 20,
+    "mean": 21.934974686383942,
+    "std": 0.8802561210349937,
+    "median": 22.304649441671835,
+    "p95": 22.773491732393083
+  },
   "eef_height_range": {
     "dataset": "eval_high",
     "n_episodes": 20,

@@ -475,168 +475,55 @@ def record_loop(
         postprocessor.reset()
 
         # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
-        print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
-
-#########################################################################################
-
-        # --- Paper-alike FFN activation steering setup ---
-        # Important:
-        #   alpha = 0.0 with NO hook  -> no-steering baseline
-        #   alpha = 0.0 with hook     -> activation ablation
-        #   alpha != 0.0 with hook    -> activation steering
+        print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP (VECTOR INJECTION) ⚡ ---")
 
         intervention_name = "high_transport"
-        alpha = 6.0
+        alpha = 2.5 # Steering Vector 的 alpha 通常比單一神經元小，需要微調
+        target_layer = 10 # 假設你評估在第 10 層注入最有效
+        
+        # 1. 載入你離線算好的 Steering Vector
+        # 形狀應為 [1, hidden_dim]
+        try:
+            steering_vector = torch.load(f"steering_vector_L{target_layer}.pt").to(policy.device)
+            print(f"[*] Successfully loaded steering vector for layer {target_layer}")
+        except FileNotFoundError:
+            print("[!] Steering vector file not found. Running baseline (alpha=0).")
+            steering_vector = None
+            alpha = 0.0
 
-        # intervention_name = "low_transport"
-        # alpha = 4.0
+        # 2. 定義 Residual Stream Injection Hook
+        def get_residual_steering_hook(vector, scale):
+            def hook(module, inputs, outputs):
+                # outputs 是 tuple: (hidden_states, optional_attention, ...)
+                hidden_states = outputs[0] 
+                
+                # 在 hidden_states 上疊加向量
+                # hidden_states: [batch, seq_len, hidden_dim]
+                # vector: [1, hidden_dim] (Broadcasting 會自動處理 seq_len 維度)
+                steered_hidden_states = hidden_states + scale * vector
+                
+                # 回傳修改後的 tuple
+                return (steered_hidden_states,) + outputs[1:]
+            return hook
 
-        semantic_neuron_sets = {
-
-            # lerobot_reord_top_token.py
-            # "low_transport": {
-            #     1: [1222],
-            #     3: [2003],
-            #     5: [1877,1904],
-            #     10: [2349],
-            #     13: [1744],
-            # },
-            # "high_transport": {
-            #     2: [826],
-            #     3: [369],
-            #     5: [2102],
-            #     7: [1151],
-            #     9:[2554],
-            #     13: [414],
-            # },
-
-            # # eef Z (python src/lerobot/scripts/physical_neuron_picking_test_Z.py)
-            # "high_transport": {
-            #     8:[333],
-            #     9:[327,163,756],
-            #     12:[45,902,54],
-            #     13:[93,106],
-            #     14:[426],
-            # },
-            # "low_transport": {
-            #     8:[640,607],
-            #     9:[396],
-            #     10:[87],
-            #     11:[43,546],
-            #     12:[544,652,781,87],
-            # },
-
-            ### Constrative
-            "high_transport": {
-                0: [1293],
-                1: [1050],
-                3: [2259],
-                4: [1183],
-                7: [295],
-                11: [1115,1595],
-                13: [431],
-                14: [736,805]
-            },
-            "low_transport": {
-                3: [962],
-                4: [1627],
-                6: [587],
-                7: [1007],
-                9: [149],
-                11: [1066],
-                12:[629,1164],
-                14: [423],
-                15:[1886],
-            },
-
-            #####################
-            "fast_transport": {
-                7: [884],
-                8: [735],
-                12: [287],
-                14: [1994],
-            },
-            "slow_transport": {
-                0: [435],
-                5: [779],
-                8: [2269],
-                10: [1333],
-                11: [2157],
-                13: [1456],
-            },
-            "green": {
-                1: [798],
-                7: [230],
-                8: [1527],
-                9: [863],
-            },
-            "red" : {
-                1: [67, 1986],
-                4: [688],
-                8: [216],
-                10: [2283],
-                13: [268],
-            },
-            "right" : {
-                4: [1897, 1400],
-                10: [1257],
-                13: [1122],
-                14: [479,1650]
-            },
-            "left" : {
-                3: [583],
-                4: [1936],
-                5: [1872],
-                6: [2374],
-                9: [1941],
-                11: [1367],
-            }
-        }
-
-        if hasattr(policy, "clear_activation_steering"):
-            policy.clear_activation_steering()
-
-        if alpha == 0.0:
-            print("[BASELINE DEBUG] alpha=0.0: observe activation only, no steering.")
-
-            selected_neurons = semantic_neuron_sets[intervention_name]
-
-            policy.set_activation_steering(
-                steering_neurons=selected_neurons,
-                alpha=0.0,
-                record_debug=True,
-                top_k_runtime=10,
-                enable_steering=False,
+        # 清理之前的 Hooks (如果你有重複執行的機制)
+        if hasattr(policy, "_steering_hook_handle") and policy._steering_hook_handle is not None:
+            policy._steering_hook_handle.remove()
+            
+        # 3. 註冊 Hook 到 SmolVLA 的 Text Model
+        if alpha != 0.0 and steering_vector is not None:
+            text_model = policy.model.vlm_with_expert.get_vlm_model().text_model
+            target_module = text_model.layers[target_layer]
+            
+            handle = target_module.register_forward_hook(
+                get_residual_steering_hook(steering_vector, alpha)
             )
+            # 將 handle 存在 policy 中，方便之後 remove
+            policy._steering_hook_handle = handle 
+            print(f"[*] Steering Active: Layer {target_layer} | Alpha = {alpha}")
         else:
-            if not hasattr(policy, "set_activation_steering"):
-                raise AttributeError(
-                    "Policy does not have set_activation_steering(). "
-                    "Make sure modeling_smolvla.py contains the new hook-based steering code."
-                )
-
-            selected_neurons = semantic_neuron_sets[intervention_name]
-
-            # 1. Print selected neurons and their value-vector top tokens.
-            # This is semantic meaning, not runtime activation.
-            _, metadata, _ = extract_semantic_embeddings_from_policy(
-                policy,
-                top_k_tokens=5,
-                device=get_safe_torch_device(policy.config.device),
-            )
-
-            print_steered_neurons_info(
-                metadata,
-                activation_steering_config_for_print(selected_neurons, alpha),
-                title=f"[SELECTED BEFORE STEERING] {intervention_name}: Value-Vector Top Tokens",
-            )
-
-            # 2. Register paper-alike activation steering hook.
-            policy.set_activation_steering(
-                steering_neurons=selected_neurons,
-                alpha=alpha,
-                record_debug=True,
-            )
+            print("[*] Baseline Mode: No steering applied.")
+            policy._steering_hook_handle = None
 
         print("--------------------------------\n")
 
