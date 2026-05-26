@@ -1293,31 +1293,73 @@ def load_fk_model_from_local_xml(xml_name="follower.xml"):
     mj_data = mujoco.MjData(mj_model)
     return mj_model, mj_data
 
+### Robot calibration file
+CALIB_REST_STATE_DEG = np.asarray([
+    -11.20879121,
+    97.00520833,
+    17.25596857,
+    100.0,
+    -9.01098901,
+    47.38863287,
+], dtype=np.float64)
 
-def state_to_q_rad(state_vec, use_site_pose=True):
+CALIB_TARGET_REST_DEG = np.asarray([
+    91.7,
+    15.0,
+    40.0,
+    65.0,
+    0.0,
+    -30.0,
+], dtype=np.float64)
+
+CALIB_ORDER = np.asarray([
+    0, 1, 2, 3, 4, 5,
+], dtype=int)
+
+CALIB_SCALE = np.asarray([
+    1.0,
+    0.5,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+], dtype=np.float64)
+
+CALIB_SIGN = np.asarray([
+    1.0,
+    1.0,
+    1.0,
+    -1.0,
+    1.0,
+    1.0,
+], dtype=np.float64)
+
+
+def state_to_q_rad(state_vec):
+    """Map real robot observation.state degrees into calibrated MuJoCo qpos radians.
+
+    Calibrated from real REST/REACH/RAISE poses.
+
+    Formula:
+        q_mujoco_deg =
+            target_rest_deg
+          + sign * scale * (state_deg[order] - real_rest_state_deg[order])
+    """
     state_vec = np.asarray(state_vec, dtype=np.float64).reshape(-1)
 
-    if state_vec.size < 5:
-        raise ValueError(f"state size must be >= 5, got shape {state_vec.shape}")
+    if state_vec.size < 6:
+        raise ValueError(f"State dimensionality must be >= 6, got shape {state_vec.shape}")
 
-    # 假設 observation.state 前 5~6 維就是 follower joint 狀態，且單位是 degree
-    # 若你之後確認 state ordering 不同，只改這裡
-    if state_vec.size >= 6:
-        q_deg = state_vec[:6].copy()
-    else:
-        q_deg = np.concatenate([state_vec[:5], np.array([0.0], dtype=np.float64)], axis=0)
+    raw_deg = state_vec[:6].copy()
 
-    q_rad = np.deg2rad(q_deg)
+    raw_delta = raw_deg[CALIB_ORDER] - CALIB_REST_STATE_DEG[CALIB_ORDER]
+    q_deg = CALIB_TARGET_REST_DEG + CALIB_SIGN * CALIB_SCALE * raw_delta
 
-    # follower.xml 的 end_effector_site 掛在 link_5，下游 joint_6 不影響 site pose
-    if use_site_pose:
-        q_rad[5] = 0.0
-
-    return q_rad
+    return np.deg2rad(q_deg)
 
 
 def compute_eef_pose_from_state_vector(state_vec, mj_model, mj_data, use_site_pose=True):
-    q = state_to_q_rad(state_vec, use_site_pose=use_site_pose)
+    q = state_to_q_rad(state_vec)
 
     joint_names = ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"]
     for i, joint_name in enumerate(joint_names):

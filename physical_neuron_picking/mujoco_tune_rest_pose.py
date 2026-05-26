@@ -1,3 +1,6 @@
+'''
+python mujoco_tune_rest_pose.py
+'''
 import argparse
 import json
 import xml.etree.ElementTree as ET

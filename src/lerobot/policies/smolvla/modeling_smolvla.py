@@ -732,6 +732,120 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
 ####################################################################################
 
+####################################################################################
+# Below is the CAA-alike method to steer VLA
+# Reference: https://arxiv.org/html/2308.10248v4(Activation Addition: Steering Language Models Without Optimization)
+# Reference2: https://aclanthology.org/2024.acl-long.828.pdf(Steering Llama 2 via Contrastive Activation Addition)
+
+    def _make_signed_activation_steering_pre_hook(
+        self,
+        layer_idx: int,
+        neuron_to_delta: dict[int, float],
+        alpha: float,
+        record_debug: bool = False,
+        enable_steering: bool = True,
+    ):
+        neuron_ids = [int(n) for n in neuron_to_delta.keys()]
+        delta_values = [float(neuron_to_delta[n]) for n in neuron_ids]
+
+        neuron_ids_cpu = torch.tensor(neuron_ids, dtype=torch.long)
+        delta_cpu = torch.tensor(delta_values, dtype=torch.float32)
+
+        def hook(module, inputs):
+            if len(inputs) == 0:
+                return inputs
+
+            act = inputs[0]
+            if act is None or not torch.is_tensor(act):
+                return inputs
+
+            d_ff = act.shape[-1]
+            neuron_ids_device = neuron_ids_cpu.to(act.device)
+            delta_device = delta_cpu.to(device=act.device, dtype=act.dtype)
+
+            if int(neuron_ids_device.max().item()) >= d_ff:
+                raise IndexError(
+                    f"Layer {layer_idx}: neuron index out of range. "
+                    f"Max requested neuron={int(neuron_ids_device.max().item())}, "
+                    f"intermediate_dim={d_ff}."
+                )
+
+            if not enable_steering:
+                return inputs
+
+            steered_act = act.clone()
+
+            # CAA / ActAdd-style signed additive intervention:
+            # high: alpha > 0
+            # low:  alpha < 0
+            steered_act[..., neuron_ids_device] = (
+                steered_act[..., neuron_ids_device]
+                + alpha * delta_device
+            )
+
+            if record_debug:
+                before_vals = act.detach().float()[..., neuron_ids_device]
+                after_vals = steered_act.detach().float()[..., neuron_ids_device]
+                print(
+                    f"[SIGNED STEERING DEBUG] L{layer_idx} | "
+                    f"alpha={alpha:.4f} | "
+                    f"neurons={neuron_ids} | "
+                    f"mean_delta={(after_vals - before_vals).mean().item():+.6f}"
+                )
+
+            return (steered_act, *inputs[1:])
+
+        return hook
+
+
+    def set_signed_activation_steering(
+        self,
+        steering_deltas: dict[int, dict[int, float]],
+        alpha: float,
+        record_debug: bool = False,
+        enable_steering: bool = True,
+    ):
+        self.clear_activation_steering()
+
+        self._activation_steering_handles = []
+        self._activation_steering_debug = {}
+        self._activation_steering_alpha = float(alpha)
+        self._activation_steering_enable_steering = bool(enable_steering)
+
+        text_model = self.model.vlm_with_expert.get_vlm_model().text_model
+
+        for layer_idx, neuron_to_delta in steering_deltas.items():
+            if len(neuron_to_delta) == 0:
+                continue
+
+            down_proj = text_model.layers[int(layer_idx)].mlp.down_proj
+
+            handle = down_proj.register_forward_pre_hook(
+                self._make_signed_activation_steering_pre_hook(
+                    layer_idx=int(layer_idx),
+                    neuron_to_delta=neuron_to_delta,
+                    alpha=float(alpha),
+                    record_debug=record_debug,
+                    enable_steering=enable_steering,
+                )
+            )
+
+            self._activation_steering_handles.append(handle)
+
+            mode = "STEER" if enable_steering else "OBSERVE_ONLY"
+            print(
+                f"[SIGNED ACTIVATION {mode}] L{layer_idx}: "
+                f"deltas={neuron_to_delta}, alpha={alpha}, record_debug={record_debug}"
+            )
+
+        print(
+            f"[*] Signed activation steering ready | "
+            f"Total hooked layers: {len(self._activation_steering_handles)} | "
+            f"enable_steering={enable_steering}"
+        )
+
+
+####################################################################################
     def init_rtc_processor(self):
         """Initialize RTC processor if RTC is enabled in config."""
         self.rtc_processor = None

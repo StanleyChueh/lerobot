@@ -369,17 +369,22 @@ def print_height_split_report(episode_heights, threshold, high_group_indices, lo
 # 3. KINEMATIC PARSING PIPELINE
 # ==============================================================================
 
-def find_physical_height_neurons_via_eef(repo_id, xml_name="follower.xml", device=None):
+def find_physical_height_neurons_via_eef(
+    dataset_repo_id,
+    policy_repo_id,
+    xml_name="follower.xml",
+    device=None,
+):
     if device is None:
         device = get_safe_torch_device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device)
 
-    print(f"[*] Loading dataset: {repo_id}")
-    dataset = LeRobotDataset(repo_id, video_backend="pyav")
+    print(f"[*] Loading dataset: {dataset_repo_id}")
+    dataset = LeRobotDataset(dataset_repo_id, video_backend="pyav")
     
-    print(f"[*] Loading policy config...")
-    policy_cfg = PreTrainedConfig.from_pretrained(repo_id)
+    print(f"[*] Loading policy config: {policy_repo_id}")
+    policy_cfg = PreTrainedConfig.from_pretrained(policy_repo_id)
 
     print(f"[*] Adjusting metadata to match policy expected features...")
     policy_meta = copy.deepcopy(dataset.meta)
@@ -398,7 +403,7 @@ def find_physical_height_neurons_via_eef(repo_id, xml_name="follower.xml", devic
 
     preprocessor, _ = make_pre_post_processors(
         policy_cfg=policy_cfg,
-        pretrained_path=repo_id,
+        pretrained_path=policy_repo_id,
         dataset_stats=dataset.meta.stats,
         preprocessor_overrides={
             "device_processor": {"device": device.type},
@@ -523,12 +528,12 @@ def find_physical_height_neurons_via_eef(repo_id, xml_name="follower.xml", devic
 
     for ep_idx, (p90_h, max_h) in enumerate(zip(episode_heights, episode_max_heights)):
         pred_label = "HIGH" if ep_idx in pred_high_set else "LOW"
-        gt_label = "GT_HIGH" if ep_idx <= 29 else "GT_LOW"
-        is_error = (
-            (ep_idx <= 29 and pred_label == "LOW") or
-            (ep_idx >= 30 and pred_label == "HIGH")
-        )
-        marker = "  <-- MISMATCH" if is_error else ""
+        #gt_label = "GT_HIGH" if ep_idx <= 29 else "GT_LOW"
+        # is_error = (
+        #     (ep_idx <= 29 and pred_label == "LOW") or
+        #     (ep_idx >= 30 and pred_label == "HIGH")
+        # )
+        #marker = "  <-- MISMATCH" if is_error else ""
 
         print(
             f"[Episode {ep_idx:03d}] "
@@ -536,7 +541,7 @@ def find_physical_height_neurons_via_eef(repo_id, xml_name="follower.xml", devic
             f"max EEF height = {max_h:.6f} m | "
             f"threshold = {threshold:.6f} m | "
             f"pred = {pred_label:<4} | "
-            f"{gt_label}{marker}"
+            #f"{gt_label}{marker}"
         )
 
     print("\n" + "="*70)
@@ -581,4 +586,13 @@ def find_physical_height_neurons_via_eef(repo_id, xml_name="follower.xml", devic
         print(f"Layer {n['layer']:>2} | Neuron {n['neuron']:>5} | Kinematic Delta Score: {abs(n['score']):.6f}")
 
 if __name__ == "__main__":
-    find_physical_height_neurons_via_eef("ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2")
+    find_physical_height_neurons_via_eef(
+        dataset_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
+        policy_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
+    )
+
+# if __name__ == "__main__":
+#     find_physical_height_neurons_via_eef(
+#         dataset_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
+#         policy_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
+#     )

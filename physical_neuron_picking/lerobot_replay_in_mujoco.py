@@ -1,7 +1,9 @@
-'''
-python lerobot_replay_in_mujoco.py   --repo_id ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2   --xml follower.xml   --rest_json real_pose_calibration_outputs/rest_state.json   --episode 21   --stride 5   --width 960   --height 720
+# Usage:
 
 '''
+python lerobot_replay_in_mujoco.py   --repo_id ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2   --xml follower.xml   --episode 21   --stride 5   --width 960   --height 720 --live
+'''
+
 import argparse
 import csv
 import json
@@ -425,10 +427,12 @@ def main():
     parser.add_argument("--rest_json", required=None)
     parser.add_argument("--episode", type=int, required=True)
     parser.add_argument("--stride", type=int, default=5)
-    parser.add_argument("--out_dir", default="show_used_eef_outputs")
+    parser.add_argument("--out_dir", default="replay_video")
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--fps", type=int, default=15)
+    parser.add_argument("--live", action="store_true", help="Show live MuJoCo render window instead of saving mp4/csv.")
+    parser.add_argument("--window_name", default="MuJoCo EEF Debug")
     args = parser.parse_args()
 
     if args.rest_json is not None:
@@ -457,12 +461,15 @@ def main():
     video_path = out_dir / f"episode_{args.episode:03d}_USED_EEF_marker.mp4"
     csv_path = out_dir / f"episode_{args.episode:03d}_USED_EEF_marker.csv"
 
-    writer = cv2.VideoWriter(
-        str(video_path),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        args.fps,
-        (args.width, args.height),
-    )
+    writer = None
+
+    if not args.live:
+        writer = cv2.VideoWriter(
+            str(video_path),
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            args.fps,
+            (args.width, args.height),
+        )
 
     rows = []
 
@@ -495,7 +502,20 @@ def main():
         ]
         draw_overlay(bgr, lines)
 
-        writer.write(bgr)
+        if args.live:
+            cv2.imshow(args.window_name, bgr)
+
+            key = cv2.waitKey(max(1, int(1000 / args.fps))) & 0xFF
+
+            # q or ESC to quit
+            if key == ord("q") or key == 27:
+                break
+
+            # SPACE to pause, then press any key to continue
+            if key == ord(" "):
+                cv2.waitKey(0)
+        else:
+            writer.write(bgr)
 
         rows.append({
             "episode": args.episode,
@@ -517,16 +537,28 @@ def main():
             "q5_deg": float(q_deg[5]),
         })
 
-    writer.release()
-    renderer.close()
+        if args.live:
+            cv2.imshow(args.window_name, bgr)
 
-    with open(csv_path, "w", newline="") as f:
-        writer_csv = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer_csv.writeheader()
-        writer_csv.writerows(rows)
+            key = cv2.waitKey(max(1, int(1000 / args.fps))) & 0xFF
 
-    print(f"[+] Wrote video: {video_path}")
-    print(f"[+] Wrote csv  : {csv_path}")
+            # q or ESC to quit
+            if key == ord("q") or key == 27:
+                break
+
+            # SPACE to pause, then press any key to continue
+            if key == ord(" "):
+                cv2.waitKey(0)
+        else:
+            writer.write(bgr)
+
+    # with open(csv_path, "w", newline="") as f:
+    #     writer_csv = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+    #     writer_csv.writeheader()
+    #     writer_csv.writerows(rows)
+
+    # print(f"[+] Wrote video: {video_path}")
+    # print(f"[+] Wrote csv  : {csv_path}")
 
 
 if __name__ == "__main__":

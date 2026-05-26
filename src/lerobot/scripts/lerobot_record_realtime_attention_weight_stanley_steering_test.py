@@ -485,7 +485,7 @@ def record_loop(
         #   alpha = 0.0 with hook     -> activation ablation
         #   alpha != 0.0 with hook    -> activation steering
 
-        intervention_name = "high_transport"
+        intervention_name = "low_transport"
         alpha = 6.0
 
         # intervention_name = "low_transport"
@@ -647,6 +647,57 @@ def record_loop(
             )
 
         print("--------------------------------\n")
+
+#########################################################################################
+
+#########################################################################################
+# Below is the CAA-alike method to steer VLA
+# Reference: https://arxiv.org/html/2308.10248v4(Activation Addition: Steering Language Models Without Optimization)
+# Reference2: https://aclanthology.org/2024.acl-long.828.pdf(Steering Llama 2 via Contrastive Activation Addition)
+
+        # intervention_name = "height_high"
+        # alpha = 3.0 #3.0
+
+        # height_steering_deltas = {
+        #     1: {
+        #         863:  -0.025490,
+        #         960:  +0.007833,
+        #         1248: +0.006831,
+        #         565:  +0.007804,
+        #     }
+        #     # 1: {
+        #     #     863:  -1.000,
+        #     #     960:  +0.307,
+        #     #     1248: +0.268,
+        #     #     565:  +0.306,
+        #     # }
+        # }
+
+        # if intervention_name == "height_high":
+        #     signed_alpha = +alpha
+        # elif intervention_name == "height_low":
+        #     signed_alpha = -alpha
+        # else:
+        #     raise ValueError(f"Unknown intervention_name: {intervention_name}")
+
+        # if hasattr(policy, "clear_activation_steering"):
+        #     policy.clear_activation_steering()
+
+        # if signed_alpha == 0.0:
+        #     print("[BASELINE] alpha=0.0: no signed activation steering.")
+        # else:
+        #     if not hasattr(policy, "set_signed_activation_steering"):
+        #         raise AttributeError(
+        #             "Policy does not have set_signed_activation_steering(). "
+        #             "Add the signed steering hook to modeling_smolvla.py first."
+        #         )
+
+        #     policy.set_signed_activation_steering(
+        #         steering_deltas=height_steering_deltas,
+        #         alpha=signed_alpha,
+        #         record_debug=True,
+        #         enable_steering=True,
+        #     )
 
 #########################################################################################
 

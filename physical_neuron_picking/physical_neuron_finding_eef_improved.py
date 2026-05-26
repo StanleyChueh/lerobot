@@ -548,34 +548,211 @@ def find_physical_height_neurons_via_eef(repo_id, xml_name="follower.xml", devic
     print(f"    --> True max EEF maximum   : {np.max(episode_max_heights):.6f} m")
 
     # ==============================================================================
-    # 5. CONTRASTIVE SCORING MATRIX CALCULATION
+    # 5. SPARSE CAA-STYLE HEIGHT DIRECTION SELECTION
     # ==============================================================================
-    all_neurons = []
-    for i in range(num_layers):
-        high_group_vectors = [episode_activations[i][ep] for ep in high_group_indices]
-        low_group_vectors = [episode_activations[i][ep] for ep in low_group_indices]
-        
-        avg_high = np.mean(high_group_vectors, axis=0)
-        avg_low = np.mean(low_group_vectors, axis=0)
-        
-        diff = avg_high - avg_low 
-        for neuron_idx, score in enumerate(diff):
-            all_neurons.append({"layer": i, "neuron": neuron_idx, "score": score})
 
-    top_high = sorted(all_neurons, key=lambda x: x['score'], reverse=True)[:10]
-    top_low = sorted(all_neurons, key=lambda x: x['score'])[:10]
+    def corr_safe(a, b, eps=1e-8):
+        a = np.asarray(a, dtype=np.float64)
+        b = np.asarray(b, dtype=np.float64)
 
-    print("\n" + "="*70)
-    print("TOP TARGET GROUNDED 'HIGH' TRAJECTORY STEERING NEURONS")
-    print("="*70)
-    for n in top_high:
-        print(f"Layer {n['layer']:>2} | Neuron {n['neuron']:>5} | Kinematic Delta Score: {n['score']:.6f}")
+        a = a - np.mean(a)
+        b = b - np.mean(b)
 
-    print("\n" + "="*70)
-    print("TOP TARGET GROUNDED 'LOW' TRAJECTORY STEERING NEURONS")
-    print("="*70)
-    for n in top_low:
-        print(f"Layer {n['layer']:>2} | Neuron {n['neuron']:>5} | Kinematic Delta Score: {abs(n['score']):.6f}")
+        denom = np.linalg.norm(a) * np.linalg.norm(b)
+        if denom < eps:
+            return 0.0
+        return float(np.dot(a, b) / denom)
+
+
+    def select_top_signed_dimensions(
+        layer_candidates,
+        top_k=4,
+        min_consistency=0.70,
+        min_abs_t=2.0,
+        min_abs_corr=0.25,
+    ):
+        filtered = []
+
+        for n in layer_candidates:
+            if n["consistency"] < min_consistency:
+                continue
+            if abs(n["t_score"]) < min_abs_t:
+                continue
+            if abs(n["height_corr"]) < min_abs_corr:
+                continue
+            filtered.append(n)
+
+        filtered = sorted(
+            filtered,
+            key=lambda x: (
+                abs(x["t_score"]) * x["consistency"] * max(abs(x["height_corr"]), 1e-6)
+            ),
+            reverse=True,
+        )
+
+        return filtered[:top_k]
+
+
+    TOP_K = 4
+    CORE_N_HIGH = 20
+    CORE_N_LOW = 20
+    MIN_CONSISTENCY = 0.70
+    MIN_ABS_T = 2.0
+    MIN_ABS_CORR = 0.25
+    EPS = 1e-8
+
+    # Use the clearest high and low episodes for discovery.
+    # This reduces boundary noise.
+    high_sorted = np.asarray(high_group_indices)[
+        np.argsort(episode_heights[np.asarray(high_group_indices, dtype=int)])
+    ]
+    low_sorted = np.asarray(low_group_indices)[
+        np.argsort(episode_heights[np.asarray(low_group_indices, dtype=int)])
+    ]
+
+    core_high = high_sorted[-CORE_N_HIGH:]
+    core_low = low_sorted[:CORE_N_LOW]
+
+    print("\n[Core episodes for sparse CAA-style neuron discovery]")
+    print(f"    core_high = {sorted([int(x) for x in core_high])}")
+    print(f"    core_low  = {sorted([int(x) for x in core_low])}")
+
+    all_layer_results = []
+
+    for layer_idx in range(num_layers):
+        high_vectors = np.stack(
+            [episode_activations[layer_idx][int(ep)] for ep in core_high],
+            axis=0,
+        )
+        low_vectors = np.stack(
+            [episode_activations[layer_idx][int(ep)] for ep in core_low],
+            axis=0,
+        )
+
+        high_mean = np.mean(high_vectors, axis=0)
+        low_mean = np.mean(low_vectors, axis=0)
+
+        raw_delta = high_mean - low_mean
+
+        high_var = np.var(high_vectors, axis=0, ddof=1)
+        low_var = np.var(low_vectors, axis=0, ddof=1)
+
+        n_high = high_vectors.shape[0]
+        n_low = low_vectors.shape[0]
+
+        pooled_std = np.sqrt(
+            ((n_high - 1) * high_var + (n_low - 1) * low_var)
+            / max(n_high + n_low - 2, 1)
+            + EPS
+        )
+
+        effect_size = raw_delta / pooled_std
+
+        # A t-like stability score for mean difference.
+        se = pooled_std * np.sqrt(1.0 / n_high + 1.0 / n_low)
+        t_score = raw_delta / (se + EPS)
+
+        layer_candidates = []
+
+        # Use all valid episodes to check continuous relation with EEF height.
+        all_ep_indices = np.asarray(
+            list(high_group_indices) + list(low_group_indices),
+            dtype=int,
+        )
+        all_heights = episode_heights[all_ep_indices]
+
+        all_vectors = np.stack(
+            [episode_activations[layer_idx][int(ep)] for ep in all_ep_indices],
+            axis=0,
+        )
+
+        for neuron_idx in range(raw_delta.shape[0]):
+            d = float(raw_delta[neuron_idx])
+            e = float(effect_size[neuron_idx])
+            t = float(t_score[neuron_idx])
+
+            high_vals = high_vectors[:, neuron_idx]
+            low_vals = low_vectors[:, neuron_idx]
+
+            # Direction consistency:
+            # for a positive height neuron, high should usually exceed low.
+            # for a negative height neuron, low should usually exceed high.
+            if d >= 0:
+                consistency = 0.5 * (
+                    np.mean(high_vals > np.median(low_vals))
+                    + np.mean(low_vals < np.median(high_vals))
+                )
+            else:
+                consistency = 0.5 * (
+                    np.mean(high_vals < np.median(low_vals))
+                    + np.mean(low_vals > np.median(high_vals))
+                )
+
+            height_corr = corr_safe(all_vectors[:, neuron_idx], all_heights)
+
+            layer_candidates.append({
+                "layer": layer_idx,
+                "neuron": neuron_idx,
+                "signed_delta": d,
+                "effect_size": e,
+                "t_score": t,
+                "consistency": float(consistency),
+                "height_corr": float(height_corr),
+            })
+
+        selected = select_top_signed_dimensions(
+            layer_candidates,
+            top_k=TOP_K,
+            min_consistency=MIN_CONSISTENCY,
+            min_abs_t=MIN_ABS_T,
+            min_abs_corr=MIN_ABS_CORR,
+        )
+
+        if len(selected) == 0:
+            continue
+
+        layer_quality = np.mean([
+            abs(n["t_score"]) * n["consistency"] * abs(n["height_corr"])
+            for n in selected
+        ])
+
+        all_layer_results.append({
+            "layer": layer_idx,
+            "quality": float(layer_quality),
+            "selected": selected,
+        })
+
+    all_layer_results = sorted(
+        all_layer_results,
+        key=lambda x: x["quality"],
+        reverse=True,
+    )
+
+    best = all_layer_results[0]
+    selected_height_neurons = best["selected"]
+
+    print("\n" + "=" * 70)
+    print("SPARSE SIGNED HEIGHT-STEERING DIRECTION")
+    print("=" * 70)
+    print(f"Selected layer: {best['layer']}")
+    print(f"Selected sparse dimensions: {len(selected_height_neurons)}")
+    print(f"Layer quality: {best['quality']:.6f}")
+
+    for n in selected_height_neurons:
+        direction = "HIGH+" if n["signed_delta"] > 0 else "HIGH-"
+        print(
+            f"Layer {n['layer']:>2} | Neuron {n['neuron']:>5} | "
+            f"Direction: {direction:<5} | "
+            f"Delta: {n['signed_delta']:+.6f} | "
+            f"Effect: {n['effect_size']:+.3f} | "
+            f"t: {n['t_score']:+.3f} | "
+            f"Consistency: {n['consistency']:.3f} | "
+            f"HeightCorr: {n['height_corr']:+.3f}"
+        )
+
+    print("\nUse this as ONE signed vector:")
+    print("    high steering: +alpha * selected signed deltas")
+    print("    low steering:  -alpha * selected signed deltas")
 
 if __name__ == "__main__":
     find_physical_height_neurons_via_eef("ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2")
