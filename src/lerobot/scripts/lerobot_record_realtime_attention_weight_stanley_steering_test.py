@@ -485,8 +485,8 @@ def record_loop(
         #   alpha = 0.0 with hook     -> activation ablation
         #   alpha != 0.0 with hook    -> activation steering
 
-        intervention_name = "low_transport"
-        alpha = 6.0
+        intervention_name = "high_transport"
+        alpha = 7.0
 
         # intervention_name = "low_transport"
         # alpha = 4.0
@@ -536,7 +536,7 @@ def record_loop(
                 7: [295],
                 11: [1115,1595],
                 13: [431],
-                14: [736,805]
+                14: [736,805],
             },
             "low_transport": {
                 3: [962],
@@ -655,6 +655,45 @@ def record_loop(
 # Reference: https://arxiv.org/html/2308.10248v4(Activation Addition: Steering Language Models Without Optimization)
 # Reference2: https://aclanthology.org/2024.acl-long.828.pdf(Steering Llama 2 via Contrastive Activation Addition)
 
+        # Ting:
+        # ⚡ 實時 CAA 轉向設定 ⚡
+        # target_layer = 10
+        # alpha = 3.0  # 💡 轉向強度調整：正值（例如 +3.0）會引導模型做出 High 的動作；負值（-3.0）引導做出 Low 的動作;0為baseline
+        # v_steer_path = Path("steering_vector_L10_caa.pt")
+
+        # # 💡 防重複註冊機制：因為 record_loop 在多個 Episode 之間會被重複呼叫，
+        # # 我們用一個自訂屬性 _caa_hook_registered 確保整個 Evaluation 過程只註冊一次 Hook，避免記憶體洩漏與強度疊加。
+        # if not getattr(policy, "_caa_hook_registered", False) and v_steer_path.exists():
+        #     print(f"\n[⚡ CAA ONLINE STEERING] 偵測到轉向向量，正在注入 Layer {target_layer}...")
+            
+        #     # 1. 載入轉向向量
+        #     v_steer_base = torch.load(v_steer_path) # Shape: [1, 720]
+            
+        #     # 2. 定義實時相加的 Hook 函式
+        #     def caa_steering_hook(module, inputs, outputs):
+        #         # outputs 通常是 hidden_states，或者是一個包含 hidden_states 的 tuple
+        #         if isinstance(outputs, tuple):
+        #             h = outputs[0]
+        #             # 透過 PyTorch 廣播機制 (Broadcasting)，[1, 720] 會自動對齊並加到 [B, N, 720] 的每一幀/每一個 Token 上
+        #             # 同時動態將設備與精度 (FP16/BF16) 對齊當前 hidden_states
+        #             h_steered = h + alpha * v_steer_base.to(device=h.device, dtype=h.dtype)
+        #             return (h_steered,) + outputs[1:]
+        #         else:
+        #             return outputs + alpha * v_steer_base.to(device=outputs.device, dtype=outputs.dtype)
+
+        #     # 3. 定位並註冊到目標層
+        #     try:
+        #         target_module = policy.model.vlm_with_expert.lm_expert.layers[target_layer]
+        #         target_module.register_forward_hook(caa_steering_hook)
+        #         policy._caa_hook_registered = True
+        #         print(f"[✓] 成功於 Layer {target_layer} 注入 CAA 實時轉向 Hook (alpha={alpha})")
+        #     except Exception as e:
+        #         print(f"[X] 注入 CAA 轉向失敗，錯誤訊息: {e}")
+                
+        # elif not v_steer_path.exists():
+        #     print(f"[!] 警告: 找不到轉向向量檔案 {v_steer_path}，本次評估將以 Baseline (未轉向) 執行。")
+        ############################################################################################
+        
         # intervention_name = "height_high"
         # alpha = 3.0 #3.0
 

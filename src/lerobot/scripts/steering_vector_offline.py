@@ -11,12 +11,17 @@ class ActivationCapturer:
     def __init__(self):
         self.captured = None
 
-    def hook_fn(self, module, inputs, outputs):
+    def hook_fn(module, inputs, outputs):
+        # 如果已經抓到了，就不覆蓋 (確保我們拿到的是包含整個 prompt 的那一次 forward)
+        if captured_activation[0] is not None:
+            return 
+            
         if isinstance(outputs, tuple):
             hidden_states = outputs[0]
         else:
             hidden_states = outputs
-        self.captured = hidden_states.detach().cpu()
+            
+        captured_activation[0] = hidden_states.detach().cpu()
 
 def extract_steering_vector_caa(policy, preprocessor, postprocessor, dataset, prompt_pairs, rename_map, target_layer=10, num_samples=30, device="cuda"):
     """
@@ -29,30 +34,26 @@ def extract_steering_vector_caa(policy, preprocessor, postprocessor, dataset, pr
     except Exception as e:
         raise ValueError(f"[X] 定位目標層失敗，請檢查模型結構。錯誤訊息: {e}")
 
-    # 2. 準備一個全域變數（或閉包變數）來儲存擷取到的 Activation
+    # 2. 準備閉包變數來儲存擷取到的 Activation
     captured_activation = [None]
 
-    # 3. 保存原始的 forward 函數，以便之後還原
-    original_forward = target_layer_module.forward
-
-    # 4. 定義我們強行注入的自訂 forward 函數
-    def patched_forward(*args, **kwargs):
-        # 執行原本的 forward 拿到輸出
-        outputs = original_forward(*args, **kwargs)
-        
-        # 擷取 Activation 邏輯
+    # 3. 定義 Hook 函數 (你原本寫的 hook_fn 已經有 tuple 檢查，非常完美！)
+    def hook_fn(module, inputs, outputs):
         if isinstance(outputs, tuple):
             hidden_states = outputs[0]
         else:
             hidden_states = outputs
             
-        # 將資料複製並移至 CPU，避免顯存爆炸，並存入外部變數
+        # 將資料複製並移至 CPU，避免顯存爆炸
         captured_activation[0] = hidden_states.detach().cpu()
-        return outputs
 
-    # 5. 強行替換（注入）
-    target_layer_module.forward = patched_forward
-    print(f"[*] 成功將 Monkey Patch 注入 Layer {target_layer} 的 forward 方法。")
+    # 4 & 5. 註冊 Forward Hook 至該層的 mlp 子模組
+    if hasattr(target_layer_module, "mlp"):
+        hook_handle = target_layer_module.mlp.register_forward_hook(hook_fn)
+        print(f"[*] 成功將 Forward Hook 註冊至 Layer {target_layer} 的 mlp 子模組。")
+    else:
+        # 備用方案：萬一結構命名不同（SmolVLM/Llama 結構標準命名皆為 mlp）
+        raise AttributeError(f"[X] 在 Layer {target_layer} 中找不到 'mlp' 子模組，請檢查模型結構。")
 
     diff_accumulated = []
     num_samples = min(num_samples, len(dataset))
@@ -86,7 +87,8 @@ def extract_steering_vector_caa(policy, preprocessor, postprocessor, dataset, pr
                 
                 # --- High Prompt ---
                 captured_activation[0] = None  # 重置
-                
+                policy.reset()
+
                 _ = predict_action(
                     observation=observation_frame,
                     policy=policy,
@@ -111,7 +113,8 @@ def extract_steering_vector_caa(policy, preprocessor, postprocessor, dataset, pr
 
                 # --- Low Prompt ---
                 captured_activation[0] = None  # 重置
-                
+                policy.reset()
+
                 _ = predict_action(
                     observation=observation_frame,
                     policy=policy,
@@ -132,9 +135,9 @@ def extract_steering_vector_caa(policy, preprocessor, postprocessor, dataset, pr
                 diff_accumulated.append(diff)
 
     finally:
-        # 6. 無論成功或失敗，最後一定要把模型還原，避免影響其他地方
-        target_layer_module.forward = original_forward
-        print("[*] 已還原模型的原始 forward 方法。")
+        # 6. 無論成功或失敗，最後一定要移除 Hook，避免影響其他地方或造成 Memory Leak
+        hook_handle.remove()
+        print("[*] 已安全移除 Forward Hook。")
 
     if not diff_accumulated:
         print("[X] 錯誤: 未能收集到任何激活值差值，提取失敗。")
@@ -153,7 +156,7 @@ def main():
     policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2"
     dataset_repo_id = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2"
     
-    target_layer = 10  
+    target_layer = 10
     num_samples = 30  
 
     prompt_pairs = [
