@@ -1196,6 +1196,8 @@ def main():
                 "baseline": "Eval Baseline",
                 "eval_high": "Eval High",
                 "eval_low": "Eval Low",
+                # args.prompt_labels[0]: "Eval Paper Low",
+                # args.prompt_labels[1]: "Eval Paper High",
                 args.prompt_labels[0]: "Low Prompt Only",
                 args.prompt_labels[1]: "High Prompt Only",
                 "dataset_high": "Dataset High",
