@@ -1,0 +1,13 @@
+target,action_key,pearson_corr,abs_corr
+delta_eef_z_lift_minus_reach,action_values.3,0.6042024630885775,0.6042024630885775
+delta_eef_z_lift_minus_reach,action_values.1,-0.3078982695111497,0.3078982695111497
+delta_eef_z_lift_minus_reach,action_values.4,-0.1745192235840338,0.1745192235840338
+delta_eef_z_lift_minus_reach,action_values.0,-0.15477775535536248,0.15477775535536248
+delta_eef_z_lift_minus_reach,action_values.5,-0.10570694494653692,0.10570694494653692
+delta_eef_z_lift_minus_reach,action_values.2,-0.10366626163363467,0.10366626163363467
+lift_eef_z,action_values.3,0.5532334633846818,0.5532334633846818
+lift_eef_z,action_values.1,-0.33957321788646255,0.33957321788646255
+lift_eef_z,action_values.2,-0.17989905467129505,0.17989905467129505
+lift_eef_z,action_values.4,-0.14230362956701267,0.14230362956701267
+lift_eef_z,action_values.0,-0.09074325718625673,0.09074325718625673
+lift_eef_z,action_values.5,-0.07563366556243918,0.07563366556243918

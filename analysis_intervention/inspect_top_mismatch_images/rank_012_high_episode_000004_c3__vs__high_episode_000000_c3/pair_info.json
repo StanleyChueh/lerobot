@@ -1,0 +1,8 @@
+{
+  "rank": 12,
+  "path": "debug_runs/20260529_112158_high/episode_000004/debug_chunk_rawid_3_003_observation_frame.pt",
+  "nearest_path": "debug_runs/20260529_112158_high/episode_000000/debug_chunk_rawid_3_003_observation_frame.pt",
+  "obs_distance": 20.984729766845703,
+  "action_distance": 0.44333571195602417,
+  "mismatch_score": 0.44060567518968463
+}

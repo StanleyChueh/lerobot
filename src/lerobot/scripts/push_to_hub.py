@@ -4,7 +4,7 @@ from pathlib import Path
 from huggingface_hub import HfApi, create_repo
 
 def main():
-    repo_id = "ethanCSL/eval_steering_ours_high_6"
+    repo_id = "ethanCSL/eval_steering_ours_low_4_same_noise"
     dataset_dir = Path("/home/bruce/.cache/huggingface/lerobot") / repo_id
 
     create_repo(

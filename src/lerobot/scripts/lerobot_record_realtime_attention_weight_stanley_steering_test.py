@@ -24,6 +24,7 @@ python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_stee
 import logging
 import math
 import time
+from datetime import datetime
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from pprint import pformat
@@ -322,6 +323,136 @@ def to_hwc_uint8(img):
 
     return np.ascontiguousarray(img)
 
+def make_debug_run_dir(root: str = "debug_runs") -> Path:
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(root) / run_id
+    run_dir.mkdir(parents=True, exist_ok=False)
+    print(f"[DEBUG] Saving debug files to: {run_dir.resolve()}")
+    return run_dir
+
+
+def save_debug_observation_frame(
+    observation_frame,
+    chunk_id: int,
+    debug_dir: Path,
+    prefix: str = "debug_chunk",
+    action_values=None,
+    metadata: dict | None = None,
+):
+    """
+    Save the exact observation_frame that is passed into predict_action().
+    PNG images are saved with correct RGB->BGR conversion for cv2.imwrite().
+    """
+    debug_dir = Path(debug_dir)
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
+    torch_save_dict = {
+        "chunk_id": chunk_id,
+        "keys": list(observation_frame.keys()),
+    }
+
+    if action_values is not None:
+        torch_save_dict["action_values"] = clone_debug_value(action_values)
+
+    if metadata is not None:
+        torch_save_dict["metadata"] = metadata
+
+    for key, value in observation_frame.items():
+        safe_key = key.replace(".", "_").replace("/", "_")
+
+        if hasattr(value, "detach"):
+            arr = value.detach().cpu().numpy()
+            torch_save_dict[key] = value.detach().cpu()
+        else:
+            arr = np.asarray(value)
+            if np.issubdtype(arr.dtype, np.number):
+                torch_save_dict[key] = torch.as_tensor(arr)
+
+        if key.startswith("observation.images."):
+            img = np.asarray(arr)
+
+            # Remove batch dim if present.
+            if img.ndim == 4 and img.shape[0] == 1:
+                img = img[0]
+
+            # CHW -> HWC
+            if img.ndim == 3 and img.shape[0] in (1, 3) and img.shape[-1] not in (1, 3):
+                img = np.transpose(img, (1, 2, 0))
+
+            if img.dtype != np.uint8:
+                img_float = img.astype(np.float32)
+                if img_float.max() <= 1.0:
+                    img_float = img_float * 255.0
+                img = np.clip(img_float, 0, 255).astype(np.uint8)
+
+            # IMPORTANT:
+            # observation images are usually RGB, but cv2.imwrite expects BGR.
+            if img.ndim == 3 and img.shape[-1] == 3:
+                img_to_save = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            else:
+                img_to_save = img
+
+            cv2.imwrite(
+                str(debug_dir / f"{prefix}_{chunk_id:03d}_{safe_key}.png"),
+                img_to_save,
+            )
+
+    torch.save(
+        torch_save_dict,
+        debug_dir / f"{prefix}_{chunk_id:03d}_observation_frame.pt",
+    )
+
+
+def clone_debug_observation_frame(observation_frame):
+    """
+    Cache a safe copy of observation_frame in memory.
+    This prevents later camera / tensor mutation from changing cached chunks.
+    """
+    cached = {}
+
+    for key, value in observation_frame.items():
+        if hasattr(value, "detach"):
+            cached[key] = value.detach().cpu().clone()
+        elif isinstance(value, np.ndarray):
+            cached[key] = value.copy()
+        else:
+            try:
+                arr = np.asarray(value)
+                if np.issubdtype(arr.dtype, np.number):
+                    cached[key] = arr.copy()
+                else:
+                    cached[key] = value
+            except Exception:
+                cached[key] = value
+
+    return cached
+
+def clone_debug_value(value):
+    """
+    Safely clone tensors / numpy arrays / nested dicts / lists for debug caching.
+    """
+    if hasattr(value, "detach"):
+        return value.detach().cpu().clone()
+
+    if isinstance(value, np.ndarray):
+        return value.copy()
+
+    if isinstance(value, dict):
+        return {k: clone_debug_value(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return type(value)(clone_debug_value(v) for v in value)
+
+    try:
+        arr = np.asarray(value)
+        if np.issubdtype(arr.dtype, np.number):
+            return arr.copy()
+    except Exception:
+        pass
+
+    return value
+
+
 def draw_attention_stats_overlay(
     img,
     cam_stats,
@@ -434,7 +565,18 @@ def record_loop(
     display_data: bool = False,
     listener = None,
     debug_freq: bool = False,
+    debug_run_dir: Path | None = None,
+    pending_debug_observation_frames: list[tuple[int, dict[str, Any], Any]] | None = None,
 ):
+    if debug_run_dir is None:
+        debug_run_dir = make_debug_run_dir("debug_runs")
+    else:
+        debug_run_dir = Path(debug_run_dir)
+        debug_run_dir.mkdir(parents=True, exist_ok=True)
+
+    if pending_debug_observation_frames is None:
+        pending_debug_observation_frames = []
+
     if policy:
         print("record loop, policy is not None:")
     else:
@@ -473,6 +615,9 @@ def record_loop(
         policy.reset()
         preprocessor.reset()
         postprocessor.reset()
+        policy_internal_debug_dir = Path(debug_run_dir) / "policy_internal"
+        policy_internal_debug_dir.mkdir(parents=True, exist_ok=True)
+        policy._debug_run_dir = policy_internal_debug_dir
 
         # --- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---
         print("\n--- ⚡ FULL-MODEL VLA STEERING SETUP ⚡ ---")
@@ -485,30 +630,30 @@ def record_loop(
         #   alpha = 0.0 with hook     -> activation ablation
         #   alpha != 0.0 with hook    -> activation steering
 
-        intervention_name = "high_transport"
-        alpha = 7.0
+        # intervention_name = "high_transport"
+        # alpha = 6.0
 
-        # intervention_name = "low_transport"
-        # alpha = 4.0
+        intervention_name = "low_transport"
+        alpha = 4.0
 
         semantic_neuron_sets = {
 
             # lerobot_reord_top_token.py
-            # "low_transport": {
-            #     1: [1222],
-            #     3: [2003],
-            #     5: [1877,1904],
-            #     10: [2349],
-            #     13: [1744],
-            # },
-            # "high_transport": {
-            #     2: [826],
-            #     3: [369],
-            #     5: [2102],
-            #     7: [1151],
-            #     9:[2554],
-            #     13: [414],
-            # },
+            "low_transport_paper": {
+                1: [1222],
+                3: [2003],
+                5: [1877,1904],
+                10: [2349],
+                13: [1744],
+            },
+            "high_transport_paper": {
+                2: [826],
+                3: [369],
+                5: [2102],
+                7: [1151],
+                9:[2554],
+                13: [414],
+            },
 
             # # eef Z (python src/lerobot/scripts/physical_neuron_picking_test_Z.py)
             # "high_transport": {
@@ -549,6 +694,25 @@ def record_loop(
                 14: [423],
                 15:[1886],
             },
+
+            ### Constrative(dataset from ethanCSL/svla_koch_pick_n_place_vla_steering_height_experiment_setup)
+            "high_transport_clean_dataset": {
+                6: [1816],
+                9: [1596],
+                11: [665,1273],
+                12: [1937],
+                13: [489,500,1034,1261],
+                15: [1964],
+            },
+            "low_transport_clean_dataset": {
+                3: [1556],
+                6: [1558],
+                8: [1034,2114],
+                10: [454,2135],
+                11: [188,988,1115],
+                14: [1836],
+            },
+
 
             # physical_neuron_finding.py
             "green": {0: [1930, 491, 2532, 1677, 930, 1286, 1429], 1: [805, 1596], 2: [2033], 4: [1854], 5: [416], 6: [1767], 7: [6, 2055], 8: [1278], 10: [997], 14: [156], 15: [848, 2261]},
@@ -657,8 +821,8 @@ def record_loop(
 
         # Ting:
         # ⚡ 實時 CAA 轉向設定 ⚡
-        # target_layer = 10
-        # alpha = 3.0  # 💡 轉向強度調整：正值（例如 +3.0）會引導模型做出 High 的動作；負值（-3.0）引導做出 Low 的動作;0為baseline
+        # target_layer = 14
+        # alpha = -3.0  # 💡 轉向強度調整：正值（例如 +3.0）會引導模型做出 High 的動作；負值（-3.0）引導做出 Low 的動作;0為baseline
         # v_steer_path = Path("steering_vector_L10_caa.pt")
 
         # # 💡 防重複註冊機制：因為 record_loop 在多個 Episode 之間會被重複呼叫，
@@ -752,6 +916,7 @@ def record_loop(
     smoothed_dataset_ms = None
     smoothed_rerun_ms = None
     printed_activation_debug = False
+    exited_by_key = False
 
     while timestamp < control_time_s:
 
@@ -810,6 +975,7 @@ def record_loop(
         fresh_attn_this_step = False
 
         if events["exit_early"]:
+            exited_by_key = True
             events["exit_early"] = False
             break
 
@@ -910,12 +1076,30 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
+            if getattr(policy, "_debug_just_generated_chunk", False):
+                chunk_id = getattr(policy, "_debug_last_chunk_id", -1)
+
+                pending_debug_observation_frames.append(
+                    (
+                        chunk_id,
+                        clone_debug_observation_frame(observation_frame),
+                        clone_debug_value(action_values),
+                    )
+                )
+
+                print(
+                    f"[DEBUG] Cached debug chunk {chunk_id}. "
+                    f"Pending chunks: {len(pending_debug_observation_frames)}"
+                )
+
+                policy._debug_just_generated_chunk = False
+
             ## Show activation steering (Before and After)
             if (
                 not printed_activation_debug
                 and hasattr(policy, "print_activation_steering_debug")
             ):
-                policy.print_activation_steering_debug(latest_only=True)
+                #policy.print_activation_steering_debug(latest_only=True)
 
                 if hasattr(policy, "reset_activation_steering_debug_records"):
                     policy.reset_activation_steering_debug_records()
@@ -1105,6 +1289,7 @@ def record_loop(
         precise_sleep(1 / fps - dt_s)
 
         timestamp = time.perf_counter() - start_episode_t
+    return exited_by_key
 
 
 @parser.wrap()
@@ -1112,6 +1297,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     # Check the prompt, to see if there any incorrect char
     current_task = {"text": cfg.dataset.single_task}
+    debug_run_dir = make_debug_run_dir("debug_runs")
 
     # print(
     #     "[DEBUG][CLI] task repr:",
@@ -1208,8 +1394,13 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     preprocessor.reset()
                     postprocessor.reset()
 
+                pending_debug_observation_frames: list[tuple[int, dict[str, Any], Any]] = []
+
+                episode_debug_dir = debug_run_dir / f"episode_{dataset.num_episodes:06d}"
+                episode_debug_dir.mkdir(parents=True, exist_ok=True)
+
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
-                record_loop(
+                episode_exited_by_key = record_loop(
                     robot=robot,
                     events=events,
                     fps=cfg.dataset.fps,
@@ -1226,6 +1417,8 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     display_data=cfg.display_data,
                     debug_freq=cfg.debug_freq,
                     listener=listener,
+                    debug_run_dir=episode_debug_dir,
+                    pending_debug_observation_frames=pending_debug_observation_frames,
                 )
 
                 # Execute a few seconds without recording to give time to manually reset the environment
@@ -1249,6 +1442,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                         display_data=cfg.display_data,
                         debug_freq=cfg.debug_freq,
                         listener=listener,
+                        debug_run_dir=episode_debug_dir,
                     )
 
                 if events["rerecord_episode"]:
@@ -1258,7 +1452,53 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     dataset.clear_episode_buffer()
                     if policy:
                         print("record,policy is not None")
+
+                    # Do not save debug chunks for a discarded / re-recorded rollout.
+                    pending_debug_observation_frames.clear()
                     continue
+
+                # Save debug chunks only when the recording episode ended by key press,
+                # and the episode is not discarded by left key / task switch / stop.
+                if (
+                    episode_exited_by_key
+                    and not events["stop_recording"]
+                    and len(pending_debug_observation_frames) > 0
+                ):
+                    episode_debug_dir = debug_run_dir / f"episode_{dataset.num_episodes:06d}"
+
+                    print(
+                        f"[DEBUG] Right key accepted rollout. "
+                        f"Saving {len(pending_debug_observation_frames)} debug chunks to: "
+                        f"{episode_debug_dir.resolve()}"
+                    )
+
+                    for save_idx, (chunk_id, cached_observation_frame, cached_action_values) in enumerate(
+                        pending_debug_observation_frames
+                    ):
+                        save_debug_observation_frame(
+                            observation_frame=cached_observation_frame,
+                            chunk_id=save_idx,
+                            debug_dir=episode_debug_dir,
+                            prefix=f"debug_chunk_rawid_{chunk_id}",
+                            action_values=cached_action_values,
+                            metadata={
+                                "raw_chunk_id": chunk_id,
+                                "save_idx": save_idx,
+                                "task": current_task["text"],
+                                "intervention": "low",  # manually change to "low" / "baseline"
+                            },
+                        )
+
+                    pending_debug_observation_frames.clear()
+                else:
+                    print(
+                        f"[DEBUG] Not saving debug chunks. "
+                        f"episode_exited_by_key={episode_exited_by_key}, "
+                        f"stop_recording={events['stop_recording']}, "
+                        f"pending_chunks={len(pending_debug_observation_frames)}"
+                    )
+
+                    pending_debug_observation_frames.clear()
 
                 dataset.save_episode()
                 recorded_episodes += 1

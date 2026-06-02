@@ -1,0 +1,16 @@
+{
+  "total_episodes": 61,
+  "total_grid_cells": 20,
+  "nonempty_grid_cells": 12,
+  "empty_grid_cells": 8,
+  "low_count_grid_cells": 15,
+  "curate_or_rerecord_grid_cells": 7,
+  "ok_grid_cells": 0,
+  "num_outlier_episode_flags": 22,
+  "coverage_score_0_1": 0.6,
+  "count_balance_score_0_1": 0.25,
+  "consistency_score_0_1": 0.65,
+  "outlier_score_0_1": 0.639344262295082,
+  "dataset_health_score_0_100": 53.393442622950815,
+  "note": "Health score is a heuristic. Use grid_cell_advice.csv and outlier_episodes.csv for actual recording decisions."
+}

@@ -51,7 +51,7 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 ```
 
 """
-
+from pathlib import Path
 import math
 from collections import deque
 from typing import TypedDict
@@ -247,10 +247,15 @@ class SmolVLAPolicy(PreTrainedPolicy):
         self.reset()
 
     def reset(self):
-        """This should be called whenever the environment is reset."""
         self._queues = {
             ACTION: deque(maxlen=self.config.n_action_steps),
         }
+        self._eval_noise_generator = None
+        self._eval_noise_generator_device = None
+
+        self._debug_chunk_id = 0
+        self._debug_just_generated_chunk = False
+        self._debug_last_chunk_id = -1
     
 ############################################################################
     '''
@@ -932,12 +937,83 @@ class SmolVLAPolicy(PreTrainedPolicy):
         batch = self._prepare_batch(batch)
         self._queues = populate_queues(self._queues, batch, exclude_keys=[ACTION])
 
+        self._debug_just_generated_chunk = False
+
+        # if self._check_get_actions_condition():
+        #     print("[DEBUG] action queue empty -> generating new action chunk")
+        #     actions = self._get_action_chunk(batch, noise)
+
+        #     # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
+        #     # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
+        #     self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
+        # else:
+        #     print(f"[DEBUG] action queue reused, remaining={len(self._queues[ACTION])}")
+
+        # Set fixed noise
         if self._check_get_actions_condition():
+            print("[DEBUG] action queue empty -> generating new action chunk")
+
+            if noise is None:
+                bsize = batch[OBS_STATE].shape[0]
+                device = batch[OBS_STATE].device
+
+                if (
+                    not hasattr(self, "_eval_noise_generator")
+                    or self._eval_noise_generator is None
+                    or self._eval_noise_generator_device != device
+                ):
+                    self._eval_noise_generator = torch.Generator(device=device)
+                    self._eval_noise_generator.manual_seed(0)
+                    self._eval_noise_generator_device = device
+
+                noise = torch.normal(
+                    mean=0.0,
+                    std=1.0,
+                    size=(bsize, self.config.chunk_size, self.config.max_action_dim),
+                    dtype=torch.float32,
+                    device=device,
+                    generator=self._eval_noise_generator,
+                )
+
             actions = self._get_action_chunk(batch, noise)
 
-            # `self.predict_action_chunk` returns a (batch_size, n_action_steps, action_dim) tensor, but the queue
-            # effectively has shape (n_action_steps, batch_size, *), hence the transpose.
-            self._queues[ACTION].extend(actions.transpose(0, 1)[: self.config.n_action_steps])
+            print("[DEBUG] chunk_id:", self._debug_chunk_id)
+            print("[DEBUG] noise mean/std:", noise.mean().item(), noise.std().item())
+            print("[DEBUG] actions mean/std:", actions.mean().item(), actions.std().item())
+            print("[DEBUG] first action:", actions[0, 0].detach().cpu().numpy())
+            print("[DEBUG] last action:", actions[0, -1].detach().cpu().numpy())
+            print("[DEBUG] state:", batch[OBS_STATE][0].detach().cpu().numpy())
+
+            debug_dir = Path(getattr(self, "_debug_run_dir", "debug_runs/manual"))
+            debug_dir.mkdir(parents=True, exist_ok=True)
+
+            torch.save(
+                {
+                    "chunk_id": self._debug_chunk_id,
+                    "batch_keys": list(batch.keys()),
+                    "state": batch[OBS_STATE].detach().cpu(),
+                    "noise": noise.detach().cpu(),
+                    "actions": actions.detach().cpu(),
+                    "policy_batch": {
+                        k: v.detach().cpu()
+                        for k, v in batch.items()
+                        if torch.is_tensor(v)
+                    },
+                },
+                debug_dir / f"debug_chunk_{self._debug_chunk_id:03d}.pt",
+            )
+
+            self._debug_just_generated_chunk = True
+            self._debug_last_chunk_id = self._debug_chunk_id
+
+            self._debug_chunk_id += 1
+
+            self._queues[ACTION].extend(
+                actions.transpose(0, 1)[: self.config.n_action_steps]
+            )
+
+        else:
+            print(f"[DEBUG] action queue reused, remaining={len(self._queues[ACTION])}")
 
         return self._queues[ACTION].popleft()
 
@@ -1457,6 +1533,7 @@ class VLAFlowMatching(nn.Module):
         bsize = state.shape[0]
         device = state.device
 
+        # Sample noise, and then run forward pass to generate action
         if noise is None:
             actions_shape = (bsize, self.config.chunk_size, self.config.max_action_dim)
             noise = self.sample_noise(actions_shape, device)

@@ -1,0 +1,9 @@
+{
+  "selected_k": 5,
+  "fixed_k_requested": 0,
+  "min_k": 3,
+  "max_k": 12,
+  "target_episodes_per_region": 8,
+  "min_episodes_per_auto_region": 6,
+  "selection_note": "selected_k is chosen by silhouette score with penalties for low-count regions unless --auto-region-k is set."
+}

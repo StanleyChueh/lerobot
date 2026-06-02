@@ -1,9 +1,16 @@
 import torch
-from datasets import load_dataset
-from transformers import AutoProcessor, AutoModelForVision2Seq
-from PIL import Image
 import pandas as pd
 from tqdm import tqdm
+from collections import defaultdict
+import sys
+from transformers import AutoProcessor, AutoModelForImageTextToText
+import torchvision.transforms as T
+
+# 自動相容不同版本的 LeRobot 匯入路徑 (v2.x / v3.x)
+try:
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+except ImportError:
+    from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 
 # ==========================================
 # 1. 配置與模型載入
@@ -12,39 +19,51 @@ MODEL_ID = "HuggingFaceTB/SmolVLM-Instruct"
 DATASET_ID = "ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 載入處理器與模型 (建議開啟 bfloat16 或 4bit 節省顯存)
+print("Loading processor and model...")
 processor = AutoProcessor.from_pretrained(MODEL_ID)
-model = AutoModelForVision2Seq.from_pretrained(
+model = AutoModelForImageTextToText.from_pretrained(
     MODEL_ID, 
     torch_dtype=torch.bfloat16, 
     _attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager"
 ).to(DEVICE)
 
 # ==========================================
-# 2. 載入資料集
+# 2. 使用官方 LeRobotDataset 載入資料集
 # ==========================================
-# 注意：請確保你已經透過 huggingface-cli login 登入，如果有權限限制的話
-print(f"Loading dataset: {DATASET_ID}...")
-ds = load_dataset(DATASET_ID, split="train")
+print(f"Loading LeRobot dataset: {DATASET_ID}...")
+# LeRobotDataset 會動態連結並自動解開底層的 MP4 影片串流
+dataset = LeRobotDataset(DATASET_ID)
 
 # ==========================================
-# 3. 定義處理函數
+# 3. 自動偵測解碼後的真實影像與 Episode 欄位
 # ==========================================
-def process_episode(sample, num_frames=5):
-    """
-    從資料集中抽取影像序列並讓 SmolVLM 判斷
-    """
-    # 假設資料集結構中包含 'image' 欄位且為序列
-    # 如果資料集是平鋪的，則需要根據 episode_id 進行分組（此處假設 sample 已是一段序列）
-    all_images = sample['image'] 
-    
-    # 均勻抽樣：確保模型看到動作的開始、中間與結束
-    total_frames = len(all_images)
-    indices = [int(i * (total_frames - 1) / (num_frames - 1)) for i in range(num_frames)]
-    sampled_images = [all_images[i] for i in indices]
+# 透過讀取第 0 幀來檢查 LeRobotDataset 解碼後實際包含的所有特徵鍵名
+first_sample = dataset[0]
+image_key = None
+for k in first_sample.keys():
+    if any(w in k.lower() for w in ["image", "cam", "rgb", "view", "pic"]):
+        image_key = k
+        break
 
-    # 設定 Prompt
-    # 我們明確告訴模型觀察夾爪與桌面的距離
+if not image_key:
+    print(f"\n[ERROR] 找不到任何影像欄位！解碼後的特徵有：\n👉 {list(first_sample.keys())}")
+    sys.exit(1)
+
+print(f"[INFO] 成功在 LeRobot 樣本中識別到影像欄位: '{image_key}'")
+
+# 取得底層的表格結構，用來做快速的 Episode 分組
+hf_ds = dataset.hf_dataset
+episode_key = "episode_index" if "episode_index" in hf_ds.column_names else "episode_id"
+if episode_key not in hf_ds.column_names:
+    print(f"\n[ERROR] 找不到 episode 分組欄位。資料欄位為: {hf_ds.column_names}")
+    sys.exit(1)
+
+print(f"Using episode key: '{episode_key}' and image key: '{image_key}'")
+
+# ==========================================
+# 4. 定義處理函數
+# ==========================================
+def process_episode(sampled_images, num_frames=5):
     prompt_text = (
         "Analyze this sequence of robot arm movements. The prompt is 'put the red cube in the box'. "
         "Focus on the vertical height of the gripper during the transfer phase. "
@@ -52,7 +71,6 @@ def process_episode(sample, num_frames=5):
         "Answer with only one word: High or Low."
     )
 
-    # 建立多圖對話格式
     messages = [
         {
             "role": "user",
@@ -60,45 +78,67 @@ def process_episode(sample, num_frames=5):
         }
     ]
 
-    # 準備輸入
     prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
     inputs = processor(text=prompt, images=sampled_images, return_tensors="pt").to(DEVICE)
 
-    # 生成預測
     generated_ids = model.generate(**inputs, max_new_tokens=10)
     result = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
     
-    # 清理輸出字串（只取最後的回覆部分）
     prediction = result.split("assistant\n")[-1].strip().capitalize()
     return prediction
 
 # ==========================================
-# 4. 執行批次處理
+# 5. 執行按 Episode 分組的批次處理
 # ==========================================
-results = []
+print("Structuring dataset into episodes...")
+episode_to_indices = defaultdict(list)
+for idx, ep_id in enumerate(hf_ds[episode_key]):
+    episode_to_indices[ep_id].append(idx)
 
-print("Starting inference...")
-# 為了示範，我們先處理前 100 筆資料，你可以移除 [:100] 處理全部
-for i in tqdm(range(len(ds))):
+results = []
+num_frames = 5
+to_pil = T.ToPILImage()
+
+print(f"Starting inference on {len(episode_to_indices)} episodes...")
+for episode_id, indices in tqdm(episode_to_indices.items()):
     try:
-        episode_data = ds[i]
-        label = process_episode(episode_data)
+        total_frames = len(indices)
+        if total_frames < num_frames:
+            print(f"Skipping episode {episode_id}: too few frames ({total_frames})")
+            continue
+            
+        # 均勻抽樣 5 幀的全局索引
+        sampled_indices = [indices[int(i * (total_frames - 1) / (num_frames - 1))] for i in range(num_frames)]
+        
+        # 讀取並解碼影像
+        sampled_images = []
+        for idx in sampled_indices:
+            img = dataset[idx][image_key]
+            
+            # 防禦機制：LeRobot 影片解碼後通常為 PyTorch Tensor (C, H, W)
+            # 我們需要將其轉回 PIL Image，以便對齊 SmolVLM 的輸入要求
+            if isinstance(img, torch.Tensor):
+                img = to_pil(img.cpu())
+            sampled_images.append(img)
+        
+        # 送入模型預測
+        label = process_episode(sampled_images, num_frames=num_frames)
         
         results.append({
-            "index": i,
-            "prediction": label,
-            "episode_id": episode_data.get("episode_id", "N/A")
+            "episode_id": episode_id,
+            "prediction": label
         })
     except Exception as e:
-        print(f"Error processing index {i}: {e}")
+        print(f"Error processing episode {episode_id}: {e}")
 
 # ==========================================
-# 5. 儲存結果
+# 6. 儲存結果
 # ==========================================
-df = pd.DataFrame(results)
-df.to_csv("vla_trajectory_classification.csv", index=False)
-print("Classification complete. Results saved to 'vla_trajectory_classification.csv'.")
-
-# 統計一下高低的比例
-print("\nSummary of results:")
-print(df['prediction'].value_counts())
+if not results:
+    print("\n[ERROR] No episodes were successfully classified.")
+else:
+    df = pd.DataFrame(results)
+    df.to_csv("vla_trajectory_classification.csv", index=False)
+    print("\nClassification complete. Results saved to 'vla_trajectory_classification.csv'.")
+    print("\nSummary of results:")
+    print(df['prediction'].value_counts())

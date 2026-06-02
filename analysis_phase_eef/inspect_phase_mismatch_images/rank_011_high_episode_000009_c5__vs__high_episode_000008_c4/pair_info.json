@@ -1,0 +1,19 @@
+{
+  "condition": "high",
+  "episode": "episode_000009",
+  "save_idx": 5,
+  "phase_target": 0.25,
+  "eef_z": 0.017497976367441076,
+  "path": "debug_runs/20260529_112158_high/episode_000009/debug_chunk_rawid_5_005_observation_frame.pt",
+  "nearest_condition": "high",
+  "nearest_episode": "episode_000008",
+  "nearest_save_idx": 4,
+  "nearest_eef_z": 0.018336017596751422,
+  "nearest_path": "debug_runs/20260529_112158_high/episode_000008/debug_chunk_rawid_4_004_observation_frame.pt",
+  "obs_distance": 14.440298080444336,
+  "action_distance": 0.1737869679927826,
+  "same_condition": 1,
+  "obs_distance_rank_pct": 0.15666666666666668,
+  "action_distance_rank_pct": 0.59,
+  "mismatch_score": 0.4975666666666666
+}
