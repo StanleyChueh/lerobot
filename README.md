@@ -350,3 +350,207 @@ Training(RTX 5090 is not enough!!)
 lerobot-train   --dataset.repo_id=ethanCSL/svla_koch_sorting_n_stacking   --policy.type=pi05   --output_dir=./outputs/train/pi05_koch_sorting_n_stacking   --job_name=pi05_sorting_stacking   --policy.repo_id=ethanCSL/pi05_koch_sorting_n_stacking   --policy.pretrained_path=lerobot/pi05_base   --policy.compile_model=true   --policy.gradient_checkpointing=true   --wandb.enable=true   --policy.dtype=bfloat16   --policy.freeze_vision_encoder=false   --policy.train_expert_only=false   --policy.device=cuda   --batch_size=8   --steps=30000 --dataset.video_backend=pyav
 
 ```
+
+# SmolVLA VLA Steering Experiment
+
+Record experimental dataset
+
+High intervention roll out for later experiment
+
+```
+ python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test_debug.py \
+  --robot.type=koch_follower \
+  --robot.port=/dev/ttyUSB_follower \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: MJPG}
+  }' \
+  --dataset.single_task="Put the red cube in the box." \
+  --dataset.repo_id=ethanCSL/eval_high_intervention_rollout_debug_trace_height_10eps \
+  --dataset.episode_time_s=500000 \
+  --dataset.num_episodes=10 \
+  --dataset.reset_time_s=10 \
+  --dataset.push_to_hub=false \
+  --teleop.type=koch_leader \
+  --teleop.port=/dev/ttyUSB_leader \
+  --teleop.id=my_awesome_leader_arm \
+  --policy.path=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --fixed_action.mode=off \
+  --action_trace.enabled=true \
+  --intervention.label=high \
+  --intervention.name=high_transport \
+  --intervention.alpha=6.0 \
+  --intervention.enable_steering=true
+```
+
+Low intervention roll out for later experiment
+
+```
+ python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test_debug.py \
+  --robot.type=koch_follower \
+  --robot.port=/dev/ttyUSB_follower \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: MJPG}
+  }' \
+  --dataset.single_task="Put the red cube in the box." \
+  --dataset.repo_id=ethanCSL/eval_low_intervention_rollout_debug_trace_height_10eps \
+  --dataset.episode_time_s=500000 \
+  --dataset.num_episodes=10 \
+  --dataset.reset_time_s=10 \
+  --dataset.push_to_hub=false \
+  --teleop.type=koch_leader \
+  --teleop.port=/dev/ttyUSB_leader \
+  --teleop.id=my_awesome_leader_arm \
+  --policy.path=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --fixed_action.mode=off \
+  --action_trace.enabled=true \
+  --intervention.label=low \
+  --intervention.name=low_transport \
+  --intervention.alpha=4.0 \
+  --intervention.enable_steering=true
+```
+
+No intervention roll out for later experiment
+
+```
+ python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test_debug.py \
+  --robot.type=koch_follower \
+  --robot.port=/dev/ttyUSB_follower \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: MJPG}
+  }' \
+  --dataset.single_task="Put the red cube in the box." \
+  --dataset.repo_id=ethanCSL/eval_high_intervention_rollout_debug_trace_height_10eps \
+  --dataset.episode_time_s=500000 \
+  --dataset.num_episodes=10 \
+  --dataset.reset_time_s=10 \
+  --dataset.push_to_hub=false \
+  --teleop.type=koch_leader \
+  --teleop.port=/dev/ttyUSB_leader \
+  --teleop.id=my_awesome_leader_arm \
+  --policy.path=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --fixed_action.mode=off \
+  --action_trace.enabled=true \
+  --intervention.label=high \
+  --intervention.name=high_transport \
+  --intervention.alpha=0.0 \
+  --intervention.enable_steering=false
+```
+
+## First Experiment
+
+Prove same predicted action sequence → nearly same real-robot behavior
+
+### Capture one predicted action sequence from the real policy
+
+```
+mkdir -p fixed_action_sequences
+
+python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test_debug.py \
+  --robot.type=koch_follower \
+  --robot.port=/dev/ttyUSB_follower \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 11, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 7, width: 640, height: 480, fps: 30, fourcc: MJPG}
+  }' \
+  --dataset.single_task="Put the red cube in the box." \
+  --dataset.repo_id=ethanCSL/eval_fixed_action_capture_prof_high \
+  --dataset.episode_time_s=500000 \
+  --dataset.num_episodes=1 \
+  --dataset.reset_time_s=5 \
+  --dataset.push_to_hub=false \
+  --teleop.type=koch_leader \
+  --teleop.port=/dev/ttyUSB_leader \
+  --teleop.id=my_awesome_leader_arm \
+  --policy.path="$POLICY" \
+  --fixed_action.mode=capture \
+  --fixed_action.path=fixed_action_sequences/high_rest0_to_lift2_prof.pt \
+  --fixed_action.start_chunk=0 \
+  --fixed_action.stop_chunk=2 \
+  --fixed_action.max_steps=240 \
+  --intervention.label=high \
+  --intervention.name=high_transport \
+  --intervention.alpha=6.0 \
+  --intervention.enable_steering=true
+```
+
+> **Note**
+> Put the cube at the selected test position.
+> 
+> Let the policy run from rest → reach → lift.
+>
+> Press right key to save episode.
+> 
+> The script will save the exact robot_action_to_send sequence into fixed_action_sequences/high_rest0_to_lift2_prof.pt.
+
+### Replay predicted action sequence from the real policy
+
+```
+python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test_debug.py \
+  --robot.type=koch_follower \
+  --robot.port=/dev/ttyUSB_follower \
+  --robot.id=my_awesome_follower_arm \
+  --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 11, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 7, width: 640, height: 480, fps: 30, fourcc: MJPG}
+  }' \
+  --dataset.single_task="Put the red cube in the box." \
+  --dataset.repo_id=ethanCSL/eval_fixed_action_replay_prof_high \
+  --dataset.episode_time_s=500000 \
+  --dataset.num_episodes=3 \
+  --dataset.reset_time_s=10 \
+  --dataset.push_to_hub=false \
+  --teleop.type=koch_leader \
+  --teleop.port=/dev/ttyUSB_leader \
+  --teleop.id=my_awesome_leader_arm \
+  --policy.path="$POLICY" \
+  --fixed_action.mode=replay \
+  --fixed_action.path=fixed_action_sequences/high_rest0_to_lift2_prof.pt \
+  --fixed_action.replay_slowdown=4.0 \
+  --intervention.label=high \
+  --intervention.name=high_transport \
+  --intervention.alpha=6.0 \
+  --intervention.enable_steering=true
+```
+
+## Second Experiment
+
+Compare actual eef height and predicted eef height from roll outs
+
+This image below is the trajectory segment will be used for comparision:
+
+<img width="2016" height="1152" alt="sequence_exact_observation_montage" src="https://github.com/user-attachments/assets/fb942c30-2186-4e8a-974a-41f267531927" />
+
+### Show result
+
+```
+RUN=debug_runs/20260605_115612_Stable
+XML=src/lerobot/scripts/follower.xml
+OUT=analysis_online_trace_predicted_vs_actual_20260605_115612_Stable_chunk2
+
+python src/lerobot/scripts/make_online_trace_predicted_vs_actual_eef_height.py \
+  --run "$RUN" \
+  --xml "$XML" \
+  --out "$OUT" \
+  --pred-source sent_action \
+  --actual-source observation_state \
+  --chunk-index 2 \
+  --delay 4 \
+  --actual-window chunk
+```
+You will see something like
+
+<img width="2369" height="1316" alt="episode_000000_predicted_vs_actual_by_step" src="https://github.com/user-attachments/assets/166a0f3d-fef7-4870-a151-136f0aeb8775" />
+
+<img width="2130" height="1225" alt="paper_predicted_vs_actual_max_eef_height" src="https://github.com/user-attachments/assets/51b6b060-9489-4c94-98fe-5dc9f77c4487" />
