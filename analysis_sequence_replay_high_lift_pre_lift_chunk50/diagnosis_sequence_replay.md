@@ -9,22 +9,22 @@ This is stronger than a single-snapshot determinism test because it includes pol
 ## Configuration
 
 ```
-high = debug_runs/20260529_112158_high
+high = debug_runs/20260605_115612_Stable
 policy_path = ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2
 dataset_repo_id = ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2
 intervention_name = high_transport
 alpha = 6.0
 sequence_chunks = 0,1
 decision_index = -1
-repeat_exact_sequence = 100
+repeat_exact_sequence = 10
 repeat_per_episode_sequence = 10
 ```
 
 Exact sequence:
 ```
- episode_idx  seq_pos  chunk_idx                                                                                 source_path
-           0        0          0 debug_runs/20260529_112158_high/episode_000000/debug_chunk_rawid_0_000_observation_frame.pt
-           0        1          1 debug_runs/20260529_112158_high/episode_000000/debug_chunk_rawid_1_001_observation_frame.pt
+ episode_idx  seq_pos  chunk_idx                                                                                   source_path
+           0        0          0 debug_runs/20260605_115612_Stable/episode_000000/debug_chunk_rawid_0_000_observation_frame.pt
+           0        1          1 debug_runs/20260605_115612_Stable/episode_000000/debug_chunk_rawid_1_001_observation_frame.pt
 ```
 
 ## Exact same sequence repeated
@@ -32,12 +32,12 @@ Exact sequence:
 Decision-step action repeat summary:
 ```
      action_key       mean  std        min        max  range  max_abs_deviation_from_mean
-action_values.0  -7.265102  0.0  -7.265102  -7.265102    0.0                          0.0
-action_values.1  76.871475  0.0  76.871475  76.871475    0.0                          0.0
-action_values.2  -5.442591  0.0  -5.442591  -5.442591    0.0                          0.0
-action_values.3 -89.768280  0.0 -89.768280 -89.768280    0.0                          0.0
-action_values.4  -3.584349  0.0  -3.584349  -3.584349    0.0                          0.0
-action_values.5  62.200947  0.0  62.200947  62.200947    0.0                          0.0
+action_values.0  -9.281309  0.0  -9.281309  -9.281309    0.0                          0.0
+action_values.1  79.146400  0.0  79.146400  79.146400    0.0                          0.0
+action_values.2  -0.681545  0.0  -0.681545  -0.681545    0.0                          0.0
+action_values.3 -89.590378  0.0 -89.590378 -89.590378    0.0                          0.0
+action_values.4  -6.687497  0.0  -6.687497  -6.687497    0.0                          0.0
+action_values.5  56.541866  0.0  56.541866  56.541866    0.0                          0.0
 ```
 
 - Max decision-step action std: `0.00000000`
@@ -61,7 +61,7 @@ Saved plots:
 ## Predicted action chunk repeatability
 
 - Drained predicted/queued action chunk steps: `50`
-- Mean max FK EEF-z over predicted action chunk: `0.27816694`
+- Mean max FK EEF-z over predicted action chunk: `0.26412067`
 - Range of max FK EEF-z over predicted action chunk across repeats: `0.00000000`
 - Interpretation: the max FK-implied EEF height inside the predicted action chunk is identical across repeated replays of the same observation sequence.
 
@@ -86,16 +86,16 @@ Important limitation:
 Per-episode repeated-sequence stability:
 ```
  episode_idx  decision_chunk_idx  num_repeats  predicted_action_eef_z  predicted_action_eef_z_repeat_std  predicted_action_eef_z_repeat_range  lift_eef_z  action_values.0_repeat_std  action_values.1_repeat_std  action_values.2_repeat_std  action_values.3_repeat_std  action_values.4_repeat_std  action_values.5_repeat_std  predicted_action_eef_z_repeat_std
-           0                   1           10                0.257012                       0.000000e+00                                  0.0    0.090976                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
-           1                   1           10                0.254091                       5.551115e-17                                  0.0    0.104742                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       5.551115e-17
-           2                   1           10                0.254475                       0.000000e+00                                  0.0    0.104576                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
-           3                   1           10                0.255181                       5.551115e-17                                  0.0    0.071588                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       5.551115e-17
-           4                   1           10                0.255588                       0.000000e+00                                  0.0    0.078873                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
-           5                   1           10                0.257100                       0.000000e+00                                  0.0    0.110050                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
-           6                   1           10                0.254612                       0.000000e+00                                  0.0    0.109366                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
-           7                   1           10                0.255418                       0.000000e+00                                  0.0    0.102518                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
-           8                   1           10                0.258123                       0.000000e+00                                  0.0    0.075996                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
-           9                   1           10                0.255887                       0.000000e+00                                  0.0    0.108277                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
+           0                   1           10                0.250904                       5.551115e-17                                  0.0    0.119048                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       5.551115e-17
+           1                   1           10                0.254361                       5.551115e-17                                  0.0    0.121730                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       5.551115e-17
+           2                   1           10                0.253411                       0.000000e+00                                  0.0    0.109356                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
+           3                   1           10                0.256716                       5.551115e-17                                  0.0    0.111426                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       5.551115e-17
+           4                   1           10                0.254555                       0.000000e+00                                  0.0    0.104109                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
+           5                   1           10                0.255055                       0.000000e+00                                  0.0    0.099244                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
+           6                   1           10                0.256450                       0.000000e+00                                  0.0    0.114454                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
+           7                   1           10                0.255437                       5.551115e-17                                  0.0    0.115490                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       5.551115e-17
+           8                   1           10                0.256170                       5.551115e-17                                  0.0    0.107121                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       5.551115e-17
+           9                   1           10                0.255303                       0.000000e+00                                  0.0    0.116538                         0.0                         0.0                         0.0                         0.0                         0.0                         0.0                       0.000000e+00
 ```
 
 - Max within-episode sequence repeat std: `0.00000000`

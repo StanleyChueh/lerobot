@@ -1,0 +1,2 @@
+label_mode,eef_label_threshold_m,eef_low_cluster_center_m,eef_high_cluster_center_m,eef_cluster_gap_m,min_cluster_gap_m,quality_note,num_low,num_high,num_mid,num_unknown
+kmeans,0.12848936479986917,0.0709317864314502,0.18604694316828813,0.11511515673683792,0.005,ok,50,50,0,0

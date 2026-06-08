@@ -370,6 +370,66 @@ def flatten_numeric(value: Any, prefix: str = "") -> dict[str, float]:
 def vector_from_dict(d: dict[str, float], keys: list[str]) -> np.ndarray:
     return np.asarray([float(d.get(k, 0.0)) for k in keys], dtype=np.float32)
 
+def load_action_to_obs_mapping(path: str | None) -> pd.DataFrame | None:
+    if path is None or str(path).strip() == "":
+        return None
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Action-to-observation mapping CSV not found: {p}")
+
+    mapping = pd.read_csv(p)
+
+    required = {"joint_idx", "a", "b"}
+    missing = required - set(mapping.columns)
+    if missing:
+        raise ValueError(
+            f"Mapping CSV is missing columns {missing}. "
+            f"Expected columns include: {sorted(required)}"
+        )
+
+    return mapping
+
+
+def map_action_to_obs_convention(action_vec: np.ndarray, mapping: pd.DataFrame | None) -> np.ndarray:
+    """
+    Convert raw policy action convention into follower observation_state convention
+    before using observation-state FK.
+
+    Important:
+      - Use this for predicted/replayed action_values before FK.
+      - Do NOT use this for actual observation.state, because observation.state
+        is already in follower observation convention.
+    """
+    action_vec = np.asarray(action_vec, dtype=np.float64).reshape(-1)[:6].copy()
+
+    if mapping is None:
+        return action_vec
+
+    out = action_vec.copy()
+    for _, row in mapping.iterrows():
+        j = int(row["joint_idx"])
+        a = float(row["a"])
+        b = float(row["b"])
+        out[j] = a * out[j] + b
+
+    return out
+
+
+def compute_eef_height_from_action(
+    action_vec: np.ndarray,
+    action_to_obs_map: pd.DataFrame | None,
+    mj_model,
+    mj_data,
+) -> tuple[float, np.ndarray]:
+    """
+    Correct predicted-action FK:
+      raw action -> mapped observation convention -> FK.
+    """
+    obs_like_vec = map_action_to_obs_convention(action_vec, action_to_obs_map)
+    z = compute_eef_height_from_state(obs_like_vec, mj_model, mj_data)
+    return z, obs_like_vec
+
 
 def parse_episode_list(text: str | None) -> list[int] | None:
     if text is None or str(text).strip() == "":
@@ -1021,6 +1081,21 @@ def compute_correlations(df: pd.DataFrame, action_cols: list[str], target_cols: 
             )
     return pd.DataFrame(rows).sort_values(["target", "abs_corr"], ascending=[True, False])
 
+def map_action_to_obs_convention(action_vec: np.ndarray, mapping: pd.DataFrame | None) -> np.ndarray:
+    action_vec = np.asarray(action_vec, dtype=np.float64).reshape(-1)[:6].copy()
+
+    if mapping is None:
+        return action_vec
+
+    out = action_vec.copy()
+    for _, row in mapping.iterrows():
+        j = int(row["joint_idx"])
+        a = float(row["a"])
+        b = float(row["b"])
+        out[j] = a * out[j] + b
+
+    return out
+
 
 # ==============================================================================
 # 6. Plots / report
@@ -1259,6 +1334,14 @@ def main() -> None:
     parser.add_argument("--robot-type", default="koch_follower")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--rename-map-json", default=None)
+    parser.add_argument(
+        "--allow-raw-action-fk",
+        action="store_true",
+        help=(
+            "Allow raw action_values to be used directly for FK. "
+            "Only use for debugging; not for paper plots."
+        ),
+    )
     parser.add_argument("--reach-chunk", type=int, default=1)
     parser.add_argument("--lift-chunk", type=int, default=2)
     parser.add_argument("--test1-pt", default=None, help="Specific saved reach chunk .pt for Test 1. If omitted, first high_eef_mode episode is used.")
@@ -1269,7 +1352,25 @@ def main() -> None:
     parser.add_argument("--focus-dims", default="1,2,5", help="Action dims to emphasize in plots.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--reset-seed-each-trial", action="store_true")
+    parser.add_argument(
+        "--action-to-obs-map-csv",
+        default=None,
+        help="CSV containing action -> observation_state affine mapping.",
+    )
     args = parser.parse_args()
+
+    action_to_obs_map = load_action_to_obs_mapping(args.action_to_obs_map_csv)
+
+    if action_to_obs_map is None and not args.allow_raw_action_fk:
+        raise RuntimeError(
+            "Refusing to compute predicted EEF height from raw action_values. "
+            "Pass --action-to-obs-map-csv <mapping.csv>, or pass "
+            "--allow-raw-action-fk only for debugging."
+        )
+
+    # action_to_obs_map = None
+    # if args.action_to_obs_map_csv is not None:
+    #     action_to_obs_map = pd.read_csv(args.action_to_obs_map_csv)
 
     out_dir = Path(args.out)
     safe_mkdir(out_dir)

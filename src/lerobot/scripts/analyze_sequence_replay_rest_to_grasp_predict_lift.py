@@ -262,22 +262,81 @@ def get_action_vector_from_row(row: pd.Series, max_dims: int = 6) -> np.ndarray 
     return np.asarray(vals, dtype=np.float64)
 
 
+def load_action_to_obs_mapping(path: str | None) -> pd.DataFrame | None:
+    """
+    Load action -> observation_state affine mapping.
+
+    This mapping is required because predicted action_values are in action/command
+    convention, but compute_eef_height_from_state() expects follower observation_state
+    convention.
+    """
+    if path is None or str(path).strip() == "":
+        return None
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"Action-to-observation mapping CSV not found: {p}")
+
+    mapping = pd.read_csv(p)
+
+    required = {"joint_idx", "a", "b"}
+    missing = required - set(mapping.columns)
+    if missing:
+        raise ValueError(
+            f"Mapping CSV is missing columns {missing}. "
+            f"Expected at least columns: {sorted(required)}"
+        )
+
+    return mapping
+
+
+def map_action_to_obs_convention(
+    action_vec: np.ndarray,
+    action_to_obs_map: pd.DataFrame | None,
+) -> np.ndarray:
+    """
+    Convert raw policy action convention into follower observation_state convention.
+
+    Use this before FK for replayed/predicted action_values.
+    Do NOT use this for actual observation.state, because actual observation.state
+    is already in follower observation convention.
+    """
+    action_vec = np.asarray(action_vec, dtype=np.float64).reshape(-1)[:6].copy()
+
+    if action_to_obs_map is None:
+        return action_vec
+
+    out = action_vec.copy()
+    for _, row in action_to_obs_map.iterrows():
+        j = int(row["joint_idx"])
+        a = float(row["a"])
+        b = float(row["b"])
+        out[j] = a * out[j] + b
+
+    return out
+
+
 def add_predicted_action_fk_eef_z(
     df: pd.DataFrame,
     mj_model,
     mj_data,
     action_dim_count: int = 6,
     out_col: str = "predicted_action_eef_z",
+    action_to_obs_map: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
-    Convert predicted joint-position actions to commanded EEF z using FK.
+    Correct predicted-action FK.
 
-    Important:
-      This estimates the EEF height implied by the predicted joint target.
-      It is not the measured real robot EEF height after physics/contact/motor execution.
+    Raw policy output action_values.0..5 are action/command convention.
+    compute_eef_height_from_state() expects follower observation_state convention.
+
+    Therefore:
+      action_values -> action_to_obs_map -> observation-like joint values -> FK.
     """
     if df.empty:
         return df
+
+    df = df.copy()
 
     needed = [f"action_values.{i}" for i in range(action_dim_count)]
     if any(c not in df.columns for c in needed):
@@ -289,16 +348,33 @@ def add_predicted_action_fk_eef_z(
         return df
 
     vals = []
+    mapped_rows = []
+
     for _, row in df.iterrows():
-        q_like = get_action_vector_from_row(row, max_dims=action_dim_count)
-        if q_like is None:
+        action_vec = get_action_vector_from_row(row, max_dims=action_dim_count)
+        if action_vec is None:
             vals.append(float("nan"))
+            mapped_rows.append([float("nan")] * action_dim_count)
             continue
+
         try:
-            vals.append(float(compute_eef_height_from_state(q_like, mj_model, mj_data)))
+            obs_like_vec = map_action_to_obs_convention(
+                action_vec=action_vec,
+                action_to_obs_map=action_to_obs_map,
+            )
+            vals.append(float(compute_eef_height_from_state(obs_like_vec, mj_model, mj_data)))
+            mapped_rows.append([float(v) for v in obs_like_vec[:action_dim_count]])
         except Exception:
             vals.append(float("nan"))
+            mapped_rows.append([float("nan")] * action_dim_count)
+
     df[out_col] = vals
+
+    # Save mapped joint values so you can verify the FK input convention later.
+    mapped_arr = np.asarray(mapped_rows, dtype=np.float64)
+    for j in range(action_dim_count):
+        df[f"mapped_obs_values.{j}"] = mapped_arr[:, j]
+
     return df
 
 
@@ -359,6 +435,7 @@ def replay_all_episode_sequences(
     lift_chunk: int,
     mj_model,
     mj_data,
+    action_to_obs_map: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Repeat each episode's rest->grasp sequence and summarize the decision-step action.
@@ -398,7 +475,12 @@ def replay_all_episode_sequences(
             mj_model=mj_model,
             mj_data=mj_data,
         )
-        final_trials = add_predicted_action_fk_eef_z(final_trials, mj_model, mj_data)
+        final_trials = add_predicted_action_fk_eef_z(
+            final_trials,
+            mj_model,
+            mj_data,
+            action_to_obs_map=action_to_obs_map,
+        )
         trial_dfs.append(final_trials)
 
         action_cols = sorted([c for c in final_trials.columns if c.startswith("action_values.")], key=natural_sort_key)
@@ -840,6 +922,7 @@ def repeat_exact_sequence_predicted_chunk(
     chunk_steps: int,
     mj_model,
     mj_data,
+    action_to_obs_map: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Repeat the exact same observation sequence and extract the predicted
@@ -863,8 +946,18 @@ def repeat_exact_sequence_predicted_chunk(
             decision_index=decision_index,
             chunk_steps=chunk_steps,
         )
-        seq_df = add_predicted_action_fk_eef_z(seq_df, mj_model, mj_data)
-        chunk_df = add_predicted_action_fk_eef_z(chunk_df, mj_model, mj_data)
+        seq_df = add_predicted_action_fk_eef_z(
+            seq_df,
+            mj_model,
+            mj_data,
+            action_to_obs_map=action_to_obs_map,
+        )
+        chunk_df = add_predicted_action_fk_eef_z(
+            chunk_df,
+            mj_model,
+            mj_data,
+            action_to_obs_map=action_to_obs_map,
+        )
 
         seq_dfs.append(seq_df)
         chunk_dfs.append(chunk_df)
@@ -1236,6 +1329,23 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--rename-map-json", default=None)
 
+    parser.add_argument(
+        "--action-to-obs-map-csv",
+        default=None,
+        help=(
+            "CSV containing action -> observation_state affine mapping. "
+            "Required for correct predicted-action FK."
+        ),
+    )
+    parser.add_argument(
+        "--allow-raw-action-fk",
+        action="store_true",
+        help=(
+            "Allow raw action_values to be used directly for FK. "
+            "Only use this for debugging; do not use it for paper plots."
+        ),
+    )
+
     parser.add_argument("--sequence-chunks", default="0,1,2", help="Chunk observation sequence to feed, e.g. 0,1,2.")
     parser.add_argument("--decision-index", type=int, default=-1, help="Which sequence position to treat as the lift-decision action. -1 means final observation.")
     parser.add_argument("--exact-episode", type=int, default=None, help="Episode used for exact sequence repeat. Default: first available episode.")
@@ -1250,6 +1360,15 @@ def main() -> None:
     parser.add_argument("--reset-seed-each-trial", action="store_true")
 
     args = parser.parse_args()
+
+    action_to_obs_map = load_action_to_obs_mapping(args.action_to_obs_map_csv)
+
+    if action_to_obs_map is None and not args.allow_raw_action_fk:
+        raise RuntimeError(
+            "Refusing to compute predicted EEF height from raw action_values. "
+            "Pass --action-to-obs-map-csv <mapping.csv>. "
+            "Only pass --allow-raw-action-fk for debugging, not for paper plots."
+        )
 
     out_dir = Path(args.out)
     plot_dir = out_dir / "plots"
@@ -1304,8 +1423,18 @@ def main() -> None:
         decision_index=args.decision_index,
     )
 
-    exact_all_steps = add_predicted_action_fk_eef_z(exact_all_steps, mj_model, mj_data)
-    exact_final = add_predicted_action_fk_eef_z(exact_final, mj_model, mj_data)
+    exact_all_steps = add_predicted_action_fk_eef_z(
+        exact_all_steps,
+        mj_model,
+        mj_data,
+        action_to_obs_map=action_to_obs_map,
+    )
+    exact_final = add_predicted_action_fk_eef_z(
+        exact_final,
+        mj_model,
+        mj_data,
+        action_to_obs_map=action_to_obs_map,
+    )
 
     exact_all_steps.to_csv(out_dir / "sequence_exact_all_step_actions.csv", index=False)
     exact_final.to_csv(out_dir / "sequence_exact_decision_action_trials.csv", index=False)
@@ -1333,6 +1462,7 @@ def main() -> None:
         chunk_steps=args.chunk_steps,
         mj_model=mj_model,
         mj_data=mj_data,
+        action_to_obs_map=action_to_obs_map,
     )
     predicted_chunk_consistency = summarize_chunk_repeat_consistency(predicted_chunk_trials)
     predicted_chunk_max_eef_summary = summarize_chunk_max_eef_repeat(predicted_chunk_summary)
@@ -1360,6 +1490,7 @@ def main() -> None:
             lift_chunk=args.lift_chunk,
             mj_model=mj_model,
             mj_data=mj_data,
+            action_to_obs_map=action_to_obs_map,
         )
         all_episode_trials.to_csv(out_dir / "sequence_all_episode_decision_action_trials.csv", index=False)
         all_episode_mean.to_csv(out_dir / "sequence_all_episode_decision_action_mean.csv", index=False)

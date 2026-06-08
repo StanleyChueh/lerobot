@@ -1,0 +1,2 @@
+episode_idx,num_pred_points,num_actual_points,pred_source,actual_source,chunk_index,delay,actual_window,pred_max_fk_z_m,actual_max_fk_z_m,diff_max_m,diff_max_cm,pred_p95_fk_z_m,actual_p95_fk_z_m,diff_p95_cm,pred_top5_mean_fk_z_m,actual_top5_mean_fk_z_m,diff_top5_mean_cm
+0,50,50,sent_action,observation_state,2,4,chunk,0.13971292726862497,0.13719628382469617,0.0025166434439287955,0.25166434439287955,0.1387330514322098,0.1369216693124517,0.18113821197580926,0.13905878953848202,0.13692025250293358,0.2138537035548449

@@ -438,6 +438,56 @@ def make_debug_run_dir(root: str = "debug_runs") -> Path:
     print(f"[DEBUG] Saving debug files to: {run_dir.resolve()}")
     return run_dir
 
+def find_full_policy_action_chunk(policy, fallback_action_values=None):
+    """
+    Try to find the full generated action chunk inside the policy.
+    Returns None if only the one-step action is available.
+    """
+    candidate_names = [
+        "_debug_last_action_chunk",
+        "debug_last_action_chunk",
+        "_last_action_chunk",
+        "last_action_chunk",
+        "_action_chunk",
+        "action_chunk",
+        "_action_queue",
+        "action_queue",
+        "_actions",
+        "actions",
+    ]
+
+    for name in candidate_names:
+        if not hasattr(policy, name):
+            continue
+
+        try:
+            v = getattr(policy, name)
+        except Exception:
+            continue
+
+        if v is None:
+            continue
+
+        try:
+            if hasattr(v, "detach"):
+                arr = v.detach().cpu()
+            elif isinstance(v, np.ndarray):
+                arr = torch.as_tensor(v.copy())
+            elif isinstance(v, list):
+                arr = torch.as_tensor(np.asarray(v))
+            else:
+                continue
+
+            # Accept [T, 6] or [1, T, 6]
+            if arr.ndim == 3 and arr.shape[0] == 1 and arr.shape[-1] >= 6:
+                return arr[0, :, :6].clone()
+            if arr.ndim == 2 and arr.shape[-1] >= 6 and arr.shape[0] > 1:
+                return arr[:, :6].clone()
+        except Exception:
+            continue
+
+    return None
+
 
 def save_debug_observation_frame(
     observation_frame,
@@ -632,6 +682,84 @@ def clone_action_value_for_save(value):
         pass
 
     return value
+
+TRACE_JOINT_KEYS = [
+    "shoulder_pan.pos",
+    "shoulder_lift.pos",
+    "elbow_flex.pos",
+    "wrist_flex.pos",
+    "wrist_roll.pos",
+    "gripper.pos",
+]
+
+def extract_joint_vector_from_dict(d, joint_keys=TRACE_JOINT_KEYS):
+    """
+    Extract [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]
+    from a raw/processed robot observation or action dict.
+    Returns None if the dict does not contain all joint keys.
+    """
+    if not isinstance(d, dict):
+        return None
+
+    if not all(k in d for k in joint_keys):
+        return None
+
+    vals = []
+    for k in joint_keys:
+        v = d[k]
+        if hasattr(v, "detach"):
+            v = v.detach().cpu().numpy()
+        arr = np.asarray(v).reshape(-1)
+        vals.append(float(arr[0]))
+
+    return np.asarray(vals, dtype=np.float32)
+
+
+def extract_state_vector_from_frame(frame):
+    """
+    Extract observation.state from a dataset observation_frame.
+    """
+    if not isinstance(frame, dict):
+        return None
+
+    for key in ["observation.state", "state"]:
+        if key in frame:
+            v = frame[key]
+            if hasattr(v, "detach"):
+                v = v.detach().cpu().numpy()
+            return np.asarray(v, dtype=np.float32).reshape(-1)[:6]
+
+    return None
+
+
+def build_state_source_debug(raw_obs, obs_processed, observation_frame, sent_action):
+    """
+    Store compact state-source diagnostics without saving camera images.
+    This is used to find where wrist_flex becomes constant 100.0.
+    """
+    raw_joint_vec = extract_joint_vector_from_dict(raw_obs)
+    processed_joint_vec = extract_joint_vector_from_dict(obs_processed)
+    frame_state_vec = extract_state_vector_from_frame(observation_frame)
+    sent_action_vec = extract_joint_vector_from_dict(sent_action)
+
+    out = {
+        "raw_joint_vec": clone_action_value_for_save(raw_joint_vec) if raw_joint_vec is not None else None,
+        "processed_joint_vec": clone_action_value_for_save(processed_joint_vec) if processed_joint_vec is not None else None,
+        "frame_state_vec": clone_action_value_for_save(frame_state_vec) if frame_state_vec is not None else None,
+        "sent_action_vec": clone_action_value_for_save(sent_action_vec) if sent_action_vec is not None else None,
+    }
+
+    # Convenience scalar fields for quick debugging.
+    if raw_joint_vec is not None:
+        out["raw_wrist_flex"] = float(raw_joint_vec[3])
+    if processed_joint_vec is not None:
+        out["processed_wrist_flex"] = float(processed_joint_vec[3])
+    if frame_state_vec is not None:
+        out["frame_state_wrist_flex"] = float(frame_state_vec[3])
+    if sent_action_vec is not None:
+        out["sent_action_wrist_flex"] = float(sent_action_vec[3])
+
+    return out
 
 
 def extract_observation_state_for_replay_log(obs_processed, observation_frame=None):
@@ -1319,6 +1447,15 @@ def record_loop(
         # Get robot observation
         obs_t0 = time.perf_counter()
         obs = robot.get_observation()
+
+        raw_obs_for_trace = {
+            k: clone_action_value_for_save(v)
+            for k, v in obs.items()
+            if not str(k).startswith("observation.images.")
+            and not str(k).startswith("image")
+            and "camera" not in str(k)
+        }
+
         obs_ms = (time.perf_counter() - obs_t0) * 1000.0
         if smoothed_obs_ms is None:
             smoothed_obs_ms = obs_ms
@@ -1436,6 +1573,22 @@ def record_loop(
                 robot_type=robot.robot_type,
             )
 
+            if getattr(policy, "_debug_just_generated_chunk", False):
+                print("\n[DEBUG][POLICY ATTRS] possible action chunk attributes:")
+                for name in dir(policy):
+                    low = name.lower()
+                    if "action" in low or "chunk" in low or "queue" in low:
+                        try:
+                            v = getattr(policy, name)
+                            shape = None
+                            if hasattr(v, "shape"):
+                                shape = tuple(v.shape)
+                            elif hasattr(v, "__len__") and not isinstance(v, str):
+                                shape = f"len={len(v)}"
+                            print(f"  {name}: type={type(v)}, shape={shape}")
+                        except Exception as exc:
+                            print(f"  {name}: <error {exc}>")
+
             raw_policy_action_values = clone_action_value_for_save(action_values)
 
             if getattr(policy, "_debug_just_generated_chunk", False):
@@ -1471,11 +1624,20 @@ def record_loop(
                             f"Captured steps: {len(fixed_capture_actions)}"
                         )
 
+                online_full_action_chunk = find_full_policy_action_chunk(
+                    policy,
+                    fallback_action_values=action_values,
+                )
+
                 pending_debug_observation_frames.append(
                     (
                         chunk_id,
                         clone_debug_observation_frame(observation_frame),
-                        clone_debug_value(action_values),
+                        {
+                            "executed_first_action": clone_debug_value(action_values),
+                            "online_full_action_chunk": clone_debug_value(online_full_action_chunk)
+                                if online_full_action_chunk is not None else None,
+                        },
                     )
                 )
 
@@ -1673,6 +1835,31 @@ def record_loop(
                 observation_frame=observation_frame if "observation_frame" in locals() else None,
             )
 
+            state_source_debug = build_state_source_debug(
+                raw_obs=raw_obs_for_trace if "raw_obs_for_trace" in locals() else None,
+                obs_processed=obs_processed,
+                observation_frame=observation_frame if "observation_frame" in locals() else None,
+                sent_action=_sent_action,
+            )
+
+            leader_action_for_trace = None
+            leader_wrist_flex_for_trace = None
+
+            try:
+                if teleop is not None:
+                    leader_action_for_trace = teleop.get_action()
+
+                    if isinstance(leader_action_for_trace, dict) and "wrist_flex.pos" in leader_action_for_trace:
+                        v = leader_action_for_trace["wrist_flex.pos"]
+                        if hasattr(v, "detach"):
+                            v = v.detach().cpu().numpy()
+                        leader_wrist_flex_for_trace = float(np.asarray(v).reshape(-1)[0])
+
+            except Exception as exc:
+                leader_action_for_trace = {"error": str(exc)}
+                leader_wrist_flex_for_trace = None
+                
+
             pending_policy_action_trace.append(
                 {
                     "trace_step": trace_step_idx,
@@ -1683,6 +1870,9 @@ def record_loop(
                     "observation_state": clone_action_value_for_save(
                         observation_state
                     ) if observation_state is not None else None,
+
+                    # Extra diagnostic: where did each joint state come from?
+                    "state_source_debug": state_source_debug,
 
                     # Policy output before robot mapping.
                     "policy_action_values": clone_action_value_for_save(raw_policy_action_values),
@@ -1699,6 +1889,11 @@ def record_loop(
                     "sent_action": clone_action_value_for_save(_sent_action),
 
                     "task": task_holder["text"] if task_holder is not None else None,
+
+                    "leader_action": clone_action_value_for_save(leader_action_for_trace)
+                        if leader_action_for_trace is not None else None,
+                    "leader_wrist_flex": leader_wrist_flex_for_trace,
+
                 }
             )
 

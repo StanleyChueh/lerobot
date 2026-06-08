@@ -16,7 +16,7 @@ intervention_name = high_transport
 alpha = 6.0
 sequence_chunks = 0,1
 decision_index = -1
-repeat_exact_sequence = 100
+repeat_exact_sequence = 10
 repeat_per_episode_sequence = 1
 ```
 

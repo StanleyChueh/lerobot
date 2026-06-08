@@ -695,6 +695,211 @@ def summarize_episodes(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values("episode_idx")
 
 
+
+
+def derive_trajectory_labels_from_eef_distribution(
+    metrics: pd.DataFrame,
+    mode: str = "kmeans",
+    low_quantile: float = 0.33,
+    high_quantile: float = 0.67,
+    min_cluster_gap: float = 0.005,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Derive high/low trajectory pseudo-labels by scanning all episode eef_z_max values.
+
+    This uses a GLOBAL distribution split, not a per-grid-cell split. Per-cell
+    splitting would hide cells that are missing either high or low demos.
+    """
+    if "eef_z_max" not in metrics.columns:
+        raise ValueError("metrics must contain eef_z_max before deriving high/low labels")
+
+    out = metrics.copy()
+    z = out["eef_z_max"].astype(float)
+    valid = z.notna() & np.isfinite(z)
+
+    if int(valid.sum()) < 2:
+        raise RuntimeError("Need at least two valid eef_z_max values to derive high/low labels")
+
+    z_valid = z[valid].to_numpy(dtype=np.float64)
+    mode = str(mode).lower().strip()
+
+    if mode == "kmeans":
+        # Dependency-free 1D k-means with k=2. No hard-coded EEF threshold.
+        c_low = float(np.percentile(z_valid, 25))
+        c_high = float(np.percentile(z_valid, 75))
+
+        for _ in range(100):
+            d_low = np.abs(z_valid - c_low)
+            d_high = np.abs(z_valid - c_high)
+            assign_high = d_high < d_low
+
+            if assign_high.all() or (~assign_high).all():
+                break
+
+            new_low = float(z_valid[~assign_high].mean())
+            new_high = float(z_valid[assign_high].mean())
+
+            if abs(new_low - c_low) < 1e-12 and abs(new_high - c_high) < 1e-12:
+                break
+
+            c_low, c_high = new_low, new_high
+
+        if c_low > c_high:
+            c_low, c_high = c_high, c_low
+
+        threshold = float((c_low + c_high) / 2.0)
+        out["trajectory_label"] = "unknown"
+        out.loc[valid & (z < threshold), "trajectory_label"] = "low"
+        out.loc[valid & (z >= threshold), "trajectory_label"] = "high"
+
+        quality_note = "ok"
+        if abs(c_high - c_low) < float(min_cluster_gap):
+            quality_note = "weak_separation_check_manually"
+
+        summary_rows = [{
+            "label_mode": mode,
+            "eef_label_threshold_m": threshold,
+            "eef_low_cluster_center_m": float(c_low),
+            "eef_high_cluster_center_m": float(c_high),
+            "eef_cluster_gap_m": float(c_high - c_low),
+            "min_cluster_gap_m": float(min_cluster_gap),
+            "quality_note": quality_note,
+        }]
+
+    elif mode == "median":
+        threshold = float(np.median(z_valid))
+        out["trajectory_label"] = "unknown"
+        out.loc[valid & (z < threshold), "trajectory_label"] = "low"
+        out.loc[valid & (z >= threshold), "trajectory_label"] = "high"
+        summary_rows = [{
+            "label_mode": mode,
+            "eef_label_threshold_m": threshold,
+            "eef_low_cluster_center_m": np.nan,
+            "eef_high_cluster_center_m": np.nan,
+            "eef_cluster_gap_m": np.nan,
+            "min_cluster_gap_m": float(min_cluster_gap),
+            "quality_note": "median_split_no_cluster_quality",
+        }]
+
+    elif mode == "quantile":
+        low_thr = float(np.quantile(z_valid, low_quantile))
+        high_thr = float(np.quantile(z_valid, high_quantile))
+        out["trajectory_label"] = "mid"
+        out.loc[valid & (z <= low_thr), "trajectory_label"] = "low"
+        out.loc[valid & (z >= high_thr), "trajectory_label"] = "high"
+        out.loc[~valid, "trajectory_label"] = "unknown"
+        summary_rows = [{
+            "label_mode": mode,
+            "eef_label_threshold_m": np.nan,
+            "eef_low_threshold_m": low_thr,
+            "eef_high_threshold_m": high_thr,
+            "eef_low_cluster_center_m": np.nan,
+            "eef_high_cluster_center_m": np.nan,
+            "eef_cluster_gap_m": float(high_thr - low_thr),
+            "min_cluster_gap_m": float(min_cluster_gap),
+            "quality_note": "quantile_extremes_mid_excluded",
+        }]
+
+    else:
+        raise ValueError(f"Unknown --eef-label-mode: {mode}")
+
+    counts = out["trajectory_label"].value_counts(dropna=False).to_dict()
+    for row in summary_rows:
+        row["num_low"] = int(counts.get("low", 0))
+        row["num_high"] = int(counts.get("high", 0))
+        row["num_mid"] = int(counts.get("mid", 0))
+        row["num_unknown"] = int(counts.get("unknown", 0))
+
+    label_summary = pd.DataFrame(summary_rows)
+
+    print("\n=== Derived trajectory labels from global eef_z_max distribution ===")
+    print(label_summary.to_string(index=False))
+    print(out[["episode_idx", "eef_z_max", "trajectory_label"]].sort_values("eef_z_max").to_string(index=False))
+
+    return out, label_summary
+
+
+def high_low_stats_for_group(g: pd.DataFrame) -> dict[str, Any]:
+    """
+    Shared high/low balance statistics for fixed-grid cells and auto-regions.
+
+    High/low labels should already be assigned globally from eef_z_max distribution.
+    Do not split high/low inside each cell, because that would hide imbalance.
+    """
+    if "trajectory_label" not in g.columns:
+        n_total = int(len(g))
+        return {
+            "num_high": 0,
+            "num_low": 0,
+            "num_mid": 0,
+            "num_unknown_label": n_total,
+            "matched_pairs": 0,
+            "high_low_balance_ratio": np.nan,
+            "high_low_imbalance": np.nan,
+            "missing_high_low_pair_flag": 1 if n_total > 0 else 0,
+            "high_eef_z_max_mean": np.nan,
+            "low_eef_z_max_mean": np.nan,
+            "high_eef_z_max_std": np.nan,
+            "low_eef_z_max_std": np.nan,
+            "high_minus_low_eef_gap": np.nan,
+            "high_episode_ids": "",
+            "low_episode_ids": "",
+        }
+
+    labels = g["trajectory_label"].astype(str).str.lower().str.strip()
+
+    high = g[labels == "high"].copy()
+    low = g[labels == "low"].copy()
+    mid = g[labels == "mid"].copy()
+    unk = g[labels == "unknown"].copy()
+
+    n_high = int(len(high))
+    n_low = int(len(low))
+    n_total = int(len(g))
+
+    high_mean = float(high["eef_z_max"].mean()) if n_high > 0 else np.nan
+    low_mean = float(low["eef_z_max"].mean()) if n_low > 0 else np.nan
+
+    high_std = float(high["eef_z_max"].std(ddof=0)) if n_high > 0 else np.nan
+    low_std = float(low["eef_z_max"].std(ddof=0)) if n_low > 0 else np.nan
+
+    matched_pairs = int(min(n_high, n_low))
+
+    if max(n_high, n_low) > 0:
+        balance_ratio = float(min(n_high, n_low) / max(n_high, n_low))
+    else:
+        balance_ratio = np.nan
+
+    if n_high + n_low > 0:
+        high_low_imbalance = float(abs(n_high - n_low) / max(n_high + n_low, 1))
+    else:
+        high_low_imbalance = np.nan
+
+    missing_pair_flag = 1 if n_total > 0 and (n_high == 0 or n_low == 0) else 0
+
+    if n_high > 0 and n_low > 0:
+        high_low_gap = float(high_mean - low_mean)
+    else:
+        high_low_gap = np.nan
+
+    return {
+        "num_high": n_high,
+        "num_low": n_low,
+        "num_mid": int(len(mid)),
+        "num_unknown_label": int(len(unk)),
+        "matched_pairs": matched_pairs,
+        "high_low_balance_ratio": balance_ratio,
+        "high_low_imbalance": high_low_imbalance,
+        "missing_high_low_pair_flag": missing_pair_flag,
+        "high_eef_z_max_mean": high_mean,
+        "low_eef_z_max_mean": low_mean,
+        "high_eef_z_max_std": high_std,
+        "low_eef_z_max_std": low_std,
+        "high_minus_low_eef_gap": high_low_gap,
+        "high_episode_ids": ",".join(str(int(x)) for x in sorted(high["episode_idx"].tolist())),
+        "low_episode_ids": ",".join(str(int(x)) for x in sorted(low["episode_idx"].tolist())),
+    }
+
 def summarize_window(df: pd.DataFrame, summary: pd.DataFrame, offsets: tuple[int, int]) -> pd.DataFrame:
     peak_map = summary.set_index("episode_idx")["peak_episode_step"].to_dict()
     rows = []
@@ -791,6 +996,7 @@ def grid_cell_summary(metrics: pd.DataFrame, grid_cols: int, grid_rows: int) -> 
                     "prelift_elbow_range": np.nan,
                     "prelift_gripper_mean": np.nan,
                     "prelift_gripper_std": np.nan,
+                    **high_low_stats_for_group(g),
                 })
                 continue
 
@@ -821,10 +1027,10 @@ def grid_cell_summary(metrics: pd.DataFrame, grid_cols: int, grid_rows: int) -> 
                 "prelift_elbow_range": float(elbow.max() - elbow.min()),
                 "prelift_gripper_mean": float(g["action.gripper.pos.mean"].mean()),
                 "prelift_gripper_std": float(g["action.gripper.pos.mean"].std(ddof=0)),
+                **high_low_stats_for_group(g),
             })
 
     return pd.DataFrame(rows)
-
 
 def make_grid_advice(
     grid: pd.DataFrame,
@@ -833,6 +1039,7 @@ def make_grid_advice(
     max_eef_range: float,
     max_wrist_iqr: float,
     max_elbow_iqr: float,
+    min_episodes_per_label_cell: int = 1,
 ) -> pd.DataFrame:
     rows = []
 
@@ -852,6 +1059,19 @@ def make_grid_advice(
             flags.append("LOW_COUNT")
             advice.append(f"resume recording: add at least {min_episodes_per_cell - n} demos in this cell")
             severity = max(severity, 2)
+
+        n_high = int(r.get("num_high", 0)) if pd.notna(r.get("num_high", np.nan)) else 0
+        n_low = int(r.get("num_low", 0)) if pd.notna(r.get("num_low", np.nan)) else 0
+
+        if n > 0:
+            if n_high < min_episodes_per_label_cell:
+                flags.append("MISSING_OR_LOW_HIGH")
+                advice.append(f"add at least {min_episodes_per_label_cell - n_high} high-EEF demos in this cell")
+                severity = max(severity, 3)
+            if n_low < min_episodes_per_label_cell:
+                flags.append("MISSING_OR_LOW_LOW")
+                advice.append(f"add at least {min_episodes_per_label_cell - n_low} low-EEF demos in this cell")
+                severity = max(severity, 3)
 
         if n >= 2:
             if pd.notna(r["eef_z_max_std"]) and r["eef_z_max_std"] > max_eef_std:
@@ -883,7 +1103,7 @@ def make_grid_advice(
         elif "LOW_COUNT" in flags and len(flags) == 1:
             status = "RESUME_RECORDING"
             advice_text = "; ".join(advice)
-        elif any(f in flags for f in ["WRIST_MULTIMODAL", "ELBOW_MULTIMODAL", "HIGH_EEF_RANGE"]):
+        elif any(f in flags for f in ["MISSING_OR_LOW_HIGH", "MISSING_OR_LOW_LOW", "WRIST_MULTIMODAL", "ELBOW_MULTIMODAL", "HIGH_EEF_RANGE"]):
             status = "CURATE_OR_RERECORD"
             advice_text = "; ".join(advice)
         else:
@@ -900,6 +1120,15 @@ def make_grid_advice(
             "advice": advice_text,
             "num_episodes": n,
             "episode_ids": r.get("episode_ids", ""),
+            "num_high": n_high,
+            "num_low": n_low,
+            "matched_pairs": r.get("matched_pairs", np.nan),
+            "high_low_balance_ratio": r.get("high_low_balance_ratio", np.nan),
+            "high_low_imbalance": r.get("high_low_imbalance", np.nan),
+            "missing_high_low_pair_flag": r.get("missing_high_low_pair_flag", np.nan),
+            "high_minus_low_eef_gap": r.get("high_minus_low_eef_gap", np.nan),
+            "high_episode_ids": r.get("high_episode_ids", ""),
+            "low_episode_ids": r.get("low_episode_ids", ""),
             "eef_z_max_mean": r["eef_z_max_mean"],
             "eef_z_max_std": r["eef_z_max_std"],
             "eef_z_max_range": r["eef_z_max_range"],
@@ -1271,6 +1500,7 @@ def auto_region_summary(metrics: pd.DataFrame) -> pd.DataFrame:
     for region_id, g in metrics.groupby("auto_region_id"):
         wrist = g["action.wrist_flex.pos.mean"]
         elbow = g["action.elbow_flex.pos.mean"]
+        hl_stats = high_low_stats_for_group(g)
 
         rows.append({
             "auto_region_id": region_id,
@@ -1299,6 +1529,7 @@ def auto_region_summary(metrics: pd.DataFrame) -> pd.DataFrame:
             "prelift_elbow_range": float(elbow.max() - elbow.min()),
             "prelift_gripper_mean": float(g["action.gripper.pos.mean"].mean()),
             "prelift_gripper_std": float(g["action.gripper.pos.mean"].std(ddof=0)),
+            **hl_stats,
         })
 
     return pd.DataFrame(rows).sort_values("auto_region_idx")
@@ -1311,6 +1542,7 @@ def make_auto_region_advice(
     max_eef_range: float,
     max_wrist_iqr: float,
     max_elbow_iqr: float,
+    min_episodes_per_label_cell: int = 1,
 ) -> pd.DataFrame:
     rows = []
 
@@ -1326,6 +1558,19 @@ def make_auto_region_advice(
             flags.append("LOW_COUNT")
             advice.append(f"resume recording: add at least {needed} demos around this data-driven region")
             severity = max(severity, 2)
+
+        n_high = int(r.get("num_high", 0)) if pd.notna(r.get("num_high", np.nan)) else 0
+        n_low = int(r.get("num_low", 0)) if pd.notna(r.get("num_low", np.nan)) else 0
+
+        if n > 0:
+            if n_high < min_episodes_per_label_cell:
+                flags.append("MISSING_OR_LOW_HIGH")
+                advice.append(f"add at least {min_episodes_per_label_cell - n_high} high-EEF demos around this region")
+                severity = max(severity, 3)
+            if n_low < min_episodes_per_label_cell:
+                flags.append("MISSING_OR_LOW_LOW")
+                advice.append(f"add at least {min_episodes_per_label_cell - n_low} low-EEF demos around this region")
+                severity = max(severity, 3)
 
         if n >= 2:
             if pd.notna(r["eef_z_max_std"]) and r["eef_z_max_std"] > max_eef_std:
@@ -1354,7 +1599,7 @@ def make_auto_region_advice(
         elif "LOW_COUNT" in flags and len(flags) == 1:
             status = "RESUME_RECORDING"
             advice_text = "; ".join(advice)
-        elif any(f in flags for f in ["WRIST_MULTIMODAL", "ELBOW_MULTIMODAL", "HIGH_EEF_RANGE"]):
+        elif any(f in flags for f in ["MISSING_OR_LOW_HIGH", "MISSING_OR_LOW_LOW", "WRIST_MULTIMODAL", "ELBOW_MULTIMODAL", "HIGH_EEF_RANGE"]):
             status = "CURATE_OR_RERECORD"
             advice_text = "; ".join(advice)
         else:
@@ -1371,6 +1616,15 @@ def make_auto_region_advice(
             "needed_demos": int(needed),
             "num_episodes": n,
             "episode_ids": r["episode_ids"],
+            "num_high": n_high,
+            "num_low": n_low,
+            "matched_pairs": r.get("matched_pairs", np.nan),
+            "high_low_balance_ratio": r.get("high_low_balance_ratio", np.nan),
+            "high_low_imbalance": r.get("high_low_imbalance", np.nan),
+            "missing_high_low_pair_flag": r.get("missing_high_low_pair_flag", np.nan),
+            "high_minus_low_eef_gap": r.get("high_minus_low_eef_gap", np.nan),
+            "high_episode_ids": r.get("high_episode_ids", ""),
+            "low_episode_ids": r.get("low_episode_ids", ""),
             "center_cx": r["center_cx"],
             "center_cy": r["center_cy"],
             "eef_z_max_mean": r["eef_z_max_mean"],
@@ -1677,6 +1931,126 @@ def plot_grid_recording_gap_overlay_on_rgb(
     plt.close()
 
 
+def plot_grid_high_low_balance_overlay_on_rgb(
+    background_bgr: np.ndarray | None,
+    roi: tuple[int, int, int, int],
+    grid: pd.DataFrame,
+    grid_cols: int,
+    grid_rows: int,
+    out_path: Path,
+) -> None:
+    """
+    Overlay high/low balance on top-camera RGB.
+
+    Each grid cell shows:
+      H=<num_high>
+      L=<num_low>
+      pair=<matched_pairs>
+      bal=<high_low_balance_ratio>
+    """
+    if background_bgr is None:
+        return
+
+    bg_rgb = cv2.cvtColor(background_bgr, cv2.COLOR_BGR2RGB)
+
+    x1, y1, x2, y2 = roi
+    cell_w = (x2 - x1) / float(grid_cols)
+    cell_h = (y2 - y1) / float(grid_rows)
+
+    fig, ax = plt.subplots(figsize=(10, 8))
+    ax.imshow(bg_rgb)
+    ax.set_title("High/low trajectory balance over top-camera RGB")
+
+    ax.add_patch(
+        Rectangle(
+            (x1, y1),
+            x2 - x1,
+            y2 - y1,
+            fill=False,
+            edgecolor="cyan",
+            linewidth=2.5,
+        )
+    )
+
+    for _, r in grid.iterrows():
+        gx = int(r["grid_x"])
+        gy = int(r["grid_y"])
+        px = x1 + gx * cell_w
+        py = y1 + gy * cell_h
+
+        n = int(r.get("num_episodes", 0))
+        n_high = int(r.get("num_high", 0)) if pd.notna(r.get("num_high", np.nan)) else 0
+        n_low = int(r.get("num_low", 0)) if pd.notna(r.get("num_low", np.nan)) else 0
+        matched = int(r.get("matched_pairs", 0)) if pd.notna(r.get("matched_pairs", np.nan)) else 0
+        balance = r.get("high_low_balance_ratio", np.nan)
+        missing_pair = int(r.get("missing_high_low_pair_flag", 0)) if pd.notna(r.get("missing_high_low_pair_flag", np.nan)) else 0
+
+        if n == 0:
+            facecolor = (0.0, 0.0, 0.0, 0.15)
+            edgecolor = "white"
+            linewidth = 1.0
+            label = "empty"
+        elif missing_pair:
+            facecolor = (1.0, 0.0, 0.0, 0.35)
+            edgecolor = "red"
+            linewidth = 2.5
+            label = f"H={n_high}\nL={n_low}\npair={matched}\nMISSING"
+        elif pd.notna(balance) and balance < 0.5:
+            facecolor = (1.0, 0.6, 0.0, 0.35)
+            edgecolor = "orange"
+            linewidth = 2.0
+            label = f"H={n_high}\nL={n_low}\npair={matched}\nbal={balance:.2f}"
+        else:
+            facecolor = (0.0, 1.0, 0.0, 0.18)
+            edgecolor = "white"
+            linewidth = 1.2
+            label = f"H={n_high}\nL={n_low}\npair={matched}\nbal={balance:.2f}" if pd.notna(balance) else f"H={n_high}\nL={n_low}"
+
+        ax.add_patch(
+            Rectangle(
+                (px, py),
+                cell_w,
+                cell_h,
+                facecolor=facecolor,
+                edgecolor=edgecolor,
+                linewidth=linewidth,
+            )
+        )
+
+        ax.text(
+            px + cell_w / 2.0,
+            py + cell_h / 2.0,
+            label,
+            ha="center",
+            va="center",
+            fontsize=8,
+            color="white",
+            fontweight="bold",
+            bbox=dict(
+                boxstyle="round,pad=0.22",
+                facecolor="black",
+                alpha=0.45,
+                edgecolor="none",
+            ),
+        )
+
+    for i in range(grid_cols + 1):
+        x = x1 + (x2 - x1) * i / grid_cols
+        ax.plot([x, x], [y1, y2], color="cyan", linewidth=0.8, alpha=0.8)
+
+    for j in range(grid_rows + 1):
+        y = y1 + (y2 - y1) * j / grid_rows
+        ax.plot([x1, x2], [y, y], color="cyan", linewidth=0.8, alpha=0.8)
+
+    ax.set_xlim(0, bg_rgb.shape[1])
+    ax.set_ylim(bg_rgb.shape[0], 0)
+    ax.set_xlabel("image x")
+    ax.set_ylabel("image y")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=180)
+    plt.close()
+
+
 def plot_auto_region_recording_gap_overlay_on_rgb(
     background_bgr: np.ndarray | None,
     roi: tuple[int, int, int, int],
@@ -1867,6 +2241,48 @@ def make_plots(
         plot_dir / "grid_count_heatmap.png",
         value_format=".0f",
     )
+    if "num_high" in grid.columns and "num_low" in grid.columns:
+        save_heatmap(
+            matrix_from_grid(grid, "num_high", grid_cols, grid_rows),
+            "Number of high-EEF demos per fixed grid cell",
+            plot_dir / "grid_high_count_heatmap.png",
+            value_format=".0f",
+        )
+
+        save_heatmap(
+            matrix_from_grid(grid, "num_low", grid_cols, grid_rows),
+            "Number of low-EEF demos per fixed grid cell",
+            plot_dir / "grid_low_count_heatmap.png",
+            value_format=".0f",
+        )
+
+        save_heatmap(
+            matrix_from_grid(grid, "matched_pairs", grid_cols, grid_rows),
+            "Matched high/low pairs per fixed grid cell",
+            plot_dir / "grid_matched_pairs_heatmap.png",
+            value_format=".0f",
+        )
+
+        save_heatmap(
+            matrix_from_grid(grid, "high_low_balance_ratio", grid_cols, grid_rows),
+            "High/low balance ratio per fixed grid cell",
+            plot_dir / "grid_high_low_balance_heatmap.png",
+            value_format=".2f",
+        )
+
+        save_heatmap(
+            matrix_from_grid(grid, "high_low_imbalance", grid_cols, grid_rows),
+            "High/low imbalance per fixed grid cell",
+            plot_dir / "grid_high_low_imbalance_heatmap.png",
+            value_format=".2f",
+        )
+
+        save_heatmap(
+            matrix_from_grid(grid, "missing_high_low_pair_flag", grid_cols, grid_rows),
+            "Missing high/low pair flag per fixed grid cell",
+            plot_dir / "grid_missing_high_low_pair_heatmap.png",
+            value_format=".0f",
+        )
     save_heatmap(
         matrix_from_grid(grid, "eef_z_max_range", grid_cols, grid_rows),
         "EEF peak height range per fixed grid cell",
@@ -1901,6 +2317,15 @@ def make_plots(
         grid_rows=grid_rows,
         min_episodes_per_cell=min_episodes_per_cell,
         out_path=plot_dir / "grid_recording_gap_overlay.png",
+    )
+
+    plot_grid_high_low_balance_overlay_on_rgb(
+        background_bgr=background_bgr,
+        roi=roi,
+        grid=grid,
+        grid_cols=grid_cols,
+        grid_rows=grid_rows,
+        out_path=plot_dir / "grid_high_low_balance_overlay.png",
     )
 
     if not auto_region_summary_df.empty:
@@ -1995,6 +2420,7 @@ def write_report(
     lines.append("")
     auto_cols = [
         "auto_region_id", "status", "flags", "needed_demos", "num_episodes",
+        "num_high", "num_low", "high_low_balance_ratio",
         "eef_z_max_range", "prelift_wrist_iqr", "prelift_elbow_iqr",
         "episode_ids", "advice",
     ]
@@ -2009,6 +2435,7 @@ def write_report(
     lines.append("")
     advice_cols = [
         "grid_id", "grid_x", "grid_y", "status", "flags", "num_episodes",
+        "num_high", "num_low", "high_low_balance_ratio",
         "eef_z_max_range", "prelift_wrist_iqr", "prelift_elbow_iqr", "episode_ids", "advice",
     ]
     lines.append("```")
@@ -2018,7 +2445,7 @@ def write_report(
     lines.append("## Data-driven auto-region metrics")
     lines.append("")
     auto_metric_cols = [
-        "auto_region_id", "num_episodes", "episode_ids",
+        "auto_region_id", "num_episodes", "num_high", "num_low", "high_low_balance_ratio", "episode_ids",
         "center_cx", "center_cy",
         "eef_z_max_mean", "eef_z_max_std", "eef_z_max_range",
         "prelift_wrist_mean", "prelift_wrist_iqr",
@@ -2034,7 +2461,7 @@ def write_report(
     lines.append("## Fixed-grid metrics")
     lines.append("")
     grid_cols = [
-        "grid_id", "num_episodes", "episode_ids",
+        "grid_id", "num_episodes", "num_high", "num_low", "high_low_balance_ratio", "episode_ids",
         "eef_z_max_mean", "eef_z_max_std", "eef_z_max_range",
         "prelift_wrist_mean", "prelift_wrist_iqr",
         "prelift_elbow_mean", "prelift_elbow_iqr",
@@ -2108,6 +2535,12 @@ def main() -> None:
     parser.add_argument("--max-elbow-iqr", type=float, default=15.0)
     parser.add_argument("--outlier-mad-z", type=float, default=2.5)
     parser.add_argument("--min-cell-count-for-outliers", type=int, default=4)
+    parser.add_argument("--episode-label-csv", default=None, help="Optional CSV with episode_idx,trajectory_label. If omitted, labels are derived from global eef_z_max distribution.")
+    parser.add_argument("--eef-label-mode", default="kmeans", choices=["kmeans", "median", "quantile"], help="How to derive high/low pseudo-labels from the global eef_z_max distribution when --episode-label-csv is omitted.")
+    parser.add_argument("--low-quantile", type=float, default=0.33, help="Low quantile used only for --eef-label-mode quantile.")
+    parser.add_argument("--high-quantile", type=float, default=0.67, help="High quantile used only for --eef-label-mode quantile.")
+    parser.add_argument("--min-eef-cluster-gap", type=float, default=0.005, help="Only a quality warning threshold in meters; it is not used to hard-code high/low labels.")
+    parser.add_argument("--min-episodes-per-label-cell", type=int, default=1, help="Minimum high and low demos required per non-empty grid cell/auto-region.")
 
     args = parser.parse_args()
 
@@ -2213,6 +2646,45 @@ def main() -> None:
     metrics = metrics[metrics["found"] == True].copy()
     metrics = assign_grid_cells(metrics, roi=roi, grid_cols=args.grid_cols, grid_rows=args.grid_rows)
 
+    if args.episode_label_csv is not None:
+        label_df = pd.read_csv(args.episode_label_csv)
+        if "episode_index" in label_df.columns and "episode_idx" not in label_df.columns:
+            label_df = label_df.rename(columns={"episode_index": "episode_idx"})
+
+        required = {"episode_idx", "trajectory_label"}
+        missing = required - set(label_df.columns)
+        if missing:
+            raise ValueError(f"episode label CSV missing columns: {missing}")
+
+        label_df["trajectory_label"] = label_df["trajectory_label"].astype(str).str.lower().str.strip()
+        metrics = metrics.merge(
+            label_df[["episode_idx", "trajectory_label"]],
+            on="episode_idx",
+            how="left",
+        )
+
+        if metrics["trajectory_label"].isna().any():
+            missing_eps = metrics.loc[metrics["trajectory_label"].isna(), "episode_idx"].tolist()
+            raise RuntimeError(f"Missing high/low label for episodes: {missing_eps}")
+
+        label_summary = pd.DataFrame([{
+            "label_mode": "csv",
+            "num_low": int((metrics["trajectory_label"] == "low").sum()),
+            "num_high": int((metrics["trajectory_label"] == "high").sum()),
+            "num_mid": int((metrics["trajectory_label"] == "mid").sum()),
+            "num_unknown": int((metrics["trajectory_label"] == "unknown").sum()),
+        }])
+    else:
+        metrics, label_summary = derive_trajectory_labels_from_eef_distribution(
+            metrics,
+            mode=args.eef_label_mode,
+            low_quantile=args.low_quantile,
+            high_quantile=args.high_quantile,
+            min_cluster_gap=args.min_eef_cluster_gap,
+        )
+
+    label_summary.to_csv(out_dir / "trajectory_label_summary.csv", index=False)
+
     points = metrics[["cx", "cy"]].to_numpy(dtype=np.float64)
     selected_k, auto_labels, auto_centers, auto_region_candidates = choose_auto_region_count(
         points=points,
@@ -2236,8 +2708,25 @@ def main() -> None:
         max_eef_range=args.max_eef_range,
         max_wrist_iqr=args.max_wrist_iqr,
         max_elbow_iqr=args.max_elbow_iqr,
+        min_episodes_per_label_cell=args.min_episodes_per_label_cell,
     )
     advice.to_csv(out_dir / "grid_cell_advice.csv", index=False)
+
+    weak_balance = advice[
+        (advice["num_episodes"] > 0)
+        & (
+            advice["flags"].fillna("").str.contains("MISSING_OR_LOW_HIGH")
+            | advice["flags"].fillna("").str.contains("MISSING_OR_LOW_LOW")
+            | (advice["high_low_balance_ratio"].fillna(1.0) < 0.5)
+        )
+    ].copy()
+
+    weak_balance = weak_balance.sort_values(
+        ["missing_high_low_pair_flag", "high_low_balance_ratio", "num_episodes"],
+        ascending=[False, True, False],
+    )
+
+    weak_balance.to_csv(out_dir / "weak_high_low_balance_cells.csv", index=False)
 
     auto_summary = auto_region_summary(metrics)
     auto_summary.to_csv(out_dir / "auto_region_metrics.csv", index=False)
@@ -2249,6 +2738,7 @@ def main() -> None:
         max_eef_range=args.max_eef_range,
         max_wrist_iqr=args.max_wrist_iqr,
         max_elbow_iqr=args.max_elbow_iqr,
+        min_episodes_per_label_cell=args.min_episodes_per_label_cell,
     )
     auto_advice.to_csv(out_dir / "auto_region_advice.csv", index=False)
 
@@ -2346,6 +2836,7 @@ def main() -> None:
     print("Auto-region advice:")
     auto_show_cols = [
         "auto_region_id", "status", "flags", "needed_demos", "num_episodes",
+        "num_high", "num_low", "high_low_balance_ratio",
         "eef_z_max_range", "prelift_wrist_iqr", "prelift_elbow_iqr", "episode_ids",
     ]
     print(auto_advice[auto_show_cols].to_string(index=False))
@@ -2353,6 +2844,7 @@ def main() -> None:
     print("Grid-cell advice:")
     show_cols = [
         "grid_id", "status", "flags", "num_episodes",
+        "num_high", "num_low", "high_low_balance_ratio",
         "eef_z_max_range", "prelift_wrist_iqr", "prelift_elbow_iqr", "episode_ids",
     ]
     print(advice[show_cols].to_string(index=False))
@@ -2368,6 +2860,7 @@ def main() -> None:
     print(f"  - {out_dir / 'dataset_health_summary.json'}")
     print(f"  - {out_dir / 'grid_cell_advice.csv'}")
     print(f"  - {out_dir / 'grid_cell_metrics.csv'}")
+    print(f"  - {out_dir / 'trajectory_label_summary.csv'}")
     print(f"  - {out_dir / 'auto_region_advice.csv'}")
     print(f"  - {out_dir / 'auto_region_metrics.csv'}")
     print(f"  - {out_dir / 'auto_region_k_candidates.csv'}")
@@ -2381,6 +2874,21 @@ def main() -> None:
     print(f"  - {plot_dir / 'auto_region_positions.png'}")
     print(f"  - {plot_dir / 'auto_region_recording_gap_overlay.png'}")
     print(f"  - {overlay_dir}/*.png")
+    weak_balance = advice[
+        (advice["num_episodes"] > 0)
+        & (
+            advice["flags"].fillna("").str.contains("MISSING_OR_LOW_HIGH")
+            | advice["flags"].fillna("").str.contains("MISSING_OR_LOW_LOW")
+            | (advice["high_low_balance_ratio"].fillna(1.0) < 0.5)
+        )
+    ].copy()
+
+    weak_balance = weak_balance.sort_values(
+        ["missing_high_low_pair_flag", "high_low_balance_ratio", "num_episodes"],
+        ascending=[False, True, False],
+    )
+
+    weak_balance.to_csv(out_dir / "weak_high_low_balance_cells.csv", index=False)
 
 
 if __name__ == "__main__":
