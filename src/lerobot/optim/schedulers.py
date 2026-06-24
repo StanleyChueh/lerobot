@@ -91,12 +91,27 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
     peak_lr: float
     decay_lr: float
 
-    def build(self, optimizer: Optimizer, num_training_steps: int) -> LambdaLR:
-        # Auto-scale scheduler parameters if training steps are shorter than configured decay steps
+    def build(
+        self,
+        optimizer: Optimizer,
+        num_training_steps: int,
+        effective_warmup_steps: int | None = None,
+        effective_decay_steps: int | None = None,
+    ) -> LambdaLR:
+        # Auto-scale scheduler parameters if training steps are shorter than configured decay steps.
+        # effective_* params let resume restore the original scaled values instead of recomputing.
         actual_warmup_steps = self.num_warmup_steps
         actual_decay_steps = self.num_decay_steps
 
-        if num_training_steps < self.num_decay_steps:
+        if effective_warmup_steps is not None and effective_decay_steps is not None:
+            # Resuming: use the steps the lambda was originally built with
+            actual_warmup_steps = effective_warmup_steps
+            actual_decay_steps = effective_decay_steps
+            logging.info(
+                f"Restoring LR scheduler effective steps from checkpoint: "
+                f"warmup={actual_warmup_steps}, decay={actual_decay_steps}"
+            )
+        elif num_training_steps < self.num_decay_steps:
             # Calculate scaling factor to fit the schedule into the available training steps
             scale_factor = num_training_steps / self.num_decay_steps
             actual_warmup_steps = int(self.num_warmup_steps * scale_factor)
@@ -129,11 +144,20 @@ class CosineDecayWithWarmupSchedulerConfig(LRSchedulerConfig):
 
             return cosine_decay_schedule(current_step)
 
-        return LambdaLR(optimizer, lr_lambda, -1)
+        scheduler = LambdaLR(optimizer, lr_lambda, -1)
+        # Store effective steps on the scheduler so save_scheduler_state can persist them.
+        scheduler._effective_warmup_steps = actual_warmup_steps
+        scheduler._effective_decay_steps = actual_decay_steps
+        return scheduler
 
 
 def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
     state_dict = scheduler.state_dict()
+    # Persist effective warmup/decay steps so resume can rebuild the same lambda.
+    if hasattr(scheduler, "_effective_warmup_steps"):
+        state_dict["_effective_warmup_steps"] = scheduler._effective_warmup_steps
+    if hasattr(scheduler, "_effective_decay_steps"):
+        state_dict["_effective_decay_steps"] = scheduler._effective_decay_steps
     write_json(state_dict, save_dir / SCHEDULER_STATE)
 
 

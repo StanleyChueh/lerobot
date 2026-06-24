@@ -13,9 +13,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import logging
 import time
 from contextlib import nullcontext
+from pathlib import Path
 from pprint import pformat
 from typing import Any
 
@@ -280,7 +282,24 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("Creating optimizer and scheduler")
-    optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
+
+    # When resuming, read back the effective warmup/decay steps that were used in the original run
+    # so the scheduler lambda is rebuilt identically (avoids LR spike from auto-scale mismatch).
+    resume_warmup_steps = None
+    resume_decay_steps = None
+    if cfg.resume and cfg.checkpoint_path:
+        from lerobot.utils.constants import SCHEDULER_STATE, TRAINING_STATE_DIR
+        sched_state_path = Path(cfg.checkpoint_path) / TRAINING_STATE_DIR / SCHEDULER_STATE
+        if sched_state_path.exists():
+            saved = json.loads(sched_state_path.read_text())
+            resume_warmup_steps = saved.get("_effective_warmup_steps")
+            resume_decay_steps = saved.get("_effective_decay_steps")
+
+    optimizer, lr_scheduler = make_optimizer_and_scheduler(
+        cfg, policy,
+        effective_warmup_steps=resume_warmup_steps,
+        effective_decay_steps=resume_decay_steps,
+    )
 
     # Load precomputed SARM progress for RA-BC if enabled
     # Generate progress using: src/lerobot/policies/sarm/compute_rabc_weights.py

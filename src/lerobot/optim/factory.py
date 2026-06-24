@@ -23,13 +23,18 @@ from lerobot.policies.pretrained import PreTrainedPolicy
 
 
 def make_optimizer_and_scheduler(
-    cfg: TrainPipelineConfig, policy: PreTrainedPolicy
+    cfg: TrainPipelineConfig,
+    policy: PreTrainedPolicy,
+    effective_warmup_steps: int | None = None,
+    effective_decay_steps: int | None = None,
 ) -> tuple[Optimizer, LRScheduler | None]:
     """Generates the optimizer and scheduler based on configs.
 
     Args:
         cfg (TrainPipelineConfig): The training config that contains optimizer and scheduler configs
         policy (PreTrainedPolicy): The policy config from which parameters and presets must be taken from.
+        effective_warmup_steps: Override warmup steps (used when resuming to restore the original lambda).
+        effective_decay_steps: Override decay steps (used when resuming to restore the original lambda).
 
     Returns:
         tuple[Optimizer, LRScheduler | None]: The couple (Optimizer, Scheduler). Scheduler can be `None`.
@@ -38,5 +43,13 @@ def make_optimizer_and_scheduler(
     if cfg.optimizer is None:
         raise ValueError("Optimizer config is required but not provided in TrainPipelineConfig")
     optimizer = cfg.optimizer.build(params)
-    lr_scheduler = cfg.scheduler.build(optimizer, cfg.steps) if cfg.scheduler is not None else None
+    if cfg.scheduler is not None:
+        lr_scheduler = cfg.scheduler.build(
+            optimizer,
+            cfg.steps,
+            effective_warmup_steps=effective_warmup_steps,
+            effective_decay_steps=effective_decay_steps,
+        )
+    else:
+        lr_scheduler = None
     return optimizer, lr_scheduler
