@@ -13,11 +13,13 @@
 # limitations under the License.
 '''
 
-python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test.py  --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
-    camera1: {type: opencv, index_or_path: 7, width: 640, height: 480, fps: 30, fourcc: MJPG},
-    camera2: {type: opencv, index_or_path: 1, width: 640, height: 480, fps: 30, fourcc: MJPG},
-    camera3: {type: opencv, index_or_path: 11, width: 640, height: 480, fps: 30, fourcc: MJPG},
-  }'   --dataset.single_task="Put the red cube in the box."   --dataset.repo_id=ethanCSL/eval_steering_ours_high_6   --dataset.episode_time_s=500000   --dataset.num_episodes=20   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 --dataset.reset_time_s=5 
+python src/lerobot/scripts/lerobot_record_realtime_attention_weight_stanley_steering_test_debug.py   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    camera1: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera2: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    camera3: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, fourcc: MJPG}
+  }'   --dataset.single_task="Put the red cube in the box."   --dataset.repo_id=ethanCSL/eval_fix_dataset   --dataset.episode_time_s=500000   --dataset.num_episodes=10   --dataset.reset_time_s=10   --dataset.push_to_hub=false   --teleop.type=koch_leader   --teleop.port=/dev/ttyUSB_leader   --teleop.id=my_awesome_leader_arm   --policy.path=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2   --fixed_action.mode=off   --action_trace.enabled=true   --intervention.label=high   --intervention.name=low_transport   --intervention.alpha=6.0   --intervention.enable_steering=true
+
+
 
 
 '''
@@ -1146,6 +1148,31 @@ def record_loop(
                 14: [423],
                 15:[1886],
             },
+
+            # physical_neuron_picking.py
+            # Dataset(100 demos)
+            "high_transport_v2": {
+                3: [962],
+                4: [1627,1664],
+                6: [103],
+                8: [846],
+                9: [149],
+                10: [2224],
+                11: [511,1616],
+                13: [164],
+            },
+            "low_transport_v2": {
+                6: [251],
+                8: [1056],
+                10: [2175],
+                11: [1115,1407],
+                12: [2247],
+                13: [931],
+                14:[736,1836],
+                15: [762],
+            },
+
+
 
             ### Constrative(dataset from ethanCSL/svla_koch_pick_n_place_vla_steering_height_experiment_setup)
             "high_transport_clean_dataset": {

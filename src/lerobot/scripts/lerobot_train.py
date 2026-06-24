@@ -233,6 +233,12 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
 
     if is_main_process:
         logging.info("Creating policy")
+    # On resume, load fine-tuned weights from the checkpoint, not the original pretrained_path.
+    if cfg.resume and cfg.checkpoint_path:
+        from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+        cfg.policy.pretrained_path = str(Path(cfg.checkpoint_path) / PRETRAINED_MODEL_DIR)
+        if is_main_process:
+            logging.info(f"Resume: loading policy weights from checkpoint {cfg.policy.pretrained_path}")
     policy = make_policy(
         cfg=cfg.policy,
         ds_meta=dataset.meta,

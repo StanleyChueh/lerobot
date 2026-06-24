@@ -624,16 +624,16 @@ def record_loop(
 
 #########################################################################################
 
-        # # --- Paper-alike FFN activation steering setup ---
-        # # Important:
-        # #   alpha = 0.0 with NO hook  -> no-steering baseline
-        # #   alpha = 0.0 with hook     -> activation ablation
-        # #   alpha != 0.0 with hook    -> activation steering
+        # --- Paper-alike FFN activation steering setup ---
+        # Important:
+        #   alpha = 0.0 with NO hook  -> no-steering baseline
+        #   alpha = 0.0 with hook     -> activation ablation
+        #   alpha != 0.0 with hook    -> activation steering
 
-        # # intervention_name = "high_transport"
-        # # alpha = 6.0
+        # intervention_name = "high_transport"
+        # alpha = 6.0
 
-        # intervention_name = "low_transport"
+        # intervention_name = "high_transport"
         # alpha = 4.0
 
         # semantic_neuron_sets = {
@@ -694,6 +694,28 @@ def record_loop(
         #         14: [423],
         #         15:[1886],
         #     },
+
+        #     "high_transport_v2": {
+        #         3: [962],
+        #         4: [1627,1664],
+        #         6: [103],
+        #         8: [846],
+        #         9: [149],
+        #         10: [2224],
+        #         11: [511,1616],
+        #         13: [164],
+        #     },
+        #     "low_transport_v2": {
+        #         6: [251],
+        #         8: [1056],
+        #         10: [2175],
+        #         11: [1115,1407],
+        #         12: [2247],
+        #         13: [931],
+        #         14:[736,1836],
+        #         15: [762],
+        #     },
+
 
         #     ### Constrative(dataset from ethanCSL/svla_koch_pick_n_place_vla_steering_height_experiment_setup)
         #     "high_transport_clean_dataset": {
@@ -819,89 +841,151 @@ def record_loop(
 # Reference: https://arxiv.org/html/2308.10248v4(Activation Addition: Steering Language Models Without Optimization)
 # Reference2: https://aclanthology.org/2024.acl-long.828.pdf(Steering Llama 2 via Contrastive Activation Addition)
 
-        # Ting:
-        # ⚡ 實時 CAA 轉向設定 ⚡
-        target_layer = 14
-        alpha = -6.0  # 💡 轉向強度調整：正值（例如 +3.0）會引導模型做出 High 的動作；負值（-3.0）引導做出 Low 的動作;0為baseline
-        v_steer_path = Path("steering_vector_L14_red_green_caa.pt")
+#########################################################################################
+# Below is the all-layer dense CAA method to steer VLA.
+#
+# Positive alpha steers toward the first prompt side used during extraction:
+#   high_prompt - low_prompt
+#
+# Therefore:
+#   alpha > 0  -> high trajectory steering
+#   alpha < 0  -> low trajectory steering
+#   alpha = 0  -> effectively baseline
+#########################################################################################
 
-        # 💡 防重複註冊機制：因為 record_loop 在多個 Episode 之間會被重複呼叫，
-        # 我們用一個自訂屬性 _caa_hook_registered 確保整個 Evaluation 過程只註冊一次 Hook，避免記憶體洩漏與強度疊加。
-        if not getattr(policy, "_caa_hook_registered", False) and v_steer_path.exists():
-            print(f"\n[⚡ CAA ONLINE STEERING] 偵測到轉向向量，正在注入 Layer {target_layer}...")
-            
-            # 1. 載入轉向向量
-            v_steer_base = torch.load(v_steer_path) # Shape: [1, 720]
-            
-            # 2. 定義實時相加的 Hook 函式
-            def caa_steering_hook(module, inputs, outputs):
-                # outputs 通常是 hidden_states，或者是一個包含 hidden_states 的 tuple
-                if isinstance(outputs, tuple):
-                    h = outputs[0]
-                    # 透過 PyTorch 廣播機制 (Broadcasting)，[1, 720] 會自動對齊並加到 [B, N, 720] 的每一幀/每一個 Token 上
-                    # 同時動態將設備與精度 (FP16/BF16) 對齊當前 hidden_states
-                    h_steered = h + alpha * v_steer_base.to(device=h.device, dtype=h.dtype)
-                    return (h_steered,) + outputs[1:]
-                else:
-                    return outputs + alpha * v_steer_base.to(device=outputs.device, dtype=outputs.dtype)
+        caa_enable = True
 
-            # 3. 定位並註冊到目標層
-            try:
-                target_module = policy.model.vlm_with_expert.lm_expert.layers[target_layer]
-                target_module.register_forward_hook(caa_steering_hook)
-                policy._caa_hook_registered = True
-                print(f"[✓] 成功於 Layer {target_layer} 注入 CAA 實時轉向 Hook (alpha={alpha})")
-            except Exception as e:
-                print(f"[X] 注入 CAA 轉向失敗，錯誤訊息: {e}")
-                
-        elif not v_steer_path.exists():
-            print(f"[!] 警告: 找不到轉向向量檔案 {v_steer_path}，本次評估將以 Baseline (未轉向) 執行。")
-        ############################################################################################
-        
-        # intervention_name = "height_high"
-        # alpha = 3.0 #3.0
+        # Use positive alpha for HIGH, negative alpha for LOW.
+        # Suggested first tests:
+        #   HIGH: alpha = +2.0, +4.0, +6.0
+        #   LOW : alpha = -2.0, -4.0, -6.0
+        alpha = 2.0
 
-        # height_steering_deltas = {
-        #     1: {
-        #         863:  -0.025490,
-        #         960:  +0.007833,
-        #         1248: +0.006831,
-        #         565:  +0.007804,
-        #     }
-        #     # 1: {
-        #     #     863:  -1.000,
-        #     #     960:  +0.307,
-        #     #     1248: +0.268,
-        #     #     565:  +0.306,
-        #     # }
-        # }
+        caa_vector_path = Path("/home/bruce/CSL/lerobot_nn/caa_dense_all_layers_lm_expert_high_low_60eps_f3.pt")
 
-        # if intervention_name == "height_high":
-        #     signed_alpha = +alpha
-        # elif intervention_name == "height_low":
-        #     signed_alpha = -alpha
-        # else:
-        #     raise ValueError(f"Unknown intervention_name: {intervention_name}")
+        # Optional: restrict layers for ablation.
+        # None means use all layers saved in the .pt file.
+        caa_layer_allowlist = None
+        # Example:
+        # caa_layer_allowlist = {8, 9, 10, 11, 12, 13, 14, 15}
 
-        # if hasattr(policy, "clear_activation_steering"):
-        #     policy.clear_activation_steering()
+        def _clear_caa_dense_hooks(policy_obj):
+            if hasattr(policy_obj, "_caa_dense_hook_handles"):
+                for handle in policy_obj._caa_dense_hook_handles:
+                    try:
+                        handle.remove()
+                    except Exception:
+                        pass
 
-        # if signed_alpha == 0.0:
-        #     print("[BASELINE] alpha=0.0: no signed activation steering.")
-        # else:
-        #     if not hasattr(policy, "set_signed_activation_steering"):
-        #         raise AttributeError(
-        #             "Policy does not have set_signed_activation_steering(). "
-        #             "Add the signed steering hook to modeling_smolvla.py first."
-        #         )
+            policy_obj._caa_dense_hook_handles = []
+            policy_obj._caa_dense_hook_registered = False
 
-        #     policy.set_signed_activation_steering(
-        #         steering_deltas=height_steering_deltas,
-        #         alpha=signed_alpha,
-        #         record_debug=True,
-        #         enable_steering=True,
-        #     )
+        if caa_enable:
+            if not caa_vector_path.exists():
+                print(
+                    f"[!] WARNING: CAA dense vector file not found: {caa_vector_path}. "
+                    "Running without CAA steering."
+                )
+            elif not getattr(policy, "_caa_dense_hook_registered", False):
+                print("\n--- ⚡ ALL-LAYER DENSE CAA ONLINE STEERING SETUP ⚡ ---")
+                print(f"[*] Loading dense CAA vectors from: {caa_vector_path}")
+                print(f"[*] CAA alpha = {alpha}")
 
+                caa_obj = torch.load(caa_vector_path, map_location="cpu")
+
+                if "vectors" not in caa_obj:
+                    raise KeyError(
+                        f"{caa_vector_path} does not contain key 'vectors'. "
+                        "Make sure it was produced by caa_dense_all_layers_finding.py."
+                    )
+
+                caa_vectors_raw = caa_obj["vectors"]
+
+                # Convert keys to int in case they were saved or loaded differently.
+                caa_vectors = {}
+                for layer_key, vec in caa_vectors_raw.items():
+                    layer_idx = int(layer_key)
+                    if caa_layer_allowlist is not None and layer_idx not in caa_layer_allowlist:
+                        continue
+
+                    if not torch.is_tensor(vec):
+                        vec = torch.as_tensor(vec)
+
+                    # Expected shape: [1, hidden_dim].
+                    if vec.ndim == 1:
+                        vec = vec.unsqueeze(0)
+
+                    caa_vectors[layer_idx] = vec.float().cpu()
+
+                if len(caa_vectors) == 0:
+                    raise RuntimeError("No CAA vectors selected for online steering.")
+
+                try:
+                    lm_expert_layers = policy.model.vlm_with_expert.lm_expert.layers
+                except Exception as e:
+                    raise AttributeError(
+                        "Could not find policy.model.vlm_with_expert.lm_expert.layers. "
+                        "All-layer dense CAA steering expects SmolVLA lm_expert layers."
+                    ) from e
+
+                # Remove stale hooks if any exist.
+                _clear_caa_dense_hooks(policy)
+
+                policy._caa_dense_hook_handles = []
+
+                def make_caa_dense_hook(layer_idx, v_base_cpu):
+                    def caa_dense_steering_hook(module, inputs, outputs):
+                        if isinstance(outputs, tuple):
+                            h = outputs[0]
+                            v = v_base_cpu.to(device=h.device, dtype=h.dtype)
+                            h_steered = h + alpha * v
+                            return (h_steered,) + outputs[1:]
+
+                        h = outputs
+                        v = v_base_cpu.to(device=h.device, dtype=h.dtype)
+                        return h + alpha * v
+
+                    return caa_dense_steering_hook
+
+                for layer_idx, v_base in sorted(caa_vectors.items()):
+                    if layer_idx < 0 or layer_idx >= len(lm_expert_layers):
+                        print(
+                            f"[!] Skipping CAA layer {layer_idx}: "
+                            f"out of range for lm_expert layers length {len(lm_expert_layers)}"
+                        )
+                        continue
+
+                    layer = lm_expert_layers[layer_idx]
+
+                    if not hasattr(layer, "mlp"):
+                        print(f"[!] Skipping CAA layer {layer_idx}: layer has no .mlp")
+                        continue
+
+                    # Important:
+                    # Extraction hooks layer.mlp output.
+                    # Online steering must hook the same module location.
+                    handle = layer.mlp.register_forward_hook(
+                        make_caa_dense_hook(layer_idx, v_base)
+                    )
+
+                    policy._caa_dense_hook_handles.append(handle)
+
+                    print(
+                        f"[✓] Registered dense CAA hook on lm_expert.layers[{layer_idx}].mlp "
+                        f"vector_shape={tuple(v_base.shape)}"
+                    )
+
+                policy._caa_dense_hook_registered = True
+                policy._caa_dense_vectors = caa_vectors
+                policy._caa_dense_alpha = alpha
+
+                print(
+                    f"[✓] All-layer dense CAA steering ready. "
+                    f"Registered hooks: {len(policy._caa_dense_hook_handles)}"
+                )
+                print("--------------------------------\n")
+        else:
+            print("[CAA] caa_enable=False. Running without dense CAA steering.")
 #########################################################################################
 
     timestamp = 0

@@ -162,6 +162,13 @@ def save_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> None:
 
 
 def load_scheduler_state(scheduler: LRScheduler, save_dir: Path) -> LRScheduler:
-    state_dict = deserialize_json_into_object(save_dir / SCHEDULER_STATE, scheduler.state_dict())
-    scheduler.load_state_dict(state_dict)
+    import json as _json
+    saved = _json.loads((save_dir / SCHEDULER_STATE).read_text())
+    current = scheduler.state_dict()
+    # Old checkpoints lack _effective_*_steps; fill from the already-built scheduler
+    # (which had them set correctly in build()) so load_state_dict sees matching keys.
+    for key in ("_effective_warmup_steps", "_effective_decay_steps"):
+        if key not in saved and key in current:
+            saved[key] = current[key]
+    scheduler.load_state_dict(saved)
     return scheduler

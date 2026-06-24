@@ -593,6 +593,6 @@ if __name__ == "__main__":
 
 # if __name__ == "__main__":
 #     find_physical_height_neurons_via_eef(
-#         dataset_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
-#         policy_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2",
+#         dataset_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test4_fix_dataset",
+#         policy_repo_id="ethanCSL/svla_koch_pick_n_place_vla_steering_height_test4_fix_dataset",
 #     )
