@@ -35,7 +35,16 @@ from PIL import Image
 
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
+        try:
+            from torchcodec.decoders import VideoDecoder  # noqa: F401
+
+            return "torchcodec"
+        except Exception:
+            logging.warning(
+                "'torchcodec' is installed but failed to load (missing FFmpeg or incompatible shared libraries), "
+                "falling back to 'pyav' as a default decoder"
+            )
+            return "pyav"
     else:
         logging.warning(
             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
