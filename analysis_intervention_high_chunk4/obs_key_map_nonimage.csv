@@ -1,7 +1,0 @@
-obs_dim,obs_key
-0,observation.state.0
-1,observation.state.1
-2,observation.state.2
-3,observation.state.3
-4,observation.state.4
-5,observation.state.5

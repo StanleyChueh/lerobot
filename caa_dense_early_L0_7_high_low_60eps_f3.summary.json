@@ -1,0 +1,121 @@
+{
+  "method": "dense_caa_layer_group",
+  "module_path": "policy.model.vlm_with_expert.lm_expert.layers[*].mlp",
+  "direction": "high_minus_low",
+  "layer_group": "early",
+  "selected_layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "num_layers_saved": 8,
+  "layer_stats": {
+    "0": {
+      "num_diffs": 720,
+      "raw_norm": 0.06821241229772568,
+      "mean_abs": 0.002029022667557001,
+      "max_abs": 0.008532743901014328,
+      "shape": [
+        1,
+        720
+      ]
+    },
+    "1": {
+      "num_diffs": 720,
+      "raw_norm": 0.0911644846200943,
+      "mean_abs": 0.00266499281860888,
+      "max_abs": 0.011446261778473854,
+      "shape": [
+        1,
+        720
+      ]
+    },
+    "2": {
+      "num_diffs": 720,
+      "raw_norm": 0.08855006843805313,
+      "mean_abs": 0.002583805937319994,
+      "max_abs": 0.011301589198410511,
+      "shape": [
+        1,
+        720
+      ]
+    },
+    "3": {
+      "num_diffs": 720,
+      "raw_norm": 0.1258545070886612,
+      "mean_abs": 0.0037063281051814556,
+      "max_abs": 0.0176946260035038,
+      "shape": [
+        1,
+        720
+      ]
+    },
+    "4": {
+      "num_diffs": 720,
+      "raw_norm": 0.10551322996616364,
+      "mean_abs": 0.0031108057592064142,
+      "max_abs": 0.013550232164561749,
+      "shape": [
+        1,
+        720
+      ]
+    },
+    "5": {
+      "num_diffs": 720,
+      "raw_norm": 0.14156407117843628,
+      "mean_abs": 0.004173588939011097,
+      "max_abs": 0.0184298325330019,
+      "shape": [
+        1,
+        720
+      ]
+    },
+    "6": {
+      "num_diffs": 720,
+      "raw_norm": 0.14513909816741943,
+      "mean_abs": 0.004313315264880657,
+      "max_abs": 0.025329027324914932,
+      "shape": [
+        1,
+        720
+      ]
+    },
+    "7": {
+      "num_diffs": 720,
+      "raw_norm": 0.14764051139354706,
+      "mean_abs": 0.004400596022605896,
+      "max_abs": 0.015256890095770359,
+      "shape": [
+        1,
+        720
+      ]
+    }
+  },
+  "prompt_pairs": [
+    [
+      "Put the red cube in the box using a high trajectory.",
+      "Put the red cube in the box using a low trajectory."
+    ],
+    [
+      "Move the red cube to the box with high clearance.",
+      "Move the red cube to the box with low clearance."
+    ],
+    [
+      "Transport the red cube high above the table.",
+      "Transport the red cube low above the table."
+    ],
+    [
+      "Use a higher transport path to put the red cube in the box.",
+      "Use a lower transport path to put the red cube in the box."
+    ]
+  ],
+  "frames_per_episode": 3,
+  "max_episodes": 60,
+  "frame_start_frac": 0.2,
+  "frame_end_frac": 0.8
+}
