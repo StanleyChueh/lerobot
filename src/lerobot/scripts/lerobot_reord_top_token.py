@@ -38,6 +38,11 @@ def load_model_bundle(policy_family, policy_path, device=None):
 
         from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 
+        # PaliGemma plus its Gemma action-expert twin together already take
+        # ~14.6GB in float32 -- on a 16GB-class GPU that leaves no headroom
+        # for this script's own extraction buffers (even chunked), so this
+        # branch runs on CPU like the openvla branch below.
+        device = "cpu"
         policy = PI0Policy.from_pretrained(policy_path)
         policy.eval()
         policy.to(device)
@@ -49,16 +54,67 @@ def load_model_bundle(policy_family, policy_path, device=None):
         # accepting the license once for google/paligemma-3b-pt-224.
         tokenizer = AutoTokenizer.from_pretrained("google/paligemma-3b-pt-224")
 
+        # The gemma_expert (action-expert twin of the LM, same param count)
+        # and vision_tower are never read by extract_semantic_embeddings --
+        # freeing them here is the difference between fitting in RAM and
+        # OOMing once the extraction buffers are also allocated.
+        del policy.model.paligemma_with_expert.gemma_expert
+        del paligemma.model.vision_tower
+        import gc
+
+        gc.collect()
+
     elif policy_family == "openvla":
         # OpenVLA has no lerobot wrapper; load the HF checkpoint directly.
         # Assumes the Prismatic/OpenVLA wrapper exposes its Llama2 backbone at
         # `.language_model` (LlamaForCausalLM) -- verify this path against the
         # actual openvla-7b checkpoint before trusting results; adjust if a
         # release renames the attribute.
-        from transformers import AutoModelForVision2Seq, AutoProcessor
+        # openvla-7b's config.auto_map only registers under the now-removed
+        # "AutoModelForVision2Seq" key, so no AutoModelFor* class in current
+        # transformers matches it via the normal dispatch -- resolve the
+        # custom class directly from the dynamic module instead.
+        from transformers import AutoConfig, AutoProcessor
+        from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
-        policy = AutoModelForVision2Seq.from_pretrained(
-            policy_path, trust_remote_code=True, torch_dtype=torch.float32
+        config = AutoConfig.from_pretrained(policy_path, trust_remote_code=True)
+        auto_map = getattr(config, "auto_map", {}) or {}
+        model_class_ref = (
+            auto_map.get("AutoModelForVision2Seq")
+            or auto_map.get("AutoModelForImageTextToText")
+            or auto_map.get("AutoModel")
+        )
+        if model_class_ref is None:
+            raise RuntimeError(f"No usable model class in config.auto_map for {policy_path}: {auto_map}")
+        model_cls = get_class_from_dynamic_module(model_class_ref, policy_path)
+
+        # openvla-7b's modeling_prismatic.py predates transformers' current
+        # attention-implementation dispatch, which now expects every
+        # PreTrainedModel subclass to declare `_supports_sdpa`; the vendored
+        # class never sets it, so __init__ crashes probing for SDPA support.
+        # Declaring it (and passing attn_implementation="eager" so the
+        # SDPA/flash candidates are never probed at all) works around the
+        # version skew without touching the vendored file.
+        if not hasattr(model_cls, "_supports_sdpa"):
+            model_cls._supports_sdpa = False
+
+        # The checkpoint is ~15GB on disk for 7B params (~2 bytes/param), i.e.
+        # already stored in bfloat16 -- requesting float32 here would double
+        # it to ~28GB, which fits neither typical consumer GPU VRAM nor,
+        # often, system RAM. Load at the checkpoint's native precision and
+        # keep it on CPU: even at half precision the weights alone leave no
+        # headroom for compute buffers on a 16GB-class GPU. Per-layer slices
+        # are upcast to float32 for the actual projection math in
+        # extract_semantic_embeddings, so this doesn't cost extraction precision.
+        # openvla-7b's remote code only runs against transformers==4.40.1,
+        # which still uses the pre-rename `torch_dtype=` kwarg.
+        device = "cpu"
+        policy = model_cls.from_pretrained(
+            policy_path,
+            config=config,
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+            attn_implementation="eager",
         )
         policy.eval()
         policy.to(device)
@@ -68,11 +124,25 @@ def load_model_bundle(policy_family, policy_path, device=None):
         lm_head_weight = policy.language_model.lm_head.weight
         tokenizer = processor.tokenizer
 
+        # We only ever read the Llama2 backbone's weights; the vision tower
+        # (~0.73B params) and projector (~0.07B params) are never touched but
+        # otherwise stay resident for no reason -- on a memory-constrained
+        # host, freeing them is the difference between fitting and OOMing.
+        del policy.vision_backbone
+        del policy.projector
+        import gc
+
+        gc.collect()
+
     else:
         raise ValueError(f"Unknown policy_family: {policy_family}")
 
     lm_head_weight = lm_head_weight.detach().to(device=device, dtype=torch.float32)
     return policy, text_model, lm_head_weight, tokenizer, device
+
+
+def decode_top_tokens(tokenizer, token_ids):
+    return [tokenizer.decode([tok_id]).replace("\n", " ").strip() for tok_id in token_ids]
 
 
 @torch.no_grad()
@@ -84,60 +154,106 @@ def extract_semantic_embeddings(text_model, lm_head_weight, tokenizer, top_k_tok
       3) take top-k tokens
       4) build a semantic embedding by softmax-weighted averaging
          the corresponding output token embeddings
+
+    Token strings are NOT decoded here -- metadata only stores token ids, and
+    callers decode lazily (see decode_top_tokens) for just the handful of
+    neurons they actually display. For OpenVLA-scale models (~350K value
+    vectors), decoding all of them up front is both slow and memory-heavy
+    for no benefit in modes (e.g. --mode knn) that only ever look at a
+    winning cluster's ~10-40 members.
     """
     W_out = lm_head_weight  # [vocab_size, hidden_dim]
 
-    semantic_embeddings = []
+    num_layers = len(text_model.layers)
+    d_ff = text_model.layers[0].mlp.down_proj.weight.shape[1]
+    d_model = W_out.shape[1]
+    total_neurons = num_layers * d_ff
+
+    # Preallocated once and filled by layer slice. Building this via a
+    # Python list of per-neuron numpy rows + a final np.asarray conversion
+    # transiently holds both representations at once (~2x the final size)
+    # right when the resident model already occupies most of memory --
+    # for OpenVLA-scale models that spike is enough to OOM.
+    semantic_embeddings = np.empty((total_neurons, d_model), dtype=np.float32)
     metadata = []
 
-    global_id = 0
-    num_layers = len(text_model.layers)
     print(f"[*] Extracting value-vector semantic embeddings from {num_layers} layers...")
 
+    global_id = 0
     for layer_idx in range(num_layers):
+        # Each large intermediate is `del`ed the moment it's no longer needed
+        # instead of left bound to its loop variable until the next
+        # reassignment -- for OpenVLA-scale dims (vocab~32K, d_ff~11K) each of
+        # token_logits/token_embs is ~1GB, and letting the old and new
+        # iteration's tensors briefly coexist was enough extra peak memory to
+        # tip an already-tight system into OOM.
+
         # PyTorch Linear weight shape: [out_features, in_features]
         # down_proj: [hidden_dim, intermediate_dim]; each COLUMN is one FFN value vector
         W_value = text_model.layers[layer_idx].mlp.down_proj.weight.detach().to(
             device=device, dtype=torch.float32
         )  # [d_model, d_ff]
+        if W_value.shape[1] != d_ff:
+            raise ValueError(f"Layer {layer_idx} has d_ff={W_value.shape[1]}, expected {d_ff}")
 
-        token_logits = W_out @ W_value  # [vocab_size, d_ff]
+        # W_out @ W_value materializes [vocab_size, d_ff]. For large-vocab
+        # backbones (e.g. Gemma/PaliGemma's 256K-token vocab used by pi0)
+        # that single matmul is tens of GB for one layer alone -- OOMs
+        # regardless of device. Chunking along d_ff (the topk reduction is
+        # over dim=0/vocab, so it's unaffected by how the d_ff columns are
+        # grouped) bounds peak size to vocab_size * chunk_size * 4 bytes,
+        # independent of d_ff, at ~1GiB/chunk.
+        vocab_size = W_out.shape[0]
+        chunk_size = max(1, min(d_ff, (1 << 28) // max(vocab_size, 1)))
 
-        top_logits, top_token_ids = torch.topk(token_logits, k=top_k_tokens, dim=0)
+        top_logits_chunks = []
+        top_token_ids_chunks = []
+        for start in range(0, d_ff, chunk_size):
+            end = min(start + chunk_size, d_ff)
+            token_logits_chunk = W_out @ W_value[:, start:end]  # [vocab_size, chunk]
+            top_logits_chunk, top_token_ids_chunk = torch.topk(token_logits_chunk, k=top_k_tokens, dim=0)
+            del token_logits_chunk
+            top_logits_chunks.append(top_logits_chunk)
+            top_token_ids_chunks.append(top_token_ids_chunk)
+        del W_value
+
+        top_logits = torch.cat(top_logits_chunks, dim=1)  # [k, d_ff]
+        top_token_ids = torch.cat(top_token_ids_chunks, dim=1)  # [k, d_ff]
+        del top_logits_chunks, top_token_ids_chunks
+
         top_logits_t = top_logits.transpose(0, 1).contiguous()  # [d_ff, k]
         top_token_ids_t = top_token_ids.transpose(0, 1).contiguous()  # [d_ff, k]
+        del top_logits, top_token_ids
 
         weights = torch.softmax(top_logits_t, dim=1)  # [d_ff, k]
         token_embs = W_out[top_token_ids_t]  # [d_ff, k, d_model]
         e_sem = (weights.unsqueeze(-1) * token_embs).sum(dim=1)  # [d_ff, d_model]
+        del weights, token_embs
         e_sem = torch.nn.functional.normalize(e_sem, p=2, dim=1)
 
-        e_sem_np = e_sem.cpu().numpy()
+        layer_start = layer_idx * d_ff
+        semantic_embeddings[layer_start:layer_start + d_ff] = e_sem.cpu().numpy()
+        del e_sem
+
         top_token_ids_np = top_token_ids_t.cpu().numpy()
         top_logits_np = top_logits_t.cpu().numpy()
+        del top_token_ids_t, top_logits_t
 
-        for neuron_idx in range(W_value.shape[1]):
-            token_ids = top_token_ids_np[neuron_idx].tolist()
-            decoded_tokens = [
-                tokenizer.decode([tok_id]).replace("\n", " ").strip()
-                for tok_id in token_ids
-            ]
-
-            semantic_embeddings.append(e_sem_np[neuron_idx])
+        for neuron_idx in range(d_ff):
             metadata.append(
                 {
                     "global_id": global_id,
                     "layer": layer_idx,
                     "neuron": neuron_idx,
-                    "top_token_ids": token_ids,
-                    "top_tokens": decoded_tokens,
+                    "top_token_ids": top_token_ids_np[neuron_idx].tolist(),
                     "top_logits": top_logits_np[neuron_idx].tolist(),
                 }
             )
             global_id += 1
 
-    semantic_embeddings = np.asarray(semantic_embeddings, dtype=np.float32)
-    print(f"[*] Extracted {len(semantic_embeddings)} semantic embeddings.")
+        print(f"[*]   layer {layer_idx + 1}/{num_layers} done ({len(metadata)} neurons so far)")
+
+    print(f"[*] Extracted {len(metadata)} semantic embeddings.")
 
     return {
         "tokenizer": tokenizer,
@@ -257,7 +373,7 @@ def run_concept_clustering(
     return results
 
 
-def print_cluster_summary(results, top_members_to_show=10):
+def print_cluster_summary(results, tokenizer, top_members_to_show=10):
     print("\n" + "=" * 80)
     print("Paper-like Concept Cluster Summary (Appendix B.3)")
     print("=" * 80)
@@ -271,13 +387,11 @@ def print_cluster_summary(results, top_members_to_show=10):
 
         print("top members:")
         for member in info["members"][:top_members_to_show]:
-            print(
-                f"  layer={member['layer']:>2}, neuron={member['neuron']:>5}, "
-                f"tokens={member['top_tokens']}"
-            )
+            tokens = decode_top_tokens(tokenizer, member["top_token_ids"])
+            print(f"  layer={member['layer']:>2}, neuron={member['neuron']:>5}, tokens={tokens}")
 
 
-def compute_cluster_purity(members, concept_keywords):
+def compute_cluster_purity(members, tokenizer, concept_keywords):
     """
     Fraction of top-token slots across a cluster's member neurons that
     literally match the concept's keyword family (case-insensitive substring).
@@ -288,14 +402,14 @@ def compute_cluster_purity(members, concept_keywords):
     """
     total, matched = 0, 0
     for member in members:
-        for tok in member["top_tokens"]:
+        for tok in decode_top_tokens(tokenizer, member["top_token_ids"]):
             total += 1
             if any(kw.lower() in tok.lower() for kw in concept_keywords):
                 matched += 1
     return matched / total if total else 0.0
 
 
-def summarize_concept_results(results, keyword_map):
+def summarize_concept_results(results, tokenizer, keyword_map):
     """
     Builds a paper-ready table: one row per concept with its cluster's
     best_score (cosine sim to concept embedding), purity %, and cluster size.
@@ -305,7 +419,7 @@ def summarize_concept_results(results, keyword_map):
     rows = []
     for concept, info in results.items():
         keywords = keyword_map.get(concept, [concept])
-        purity = compute_cluster_purity(info["members"], keywords)
+        purity = compute_cluster_purity(info["members"], tokenizer, keywords)
         rows.append({
             "concept": concept,
             "best_score": info["best_score"],
@@ -341,14 +455,14 @@ def concept_centroid_similarity_matrix(results):
     return concepts, sims
 
 
-def plot_concept_summary(results, keyword_map, output_prefix="concept_analysis"):
+def plot_concept_summary(results, tokenizer, keyword_map, output_prefix="concept_analysis"):
     """
     Saves two paper-ready PNGs: a purity bar chart and an antonym centroid
     cosine-similarity heatmap.
     """
     import matplotlib.pyplot as plt
 
-    rows = summarize_concept_results(results, keyword_map)
+    rows = summarize_concept_results(results, tokenizer, keyword_map)
     concepts = [r["concept"] for r in rows]
     purities = [r["purity"] * 100 for r in rows]
 
@@ -485,7 +599,7 @@ def plot_multi_policy_antonym_similarity(results, antonym_pairs, output_path):
     print(f"[*] Saved {output_path}")
 
 
-def print_top_neurons_overall_by_logit(metadata, top_n=15):
+def print_top_neurons_overall_by_logit(metadata, tokenizer, top_n=15):
     """
     不依賴任何輸入概念。
     直接掃描模型中「所有層、所有神經元」，根據神經元對其 Top 1 Token 的 Logit 進行全局排序。
@@ -502,12 +616,12 @@ def print_top_neurons_overall_by_logit(metadata, top_n=15):
     print("-" * 90)
 
     for i, neuron in enumerate(all_neurons[:top_n]):
-        tokens_str = ", ".join(neuron["top_tokens"])
+        tokens_str = ", ".join(decode_top_tokens(tokenizer, neuron["top_token_ids"]))
         max_logit = neuron["top_logits"][0]
         print(f"{i+1:<12} | {max_logit:.4f}    | L{neuron['layer']:<4} | {neuron['neuron']:<6} | [{tokens_str}]")
 
 
-def rank_neurons_by_keyword_frequency(metadata, keywords_dict, top_n=6):
+def rank_neurons_by_keyword_frequency(metadata, tokenizer, keywords_dict, top_n=6):
     """
     根據神經元的 top_tokens 中包含目標關鍵字的頻率進行排序。
     新增了正向(pos)與負向(neg)關鍵字過濾，以避免 substring 誤判 (例如 "low" 觸發 "following")。
@@ -521,8 +635,9 @@ def rank_neurons_by_keyword_frequency(metadata, keywords_dict, top_n=6):
 
     scored_neurons = []
     for neuron in metadata:
+        top_tokens = decode_top_tokens(tokenizer, neuron["top_token_ids"])
         match_count = 0
-        for token in neuron["top_tokens"]:
+        for token in top_tokens:
             token_lower = token.lower()
 
             if any(neg_kw in token_lower for neg_kw in neg_keywords):
@@ -535,7 +650,7 @@ def rank_neurons_by_keyword_frequency(metadata, keywords_dict, top_n=6):
             "layer": neuron["layer"],
             "neuron": neuron["neuron"],
             "match_count": match_count,
-            "top_tokens": neuron["top_tokens"],
+            "top_tokens": top_tokens,
             "max_logit": neuron["top_logits"][0]
         })
 
@@ -554,7 +669,7 @@ def rank_neurons_by_keyword_frequency(metadata, keywords_dict, top_n=6):
     return ranked_results
 
 
-def run_keyword_based_ranking(metadata, concept_keywords_map, top_n=6):
+def run_keyword_based_ranking(metadata, tokenizer, concept_keywords_map, top_n=6):
     """
     處理多個概念的關鍵字搜尋並彙整結果。
     """
@@ -562,6 +677,7 @@ def run_keyword_based_ranking(metadata, concept_keywords_map, top_n=6):
     for concept_name, keywords_dict in concept_keywords_map.items():
         ranked_neurons = rank_neurons_by_keyword_frequency(
             metadata=metadata,
+            tokenizer=tokenizer,
             keywords_dict=keywords_dict,
             top_n=top_n
         )
@@ -583,7 +699,7 @@ def print_keyword_ranking_summary(results):
             print(f"{neuron['rank']:<5} | {neuron['match_count']:<11} | L{neuron['layer']:<4} | {neuron['neuron']:<6} | [{tokens_str}]")
 
 
-def export_top_tokens_for_classification(metadata, output_csv_path, top_n=30):
+def export_top_tokens_for_classification(metadata, tokenizer, output_csv_path, top_n=30):
     """
     Dumps top-N tokens per value vector to CSV for manual or LLM-judge
     classification into semantic/non-semantic/none, replicating the paper's
@@ -594,7 +710,7 @@ def export_top_tokens_for_classification(metadata, output_csv_path, top_n=30):
         writer = csv.writer(f)
         writer.writerow(["global_id", "layer", "neuron", "top_tokens", "label"])
         for neuron in metadata:
-            tokens_str = " | ".join(neuron["top_tokens"][:top_n])
+            tokens_str = " | ".join(decode_top_tokens(tokenizer, neuron["top_token_ids"])[:top_n])
             writer.writerow([neuron["global_id"], neuron["layer"], neuron["neuron"], tokens_str, ""])
     print(f"[*] Exported {len(metadata)} neurons to {output_csv_path} for classification.")
 
@@ -700,17 +816,28 @@ if __name__ == "__main__":
         text_model, lm_head_weight, tokenizer, top_k_tokens=args.top_k_tokens, device=device
     )
 
+    # Everything downstream only needs bundle's extracted arrays (semantic
+    # embeddings, metadata, W_out) -- the raw model (its language_model
+    # backbone alone is ~14GB for a 7B checkpoint) is never touched again.
+    # Holding onto it through the kNN clustering step, which is itself
+    # memory-heavy at OpenVLA's ~350K-vector scale, is what was pushing an
+    # already memory-constrained host into OOM.
+    del policy, text_model
+    import gc
+
+    gc.collect()
+
     if args.mode in ("keyword", "all") and args.keywords_json:
         with open(args.keywords_json) as f:
             concept_keywords_map = json.load(f)
-        keyword_results = run_keyword_based_ranking(bundle["metadata"], concept_keywords_map, top_n=6)
+        keyword_results = run_keyword_based_ranking(bundle["metadata"], tokenizer, concept_keywords_map, top_n=6)
         print_keyword_ranking_summary(keyword_results)
 
     if args.mode in ("knn", "all"):
         cluster_results = run_concept_clustering(
             bundle, args.concepts, k_values=tuple(args.knn_k_values), partition=args.partition, device=device
         )
-        print_cluster_summary(cluster_results)
+        print_cluster_summary(cluster_results, tokenizer)
 
         if args.purity_keywords_json:
             with open(args.purity_keywords_json) as f:
@@ -718,11 +845,11 @@ if __name__ == "__main__":
         else:
             purity_keyword_map = {c: [c] for c in args.concepts}
 
-        summary_rows = summarize_concept_results(cluster_results, purity_keyword_map)
+        summary_rows = summarize_concept_results(cluster_results, tokenizer, purity_keyword_map)
         print_concept_summary_table(summary_rows)
 
         if args.plot_prefix:
-            plot_concept_summary(cluster_results, purity_keyword_map, output_prefix=args.plot_prefix)
+            plot_concept_summary(cluster_results, tokenizer, purity_keyword_map, output_prefix=args.plot_prefix)
 
         if args.results_json:
             export_results_json(
@@ -730,7 +857,9 @@ if __name__ == "__main__":
             )
 
     if args.export_csv or args.mode == "export":
-        export_top_tokens_for_classification(bundle["metadata"], args.export_csv or "top_tokens_for_labeling.csv")
+        export_top_tokens_for_classification(
+            bundle["metadata"], tokenizer, args.export_csv or "top_tokens_for_labeling.csv"
+        )
 
     if args.mode in ("logit", "all"):
-        print_top_neurons_overall_by_logit(bundle["metadata"], top_n=args.top_n_logit)
+        print_top_neurons_overall_by_logit(bundle["metadata"], tokenizer, top_n=args.top_n_logit)
