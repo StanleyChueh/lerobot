@@ -554,3 +554,46 @@ You will see something like
 <img width="2369" height="1316" alt="episode_000000_predicted_vs_actual_by_step" src="https://github.com/user-attachments/assets/166a0f3d-fef7-4870-a151-136f0aeb8775" />
 
 <img width="2130" height="1225" alt="paper_predicted_vs_actual_max_eef_height" src="https://github.com/user-attachments/assets/51b6b060-9489-4c94-98fe-5dc9f77c4487" />
+
+
+# SmolVLA & PI0 & OpenVLA Semantic Top Token Experiment
+
+SmolVLA
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family smolvla \
+  --policy_path lerobot/smolvla_base \
+  --mode all \
+  --concepts fast slow high low \
+  --plot_prefix smolvla_topk \
+  --results_json smolvla_results.json
+```
+
+PI0
+
+```
+conda activate lerobot-pi0
+```
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family pi0 \
+  --policy_path lerobot/pi0_base \
+  --mode all \
+  --concepts fast slow high low \
+  --plot_prefix pi0_topk \
+  --results_json pi0_results.json
+```
+
+OpnVLA
+
+```
+OMP_NUM_THREADS=4 python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family openvla \
+  --policy_path openvla/openvla-7b \
+  --mode all \
+  --concepts fast slow high low \
+  --plot_prefix openvla_topk \
+  --results_json openvla_results.json
+```
