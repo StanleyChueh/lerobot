@@ -623,5 +623,21 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
 PI0-FAST
 
 ```
-lerobot-train   --dataset.repo_id=lerobot/libero   --output_dir=outputs/libero_pi0fast   --job_name=libero_pi0fast   --policy.path=lerobot/pi0fast-base   --policy.repo_id=ethanCSL/libero_pi0fast_test   --policy.dtype=bfloat16   --steps=100000   --save_freq=20000   --batch_size=4   --policy.device=cuda   --policy.scheduler_warmup_steps=4000   --policy.scheduler_decay_steps=100000   --policy.scheduler_decay_lr=1e-5   --policy.gradient_checkpointing=true   --policy.chunk_size=10   --policy.n_action_steps=10   --policy.max_action_tokens=256   --policy.empty_cameras=1   --wandb.enable=false
+ lerobot-train \
+  --dataset.repo_id=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --policy.type=pi0_fast \
+  --policy.pretrained_path=/home/csl/CSL/pi0fast-base-fixed \
+  --policy.use_lora=true \
+  --policy.dtype=bfloat16 \
+  --policy.gradient_checkpointing=true \
+  --policy.chunk_size=10 \
+  --policy.n_action_steps=10 \
+  --policy.max_action_tokens=256 \
+  --policy.device=cuda \
+  --batch_size=16 \
+  --steps=5000 \
+  --output_dir=outputs/train/pi0fast_koch_pick_n_place_vla_steering_height_test2 \                                                           
+  --job_name=pi0fast_koch_pick_n_place_steering_height_lora \
+  --policy.repo_id=ethanCSL/pi0fast_koch_pick_n_place_vla_steering_height_test2 \                     
+  --wandb.enable=false
 ```
