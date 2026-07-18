@@ -619,3 +619,9 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
   --antonym_pairs fast:slow high:low
 ```
 
+
+PI0-FAST
+
+```
+lerobot-train   --dataset.repo_id=lerobot/libero   --output_dir=outputs/libero_pi0fast   --job_name=libero_pi0fast   --policy.path=lerobot/pi0fast-base   --policy.repo_id=ethanCSL/libero_pi0fast_test   --policy.dtype=bfloat16   --steps=100000   --save_freq=20000   --batch_size=4   --policy.device=cuda   --policy.scheduler_warmup_steps=4000   --policy.scheduler_decay_steps=100000   --policy.scheduler_decay_lr=1e-5   --policy.gradient_checkpointing=true   --policy.chunk_size=10   --policy.n_action_steps=10   --policy.max_action_tokens=256   --policy.empty_cameras=1   --wandb.enable=false
+```
