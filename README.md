@@ -597,3 +597,14 @@ OMP_NUM_THREADS=4 python src/lerobot/scripts/lerobot_reord_top_token.py \
   --plot_prefix openvla_topk \
   --results_json openvla_results.json
 ```
+
+Cross-policy Experimental Result
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --mode combine \
+  --combine_inputs smolvla_results.json pi0_results.json openvla_results.json \
+  --combine_output_prefix vla_comparison \
+  --antonym_pairs fast:slow high:low
+```
+
