@@ -558,7 +558,7 @@ You will see something like
 
 # SmolVLA & PI0 & OpenVLA Semantic Top Token Experiment
 
-SmolVLA
+SmolVLA KNN Method
 
 ```
 python src/lerobot/scripts/lerobot_reord_top_token.py \
@@ -568,6 +568,17 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
   --concepts fast slow high low \
   --plot_prefix smolvla_topk \
   --results_json smolvla_results.json
+```
+
+SmolVLA Keyword Method
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family smolvla \
+  --policy_path lerobot/smolvla_base \
+  --mode keyword \
+  --keywords_json concept_keywords.json \
+  --top_k_tokens 10
 ```
 
 PI0
