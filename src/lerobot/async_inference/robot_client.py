@@ -206,7 +206,7 @@ class RobotClient:
             )
             _ = self.stub.SendObservations(observation_iterator)
             obs_timestep = obs.get_timestep()
-            self.logger.debug(f"Sent observation #{obs_timestep} | ")
+            self.logger.info(f"Sent observation #{obs_timestep} | ")
 
             return True
 
@@ -304,7 +304,7 @@ class RobotClient:
                 self.action_chunk_size = max(self.action_chunk_size, len(timed_actions))
 
                 # Calculate network latency if we have matching observations
-                if len(timed_actions) > 0 and verbose:
+                if len(timed_actions) > 0:
                     with self.latest_action_lock:
                         latest_action = self.latest_action
 

@@ -32,6 +32,18 @@ class PI0FastConfig(PreTrainedConfig):
     action_expert_variant: str = "gemma_300m"
     dtype: str = "float32"  # Options: "bfloat16", "float32"
 
+    # LoRA fine-tuning (paper arXiv:2509.00328 Appendix C.2 fine-tunes pi0-FAST with LoRA
+    # on novel robot setups rather than full fine-tuning). Injected in-place into the
+    # language_model's Linear layers after pretrained weights are loaded, so the base
+    # checkpoint's state-dict keys still match during from_pretrained.
+    use_lora: bool = False
+    lora_r: int = 8
+    lora_alpha: int = 16
+    lora_dropout: float = 0.05
+    lora_target_modules: list[str] = field(
+        default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    )
+
     chunk_size: int = 50  # Number of action steps to predict, in openpi called "action_horizon"
     n_action_steps: int = 50  # Number of action steps to execute
 

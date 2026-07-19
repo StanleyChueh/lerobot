@@ -950,6 +950,23 @@ class PI0FastPolicy(PreTrainedPolicy):
             if remap_count > 0:
                 print(f"Remapped {remap_count} state dict keys")
 
+            # A checkpoint saved *after* LoRA injection has its target Linear layers
+            # renamed (e.g. `q_proj.weight` -> `q_proj.base_layer.weight`, plus new
+            # `q_proj.lora_A.default.weight` / `lora_B` keys). `model` here is still
+            # freshly constructed with plain, un-injected Linear layers, so those keys
+            # would silently fail to match if we loaded now -- the trained LoRA deltas
+            # (and even the base weights, renamed out from under their old keys) would
+            # never actually load, and _apply_lora() below would then inject brand new,
+            # randomly-initialized adapters over a partially-loaded model. Detect that
+            # case and inject the LoRA structure *before* loading, so the checkpoint's
+            # keys line up with the module tree they were saved from.
+            lora_already_applied = False
+            if model.config.use_lora and any(
+                ".lora_A." in k or ".lora_B." in k or ".base_layer." in k for k in remapped_state_dict
+            ):
+                model._apply_lora()
+                lora_already_applied = True
+
             # Load the remapped state dict into the model
             missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
 
@@ -979,7 +996,54 @@ class PI0FastPolicy(PreTrainedPolicy):
         except Exception as e:
             print(f"Warning: Could not load state dict: {e}")
 
+        if model.config.use_lora and not lora_already_applied:
+            model._apply_lora()
+
         return model
+
+    def _apply_lora(self):
+        """
+        Freeze the pretrained backbone and inject LoRA adapters in-place into the
+        language_model's target Linear layers, after pretrained weights are already
+        loaded. Injecting here (rather than in __init__) matters: peft's in-place
+        injection renames each target Linear's weight to `<name>.base_layer.weight`,
+        which would break the pretrained checkpoint's key matching in from_pretrained
+        if done before loading. inject_adapter_in_model (not get_peft_model) is used
+        specifically because it mutates the existing module tree in place instead of
+        wrapping the whole model in a PeftModel -- this file hardcodes attribute paths
+        like `paligemma_with_expert.paligemma.model.language_model` in >5 places
+        (gradient checkpointing, forward, embed_image/embed_language_tokens), and a
+        wrapping approach would break all of them.
+        """
+        from peft import LoraConfig, inject_adapter_in_model
+
+        for p in self.model.paligemma_with_expert.parameters():
+            p.requires_grad = False
+
+        lora_config = LoraConfig(
+            r=self.config.lora_r,
+            lora_alpha=self.config.lora_alpha,
+            lora_dropout=self.config.lora_dropout,
+            target_modules=self.config.lora_target_modules,
+            bias="none",
+        )
+        inject_adapter_in_model(
+            lora_config,
+            self.model.paligemma_with_expert.paligemma.model.language_model,
+        )
+
+        # Gradient checkpointing recomputes the forward pass during backward; if the
+        # first checkpointed layer's input has requires_grad=False (true here, since
+        # embed_tokens is frozen), autograd never builds a graph into the checkpointed
+        # segment and every LoRA adapter downstream silently gets no gradient. This is
+        # peft's own documented fix for combining LoRA with gradient checkpointing.
+        paligemma = self.model.paligemma_with_expert.paligemma
+        if hasattr(paligemma, "enable_input_require_grads"):
+            paligemma.enable_input_require_grads()
+
+        trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total = sum(p.numel() for p in self.parameters())
+        print(f"[LoRA] trainable params: {trainable:,} / {total:,} ({100 * trainable / total:.3f}%)")
 
     def _fix_pytorch_state_dict_keys(
         self, state_dict, model_config
@@ -1009,7 +1073,11 @@ class PI0FastPolicy(PreTrainedPolicy):
         return fixed_state_dict
 
     def get_optim_params(self) -> dict:
-        return self.parameters()
+        # With LoRA (config.use_lora), most of self.parameters() are frozen base
+        # weights; building the optimizer over all of them would still allocate
+        # Adam state for every frozen tensor. Without LoRA this is equivalent to
+        # self.parameters(), since everything defaults to requires_grad=True.
+        return (p for p in self.parameters() if p.requires_grad)
 
     def reset(self):
         """Reset internal state - called when environment resets."""
