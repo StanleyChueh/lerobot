@@ -573,12 +573,14 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
 SmolVLA Keyword Method
 
 ```
+cd ~/CSL/lerobot && conda activate lerobot
 python src/lerobot/scripts/lerobot_reord_top_token.py \
   --policy_family smolvla \
   --policy_path lerobot/smolvla_base \
   --mode keyword \
   --keywords_json concept_keywords.json \
-  --top_k_tokens 10
+  --top_k_tokens 10 \
+  --keyword_results_json smolvla_keyword_results.json
 ```
 
 PI0
@@ -601,17 +603,14 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
 PI0 Keyword Method
 
 ```
-cd ~/CSL/lerobot
-conda activate lerobot-pi0
-```
-
-```
+cd ~/CSL/lerobot && conda activate lerobot-pi0
 python src/lerobot/scripts/lerobot_reord_top_token.py \
   --policy_family pi0 \
   --policy_path lerobot/pi0_base \
   --mode keyword \
   --keywords_json concept_keywords.json \
-  --top_k_tokens 10
+  --top_k_tokens 10 \
+  --keyword_results_json pi0_keyword_results.json
 ```
 
 
@@ -635,27 +634,23 @@ OMP_NUM_THREADS=4 python src/lerobot/scripts/lerobot_reord_top_token.py \
 OpenVLA Keyword Method
 
 ```
-conda activate lerobot-pi0
-cd ~/CSL/lerobot
-```
-
-```
+cd ~/CSL/lerobot && conda activate lerobot-pi0
 python src/lerobot/scripts/lerobot_reord_top_token.py \
   --policy_family openvla \
   --policy_path openvla/openvla-7b \
   --mode keyword \
   --keywords_json concept_keywords.json \
-  --top_k_tokens 10
+  --top_k_tokens 10 \
+  --keyword_results_json openvla_keyword_results.json
 ```
 
 Cross-policy Experimental Result
 
 ```
 python src/lerobot/scripts/lerobot_reord_top_token.py \
-  --mode combine \
-  --combine_inputs smolvla_results.json pi0_results.json openvla_results.json \
-  --combine_output_prefix vla_comparison \
-  --antonym_pairs fast:slow high:low
+  --mode combine_keyword \
+  --combine_inputs smolvla_keyword_results.json pi0_keyword_results.json openvla_keyword_results.json \
+  --combine_output_prefix vla_comparison
 ```
 
 
@@ -693,12 +688,14 @@ Evaluate by Server and Client
 Server
 
 ```
+cd ~/CSL/lerobot-pi0fast && conda activate lerobot-pi0fast
 python -m lerobot.async_inference.policy_server   --host=0.0.0.0   --port=8080   --fps=30
 ```
 
 Client
 
 ```
+cd ~/CSL/lerobot-pi0fast && conda activate lerobot-pi0fast
 python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
     front: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG},
     top: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
