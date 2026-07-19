@@ -620,7 +620,9 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
 ```
 
 
-PI0-FAST
+PI0-FAST 
+
+Train with LoRA
 
 ```
  lerobot-train \
@@ -641,3 +643,22 @@ PI0-FAST
   --policy.repo_id=ethanCSL/pi0fast_koch_pick_n_place_vla_steering_height_test2 \                     
   --wandb.enable=false
 ```
+
+Evaluate by Server and Client
+
+Server
+
+```
+python -m lerobot.async_inference.policy_server   --host=0.0.0.0   --port=8080   --fps=30
+```
+
+Client
+
+```
+python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    front: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    top: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    wrist: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  }'   --policy_type=pi0_fast   --pretrained_name_or_path=ethanCSL/pi0fast_koch_pick_n_place_vla_steering_height_test2   --policy_device=cuda   --client_device=cpu   --actions_per_chunk=10   --task="Put the red cube in the box."   --server_address=10.100.4.125:8080   --fps=30
+```
+
