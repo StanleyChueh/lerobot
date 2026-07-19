@@ -601,8 +601,8 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
 PI0 Keyword Method
 
 ```
-conda activate lerobot-pi0
 cd ~/CSL/lerobot
+conda activate lerobot-pi0
 ```
 
 ```
