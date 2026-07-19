@@ -597,7 +597,27 @@ python src/lerobot/scripts/lerobot_reord_top_token.py \
   --results_json pi0_results.json
 ```
 
+PI0 Keyword Method
+
+```
+conda activate lerobot-pi0
+```
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family pi0 \
+  --policy_path lerobot/pi0_base \
+  --mode keyword \
+  --keywords_json concept_keywords.json \
+  --top_k_tokens 10
+```
+
+
 OpnVLA
+
+```
+conda activate lerobot-pi0
+```
 
 ```
 OMP_NUM_THREADS=4 python src/lerobot/scripts/lerobot_reord_top_token.py \
@@ -607,6 +627,21 @@ OMP_NUM_THREADS=4 python src/lerobot/scripts/lerobot_reord_top_token.py \
   --concepts fast slow high low \
   --plot_prefix openvla_topk \
   --results_json openvla_results.json
+```
+
+OpenVLA Keyword Method
+
+```
+conda activate lerobot-pi0
+```
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family openvla \
+  --policy_path openvla/openvla-7b \
+  --mode keyword \
+  --keywords_json concept_keywords.json \
+  --top_k_tokens 10
 ```
 
 Cross-policy Experimental Result
