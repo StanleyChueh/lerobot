@@ -378,11 +378,12 @@ class RobotClient:
             timed_action = self.action_queue.get_nowait()
         get_end = time.perf_counter() - get_start
 
-        _performed_action = self.robot.send_action(
-            self._action_tensor_to_action_dict(timed_action.get_action())
-        )
+        action_dict = self._action_tensor_to_action_dict(timed_action.get_action())
+        _performed_action = self.robot.send_action(action_dict)
         with self.latest_action_lock:
             self.latest_action = timed_action.get_timestep()
+
+        self.logger.info(f"Action #{timed_action.get_timestep()} sent to robot: {action_dict}")
 
         if verbose:
             with self.action_queue_lock:
