@@ -554,3 +554,148 @@ You will see something like
 <img width="2369" height="1316" alt="episode_000000_predicted_vs_actual_by_step" src="https://github.com/user-attachments/assets/166a0f3d-fef7-4870-a151-136f0aeb8775" />
 
 <img width="2130" height="1225" alt="paper_predicted_vs_actual_max_eef_height" src="https://github.com/user-attachments/assets/51b6b060-9489-4c94-98fe-5dc9f77c4487" />
+
+
+# SmolVLA & PI0 & OpenVLA Semantic Top Token Experiment
+
+SmolVLA KNN Method
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family smolvla \
+  --policy_path lerobot/smolvla_base \
+  --mode all \
+  --concepts fast slow high low \
+  --plot_prefix smolvla_topk \
+  --results_json smolvla_results.json
+```
+
+SmolVLA Keyword Method
+
+```
+cd ~/CSL/lerobot && conda activate lerobot
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family smolvla \
+  --policy_path lerobot/smolvla_base \
+  --mode keyword \
+  --keywords_json concept_keywords.json \
+  --top_k_tokens 10 \
+  --keyword_results_json smolvla_keyword_results.json
+```
+
+PI0
+
+```
+conda activate lerobot-pi0
+cd ~/CSL/lerobot
+```
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family pi0 \
+  --policy_path lerobot/pi0_base \
+  --mode all \
+  --concepts fast slow high low \
+  --plot_prefix pi0_topk \
+  --results_json pi0_results.json
+```
+
+PI0 Keyword Method
+
+```
+cd ~/CSL/lerobot && conda activate lerobot-pi0
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family pi0 \
+  --policy_path lerobot/pi0_base \
+  --mode keyword \
+  --keywords_json concept_keywords.json \
+  --top_k_tokens 10 \
+  --keyword_results_json pi0_keyword_results.json
+```
+
+
+OpnVLA
+
+```
+conda activate lerobot-pi0
+cd ~/CSL/lerobot
+```
+
+```
+OMP_NUM_THREADS=4 python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family openvla \
+  --policy_path openvla/openvla-7b \
+  --mode all \
+  --concepts fast slow high low \
+  --plot_prefix openvla_topk \
+  --results_json openvla_results.json
+```
+
+OpenVLA Keyword Method
+
+```
+cd ~/CSL/lerobot && conda activate lerobot-pi0
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --policy_family openvla \
+  --policy_path openvla/openvla-7b \
+  --mode keyword \
+  --keywords_json concept_keywords.json \
+  --top_k_tokens 10 \
+  --keyword_results_json openvla_keyword_results.json
+```
+
+Cross-policy Experimental Result
+
+```
+python src/lerobot/scripts/lerobot_reord_top_token.py \
+  --mode combine_keyword \
+  --combine_inputs smolvla_keyword_results.json pi0_keyword_results.json openvla_keyword_results.json \
+  --combine_output_prefix vla_comparison
+```
+
+
+PI0-FAST 
+
+Train with LoRA
+
+```
+lerobot-pi0fast
+cd ~/CSL/lerobot
+```
+
+```
+lerobot-train   --dataset.repo_id=ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2   --policy.type=pi0_fast   --policy.pretrained_path=/home/csl/CSL/pi0fast-base-fixed   --policy.use_lora=true   --policy.lora_r=64   --policy.lora_alpha=64   --policy.optimizer_lr=2.5e-4   --policy.dtype=bfloat16   --policy.gradient_checkpointing=true   --policy.chunk_size=10   --policy.n_action_steps=10   --policy.max_action_tokens=256   --policy.device=cuda   --batch_size=16   --steps=10000   --output_dir=outputs/train/pi0fast_koch_pick_n_place_vla_steering_height_test2   --job_name=pi0fast_koch_pick_n_place_steering_height_lora_v2   --policy.repo_id=ethanCSL/pi0fast_koch_pick_n_place_vla_steering_height_test2   --wandb.enable=false
+
+```
+
+Evaluate by Server and Client
+
+Server
+
+```
+cd ~/CSL/lerobot-pi0fast && conda activate lerobot-pi0fast
+python -m lerobot.async_inference.policy_server   --host=0.0.0.0   --port=8080   --fps=30
+```
+
+Client
+
+```
+cd ~/CSL/lerobot-pi0fast && conda activate lerobot-pi0fast
+python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --robot.port=/dev/ttyUSB_follower   --robot.id=my_awesome_follower_arm   --robot.cameras='{
+    front: {type: opencv, index_or_path: 4, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    top: {type: opencv, index_or_path: 6, width: 640, height: 480, fps: 30, fourcc: MJPG},
+    wrist: {type: opencv, index_or_path: 8, width: 640, height: 480, fps: 30, fourcc: MJPG},
+  }'   --policy_type=pi0_fast   --pretrained_name_or_path=ethanCSL/pi0fast_koch_pick_n_place_vla_steering_height_test2   --policy_device=cuda   --client_device=cpu   --actions_per_chunk=10   --task="Put the red cube in the box."   --server_address=10.100.4.125:8080   --fps=30
+```
+
+# Simulation Benchmark
+
+```
+ python src/lerobot/scripts/lerobot_replay_in_mujoco.py \
+  --repo_id ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --xml follower.xml \
+  --episode 1 \
+  --stride 1 \
+  --width 960 --height 720 \
+  --live
+```
