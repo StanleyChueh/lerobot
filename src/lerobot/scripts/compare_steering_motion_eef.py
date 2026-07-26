@@ -1005,6 +1005,96 @@ def add_dataset_to_results(
     return rows
 
 
+def load_episodes_from_sim_dir(sim_dir: str, n_episodes=None) -> list:
+    """
+    Load sim rollout results produced by sim_eval_steering.py into the same
+    row format used by build_rows_from_episodes / compute_episode_metrics.
+
+    Reads:
+      <sim_dir>/rollout_metrics.csv   -- per-rollout scalar metrics
+      <sim_dir>/eef_height_traces.npz -- per-rollout EEF height traces (optional)
+
+    Returns a list of row dicts compatible with the rest of this script's
+    plotting / comparison functions.
+    """
+    sim_dir = Path(sim_dir)
+    csv_path = sim_dir / "rollout_metrics.csv"
+    npz_path = sim_dir / "eef_height_traces.npz"
+
+    if not csv_path.exists():
+        raise FileNotFoundError(f"rollout_metrics.csv not found in: {sim_dir}")
+
+    # Load scalar metrics
+    with csv_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        raw_rows = list(reader)
+
+    if n_episodes is not None:
+        raw_rows = raw_rows[:n_episodes]
+
+    # Load EEF height traces (optional — missing = no trajectory plots for sim)
+    traces_cm = None
+    if npz_path.exists():
+        data = np.load(npz_path)
+        traces_cm = data["traces_cm"]  # shape [N_rollouts, max_steps]
+
+    rows = []
+    for i, raw in enumerate(raw_rows):
+        n_steps = int(raw.get("num_steps", 0))
+        duration_s = float(raw.get("duration_s", 0.0))
+        timestamps = np.linspace(0.0, duration_s, n_steps) if n_steps > 0 else np.array([0.0])
+
+        row = {
+            "episode_index": int(raw.get("rollout_index", i)),
+            "num_frames": n_steps,
+            "duration_s": duration_s,
+            "timestamps": timestamps,
+            # Metre values (for compare_summaries_multi)
+            "eef_height_mean": float(raw.get("eef_height_mean", float("nan"))),
+            "eef_height_max": float(raw.get("eef_height_max", float("nan"))),
+            "eef_height_min": float(raw.get("eef_height_min", float("nan"))),
+            "eef_height_range": float(raw.get("eef_height_range", float("nan"))),
+            "eef_height_final": float(raw.get("eef_height_final", float("nan"))),
+            # cm values used in boxplots
+            "eef_height_max_cm": float(raw.get("eef_height_max_cm", float("nan"))),
+            # sim-specific extras
+            "eef_height_transport_peak_cm": float(raw.get("eef_height_transport_peak_cm", float("nan"))),
+            "eef_height_transport_mean_cm": float(raw.get("eef_height_transport_mean_cm", float("nan"))),
+        }
+
+        # Attach trace if available (needed for trajectory plots)
+        if traces_cm is not None and i < len(traces_cm):
+            trace = traces_cm[i]
+            valid = trace[~np.isnan(trace)]
+            row["eef_height_trace"] = valid / 100.0  # back to metres to match physical rows
+        else:
+            # Synthesise a flat trace from the scalar max (no shape info)
+            h = row["eef_height_max"]
+            row["eef_height_trace"] = np.array([h] * max(n_steps, 1))
+
+        rows.append(row)
+
+    return rows
+
+
+def add_sim_dir_to_results(
+    all_rows,
+    all_summaries,
+    out_dir,
+    label,
+    sim_dir,
+    n_episodes=None,
+):
+    print(f"Loading sim results '{label}' from: {sim_dir}")
+    rows = load_episodes_from_sim_dir(sim_dir, n_episodes=n_episodes)
+    all_rows[label] = rows
+    all_summaries[label] = summarize_metrics(rows, label)
+    save_csv(out_dir / f"{label}_episode_metrics.csv", strip_trace_fields(rows))
+    with (out_dir / f"{label}_summary.json").open("w") as f:
+        json.dump(all_summaries[label], f, indent=2)
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser()
     # Dataset comparison
@@ -1074,6 +1164,31 @@ def main():
 
     parser.add_argument("--root", type=str, default=None)
     parser.add_argument("--out-dir", type=str, default="steering_compare")
+
+    # Simulation result directories from sim_eval_steering.py
+    parser.add_argument(
+        "--sim-dirs",
+        type=str,
+        nargs="+",
+        default=[],
+        help=(
+            "One or more output directories from sim_eval_steering.py to include in comparison. "
+            "Each must contain rollout_metrics.csv and optionally eef_height_traces.npz."
+        ),
+    )
+    parser.add_argument(
+        "--sim-labels",
+        type=str,
+        nargs="+",
+        default=[],
+        help="Labels for --sim-dirs (one per dir). Must match length of --sim-dirs.",
+    )
+    parser.add_argument(
+        "--sim-n-episodes",
+        type=int,
+        default=None,
+        help="Max rollouts to use from each sim dir. Default: all.",
+    )
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument(
         "--plot-start-time",
@@ -1111,6 +1226,20 @@ def main():
             max_frames=args.max_frames,
             n_episodes=None,
         )
+
+    # Simulation results from sim_eval_steering.py
+    if args.sim_dirs:
+        if len(args.sim_labels) != len(args.sim_dirs):
+            parser.error("--sim-labels must have the same length as --sim-dirs.")
+        for label, sim_dir in zip(args.sim_labels, args.sim_dirs):
+            add_sim_dir_to_results(
+                all_rows=all_rows,
+                all_summaries=all_summaries,
+                out_dir=out_dir,
+                label=label,
+                sim_dir=sim_dir,
+                n_episodes=args.sim_n_episodes,
+            )
 
     # Prompt-only steering comparisons: high/low prompt without neuron steering.
     for label, repo_id in zip(args.prompt_labels, args.prompt_repo_ids):

@@ -383,14 +383,13 @@ def print_site_parent_info(model, site_name):
     print("=" * 90)
 
 
-def make_camera():
+def make_camera(azimuth=315, elevation=-10, distance=0.65, lookat=(0.0, 0.0, 0.16)):
     cam = mujoco.MjvCamera()
     mujoco.mjv_defaultCamera(cam)
-
-    cam.distance = 0.65
-    cam.azimuth = 135
-    cam.elevation = -25
-    cam.lookat[:] = np.array([0.0, 0.0, 0.16])
+    cam.azimuth = azimuth
+    cam.elevation = elevation
+    cam.distance = distance
+    cam.lookat[:] = np.array(lookat)
     return cam
 
 
@@ -433,7 +432,27 @@ def main():
     parser.add_argument("--fps", type=int, default=15)
     parser.add_argument("--live", action="store_true", help="Show live MuJoCo render window instead of saving mp4/csv.")
     parser.add_argument("--window_name", default="MuJoCo EEF Debug")
+    parser.add_argument("--side-by-side", action="store_true",
+        help="Output side-by-side video: real camera (left) + MuJoCo FK render (right). "
+             "Uses actual dataset joint states so you can verify calibration directly.")
+    parser.add_argument("--camera-key", default="observation.images.front",
+        help="Dataset key for real camera image shown on the left panel (default: observation.images.front).")
+    # MuJoCo camera tuning — adjust until MuJoCo motion matches real camera direction
+    parser.add_argument("--cam-azimuth", type=float, default=315,
+        help="MuJoCo camera azimuth in degrees. 315 = front-right view (default). "
+             "Change by ±90 to rotate view. If motion appears mirrored vs real, add/subtract 180.")
+    parser.add_argument("--cam-elevation", type=float, default=-10,
+        help="MuJoCo camera elevation in degrees. Negative = looking down. Default -10 ≈ table-level.")
+    parser.add_argument("--cam-distance", type=float, default=0.65,
+        help="MuJoCo camera distance from lookat point in metres. Default 0.65.")
+    parser.add_argument("--cam-lookat", type=float, nargs=3, default=[0.0, 0.0, 0.16],
+        metavar=("X", "Y", "Z"),
+        help="MuJoCo camera lookat point. Default: 0 0 0.16 (table surface near robot).")
     args = parser.parse_args()
+
+    # Live mode always shows side-by-side so you can compare real vs MuJoCo pose directly.
+    if args.live:
+        args.side_by_side = True
 
     if args.rest_json is not None:
         rest_state_deg = load_rest_state(args.rest_json)
@@ -453,22 +472,31 @@ def main():
     start_frame, end_frame = get_episode_frame_range(ep_index, args.episode)
 
     renderer = mujoco.Renderer(model, height=args.height, width=args.width)
-    cam = make_camera()
+    cam = make_camera(
+        azimuth=args.cam_azimuth,
+        elevation=args.cam_elevation,
+        distance=args.cam_distance,
+        lookat=tuple(args.cam_lookat),
+    )
+    print(f"[+] MuJoCo camera: azimuth={args.cam_azimuth}  elevation={args.cam_elevation}  "
+          f"distance={args.cam_distance}  lookat={args.cam_lookat}")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    video_path = out_dir / f"episode_{args.episode:03d}_USED_EEF_marker.mp4"
+    suffix = "_side_by_side" if args.side_by_side else "_USED_EEF_marker"
+    video_path = out_dir / f"episode_{args.episode:03d}{suffix}.mp4"
     csv_path = out_dir / f"episode_{args.episode:03d}_USED_EEF_marker.csv"
 
     writer = None
 
+    out_w = args.width * 2 if args.side_by_side else args.width
     if not args.live:
         writer = cv2.VideoWriter(
             str(video_path),
             cv2.VideoWriter_fourcc(*"mp4v"),
             args.fps,
-            (args.width, args.height),
+            (out_w, args.height),
         )
 
     rows = []
@@ -484,26 +512,73 @@ def main():
 
         used_eef_xyz = get_site_xyz(model, data, "end_effector_site")
         red_xyz = get_site_xyz(model, data, "DEBUG_RED_USED_EEF_SITE")
-        #green_xyz = get_site_xyz(model, data, "DEBUG_GREEN_LINK6_ORIGIN")
-        #yellow_xyz = get_site_xyz(model, data, "DEBUG_YELLOW_TIP_GUESS")
         link5_xyz = get_body_xyz(model, data, "link_5")
         link6_xyz = get_body_xyz(model, data, "link_6")
+
+        raw_deg = state_vec[:6]
+
+        # Print to terminal every frame so joint states can be compared/logged
+        print(
+            f"[ep{args.episode:03d} step{local_i:04d}]"
+            f"  raw_state_deg= [{' '.join(f'{v:7.2f}' for v in raw_deg)}]"
+            f"  →  mujoco_q_deg= [{' '.join(f'{v:7.2f}' for v in q_deg)}]"
+            f"  EEF_z= {used_eef_xyz[2]*100:.2f} cm"
+        )
 
         renderer.update_scene(data, camera=cam)
         rgb = renderer.render()
         bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-        lines = [
-            f"Episode {args.episode:03d} | local frame={local_i} | global frame={frame_idx}",
-            "RED = actual end_effector_site used for EEF height",
-           # "GREEN = link_6 origin | YELLOW = guessed gripper tip",
-            #f"USED EEF z={used_eef_xyz[2]:.6f} m | RED z={red_xyz[2]:.6f} m | YELLOW z={yellow_xyz[2]:.6f} m",
-            f"q_deg={np.array2string(q_deg, precision=1, suppress_small=True)}",
+        # Right panel overlay: MuJoCo joint angles
+        lines_right = [
+            f"Ep{args.episode:03d} step{local_i} | frame{frame_idx} | EEF z={used_eef_xyz[2]*100:.1f} cm",
+            f"MuJoCo q_deg (joints 1-5):",
+            f"  J1={q_deg[0]:6.1f}  J2={q_deg[1]:6.1f}  J3={q_deg[2]:6.1f}",
+            f"  J4={q_deg[3]:6.1f}  J5={q_deg[4]:6.1f}  J6={q_deg[5]:6.1f}",
         ]
-        draw_overlay(bgr, lines)
+        draw_overlay(bgr, lines_right)
+
+        if args.side_by_side:
+            # Build real camera panel from dataset image
+            cam_val = frame.get(args.camera_key)
+            if cam_val is None:
+                for alt in ("observation.images.camera1", "observation.images.front",
+                            "observation.images.top", "observation.images.wrist"):
+                    cam_val = frame.get(alt)
+                    if cam_val is not None:
+                        break
+
+            if cam_val is not None:
+                if hasattr(cam_val, "detach"):
+                    img_np = cam_val.detach().cpu().numpy()
+                else:
+                    img_np = np.asarray(cam_val)
+                if img_np.ndim == 3 and img_np.shape[0] in (1, 3) and img_np.shape[-1] not in (1, 3):
+                    img_np = np.transpose(img_np, (1, 2, 0))
+                if img_np.dtype != np.uint8:
+                    img_np = np.clip(img_np * 255.0 if img_np.max() <= 1.0 else img_np, 0, 255).astype(np.uint8)
+                left_bgr = cv2.cvtColor(np.ascontiguousarray(img_np), cv2.COLOR_RGB2BGR)
+                left_bgr = cv2.resize(left_bgr, (args.width, args.height))
+            else:
+                left_bgr = np.zeros((args.height, args.width, 3), dtype=np.uint8)
+                cv2.putText(left_bgr, f"key '{args.camera_key}' not found", (10, args.height // 2),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 200), 2)
+
+            # Left panel overlay: raw dataset joint states
+            draw_overlay(left_bgr, [
+                f"Real camera  ({args.camera_key.split('.')[-1]})",
+                f"Ep{args.episode:03d} step{local_i} | frame{frame_idx}",
+                f"Raw obs.state (deg, joints 1-5):",
+                f"  J1={raw_deg[0]:6.1f}  J2={raw_deg[1]:6.1f}  J3={raw_deg[2]:6.1f}",
+                f"  J4={raw_deg[3]:6.1f}  J5={raw_deg[4]:6.1f}  J6={raw_deg[5]:6.1f}",
+            ])
+
+            output_frame = np.concatenate([left_bgr, bgr], axis=1)
+        else:
+            output_frame = bgr
 
         if args.live:
-            cv2.imshow(args.window_name, bgr)
+            cv2.imshow(args.window_name, output_frame)
 
             key = cv2.waitKey(max(1, int(1000 / args.fps))) & 0xFF
 
@@ -515,7 +590,7 @@ def main():
             if key == ord(" "):
                 cv2.waitKey(0)
         else:
-            writer.write(bgr)
+            writer.write(output_frame)
 
         rows.append({
             "episode": args.episode,
@@ -536,21 +611,6 @@ def main():
             "q4_deg": float(q_deg[4]),
             "q5_deg": float(q_deg[5]),
         })
-
-        if args.live:
-            cv2.imshow(args.window_name, bgr)
-
-            key = cv2.waitKey(max(1, int(1000 / args.fps))) & 0xFF
-
-            # q or ESC to quit
-            if key == ord("q") or key == 27:
-                break
-
-            # SPACE to pause, then press any key to continue
-            if key == ord(" "):
-                cv2.waitKey(0)
-        else:
-            writer.write(bgr)
 
     # with open(csv_path, "w", newline="") as f:
     #     writer_csv = csv.DictWriter(f, fieldnames=list(rows[0].keys()))

@@ -112,4 +112,4 @@
   <keyframe>
     <key name="home" qpos="1.6 0 0 0 0 0" />
   </keyframe>
-<visual><global offwidth="640" offheight="480" /></visual></mujoco>
+<visual><global offwidth="960" offheight="720" /></visual></mujoco>
