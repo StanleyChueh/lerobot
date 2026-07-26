@@ -688,3 +688,14 @@ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --
   }'   --policy_type=pi0_fast   --pretrained_name_or_path=ethanCSL/pi0fast_koch_pick_n_place_vla_steering_height_test2   --policy_device=cuda   --client_device=cpu   --actions_per_chunk=10   --task="Put the red cube in the box."   --server_address=10.100.4.125:8080   --fps=30
 ```
 
+# Simulation Benchmark
+
+```
+ python src/lerobot/scripts/lerobot_replay_in_mujoco.py \
+  --repo_id ethanCSL/svla_koch_pick_n_place_vla_steering_height_test2 \
+  --xml follower.xml \
+  --episode 1 \
+  --stride 1 \
+  --width 960 --height 720 \
+  --live
+```
