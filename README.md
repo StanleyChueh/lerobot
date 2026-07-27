@@ -705,3 +705,11 @@ Automatically generate high and low EEF trajectory episodes
 ```
 python src/lerobot/scripts/collect_libero_height_demos.py     --arc both --n-eps 3 --task-idx 0 --save-video 2>/dev/null
 ```
+
+
+
+https://github.com/user-attachments/assets/0b13a773-beed-4758-88fd-d05b1774d6ea
+
+
+
+
