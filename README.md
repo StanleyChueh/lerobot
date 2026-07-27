@@ -706,11 +706,20 @@ Automatically generate high and low EEF trajectory episodes
 python src/lerobot/scripts/collect_libero_height_demos.py     --arc both --n-eps 30 --task-idx 0 --save-video 2>/dev/null
 ```
 
+Convert HDF5 to LeRobot format
+
 ```
 python src/lerobot/scripts/convert_hdf5_to_lerobot.py     --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5            /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5     --output ~/datasets/lerobot/libero_height_task00     --task "Pick up the black bowl and place it on the plate."     --cameras agentview     --fps 20     --format libero
 ```
 
+Training
 
+```
+lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero   --batch_size=8   --steps=20000   --output_dir=outputs/train/svla_franka_pick_n_place_vla_steering_libero   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero   --wandb.enable=false  --rename_map='{                                              
+    "observation.images.agentview": "observation.images.camera1"
+  }'   --policy.empty_cameras=2 --dataset.video_backend=pyav
+
+```
 
 
 
