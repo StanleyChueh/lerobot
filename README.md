@@ -729,3 +729,19 @@ python src/lerobot/scripts/libero_find_height_neurons.py \
   --top-k-tokens 10 \
   --output outputs/libero_height_neurons.json
 ```
+
+Evaluation
+
+```
+python src/lerobot/scripts/libero_eval_steering.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
+         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
+  --task "Pick up the black bowl and place it on the plate." \
+  --conditions none keyword_high keyword_low \
+  --neurons-json outputs/libero_height_neurons.json \
+  --keyword-alpha 4.0 \
+  --n-rollouts 20 \
+  --save-video \
+  --out-dir outputs/libero_eval_keyword
+```
