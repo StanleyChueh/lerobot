@@ -703,12 +703,13 @@ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --
 Automatically generate high and low EEF trajectory episodes
 
 ```
-python src/lerobot/scripts/collect_libero_height_demos.py     --arc both --n-eps 3 --task-idx 0 --save-video 2>/dev/null
+python src/lerobot/scripts/collect_libero_height_demos.py     --arc both --n-eps 30 --task-idx 0 --save-video 2>/dev/null
 ```
 
+```
+python src/lerobot/scripts/convert_hdf5_to_lerobot.py     --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5            /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5     --output ~/datasets/lerobot/libero_height_task00     --task "Pick up the black bowl and place it on the plate."     --cameras agentview     --fps 20     --format libero
+```
 
-
-https://github.com/user-attachments/assets/0b13a773-beed-4758-88fd-d05b1774d6ea
 
 
 
