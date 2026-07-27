@@ -720,6 +720,12 @@ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/
   }'   --policy.empty_cameras=2 --dataset.video_backend=pyav
 
 ```
+Neurons finding
 
-
-
+```
+python src/lerobot/scripts/libero_find_height_neurons.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --top-n 20 \
+  --top-k-tokens 10 \
+  --output outputs/libero_height_neurons.json
+```
