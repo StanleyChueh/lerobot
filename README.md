@@ -699,3 +699,9 @@ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --
   --width 960 --height 720 \
   --live
 ```
+
+Automatically generate high and low EEF trajectory episodes
+
+```
+python src/lerobot/scripts/collect_libero_height_demos.py     --arc both --n-eps 3 --task-idx 0 --save-video 2>/dev/null
+```
