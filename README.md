@@ -739,9 +739,12 @@ python src/lerobot/scripts/libero_eval_steering.py \
          /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
   --task "Pick up the black bowl and place it on the plate." \
   --conditions none keyword_high keyword_low \
-  --neurons-json outputs/libero_height_neurons.json \
-  --keyword-alpha 4.0 \
-  --n-rollouts 20 \
-  --save-video \
-  --out-dir outputs/libero_eval_keyword
+  --neurons-json outputs/libero_height_neurons_ref.json \
+  --keyword-alpha 6.0 \
+  --steering-mode set \
+  --keyword-top-n 10 \
+  --n-rollouts 50 \
+  --save-video --video-rollouts 0 1 2 \
+  --out-dir outputs/libero_eval_paper_keyword \
+  2>&1 | tee outputs/eval_paper_keyword.log
 ```
