@@ -799,7 +799,7 @@ Finding CAA
 Steering
 
 ```
-conda run -n lerobot python src/lerobot/scripts/libero_eval_steering.py \
+python src/lerobot/scripts/libero_eval_steering.py \
   --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
   --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
          /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
