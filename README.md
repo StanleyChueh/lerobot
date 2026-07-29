@@ -786,12 +786,13 @@ CAA Prompt Steering
 Finding CAA
 
 ```
-python src/lerobot/scripts/libero_compute_caa.py \
+ python src/lerobot/scripts/libero_compute_caa.py \
   --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
   --high-hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
   --low-hdf5  /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
   --task "Pick up the black bowl and place it on the plate." \
   --output outputs/libero_caa_vectors.pt \
+  --stride 10 \
   2>&1 | tee outputs/compute_caa.log
 ```
 
