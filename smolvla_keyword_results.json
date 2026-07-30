@@ -1,0 +1,467 @@
+{
+  "policy_family": "smolvla",
+  "policy_path": "ethanCSL/svla_franka_pick_n_place_vla_steering_libero",
+  "top_k_tokens": 10,
+  "concepts": {
+    "fast": {
+      "keyword_purity": 0.23333333333333334,
+      "top1_match_count": 3,
+      "num_neurons_considered": 6,
+      "top_members": [
+        {
+          "rank": 1,
+          "match_count": 3,
+          "layer": 8,
+          "neuron": 735,
+          "top_tokens": [
+            "ias",
+            "vanishing",
+            "scale",
+            "sign",
+            "h",
+            "index",
+            "fast",
+            "fast",
+            "fastest",
+            "p"
+          ]
+        },
+        {
+          "rank": 2,
+          "match_count": 3,
+          "layer": 7,
+          "neuron": 884,
+          "top_tokens": [
+            "risk",
+            "spare",
+            "]).",
+            "t",
+            "force",
+            "land",
+            "extensions",
+            "Risk",
+            "risk",
+            "state"
+          ]
+        },
+        {
+          "rank": 3,
+          "match_count": 2,
+          "layer": 7,
+          "neuron": 1644,
+          "top_tokens": [
+            "iriam",
+            "=\\",
+            "peer",
+            "================================",
+            "Vul",
+            "Risk",
+            "risk",
+            "hazard",
+            "Pub",
+            "tal"
+          ]
+        },
+        {
+          "rank": 4,
+          "match_count": 2,
+          "layer": 3,
+          "neuron": 885,
+          "top_tokens": [
+            "fast",
+            "Events",
+            "experiment",
+            "iner",
+            "enas",
+            "event",
+            "Event",
+            "Carthage",
+            "fast",
+            "Events"
+          ]
+        },
+        {
+          "rank": 5,
+          "match_count": 2,
+          "layer": 12,
+          "neuron": 287,
+          "top_tokens": [
+            "",
+            "ref",
+            "fastest",
+            "media",
+            "\u2018",
+            "\"\u2014",
+            "fast",
+            "marketing",
+            "stall",
+            ""
+          ]
+        },
+        {
+          "rank": 6,
+          "match_count": 2,
+          "layer": 14,
+          "neuron": 1994,
+          "top_tokens": [
+            "tole",
+            "faster",
+            "fastest",
+            "constructor",
+            "useum",
+            "isure",
+            "speed",
+            "quicker",
+            "subprocess",
+            "quick"
+          ]
+        }
+      ]
+    },
+    "slow": {
+      "keyword_purity": 0.23333333333333334,
+      "top1_match_count": 3,
+      "num_neurons_considered": 6,
+      "top_members": [
+        {
+          "rank": 1,
+          "match_count": 3,
+          "layer": 0,
+          "neuron": 435,
+          "top_tokens": [
+            "size",
+            "hang",
+            "slower",
+            "slow",
+            "heavy",
+            "sized",
+            "arval",
+            "new",
+            "Hang",
+            "Slow"
+          ]
+        },
+        {
+          "rank": 2,
+          "match_count": 3,
+          "layer": 11,
+          "neuron": 2157,
+          "top_tokens": [
+            "safety",
+            "og",
+            "Ang",
+            "margin",
+            "st",
+            "safe",
+            "safe",
+            "ovenant",
+            "olkien",
+            "for"
+          ]
+        },
+        {
+          "rank": 3,
+          "match_count": 2,
+          "layer": 8,
+          "neuron": 2269,
+          "top_tokens": [
+            "like",
+            "arthen",
+            "ometown",
+            "thello",
+            "safest",
+            "Safe",
+            "inker",
+            "radle",
+            "highest",
+            "stable"
+          ]
+        },
+        {
+          "rank": 4,
+          "match_count": 2,
+          "layer": 13,
+          "neuron": 1456,
+          "top_tokens": [
+            "Beng",
+            "ende",
+            "PubMed",
+            "ect",
+            "BSE",
+            "mixes",
+            "slowing",
+            "complemented",
+            "pitched",
+            "slowed"
+          ]
+        },
+        {
+          "rank": 5,
+          "match_count": 2,
+          "layer": 10,
+          "neuron": 1333,
+          "top_tokens": [
+            "upgrad",
+            "etc",
+            "etc",
+            "extra",
+            "safe",
+            "lay",
+            "\u00e7",
+            "surviv",
+            "safer",
+            "_"
+          ]
+        },
+        {
+          "rank": 6,
+          "match_count": 2,
+          "layer": 5,
+          "neuron": 779,
+          "top_tokens": [
+            "hoses",
+            "pav",
+            "other",
+            "security",
+            "protective",
+            "doubled",
+            "safety",
+            "theoretical",
+            "Safety",
+            "Research"
+          ]
+        }
+      ]
+    },
+    "high": {
+      "keyword_purity": 0.25,
+      "top1_match_count": 3,
+      "num_neurons_considered": 6,
+      "top_members": [
+        {
+          "rank": 1,
+          "match_count": 3,
+          "layer": 7,
+          "neuron": 1151,
+          "top_tokens": [
+            "high",
+            "higher",
+            "above",
+            ">",
+            "lower",
+            "large",
+            ">",
+            "highest",
+            "rising",
+            "def"
+          ]
+        },
+        {
+          "rank": 2,
+          "match_count": 3,
+          "layer": 2,
+          "neuron": 826,
+          "top_tokens": [
+            "high",
+            "high",
+            "asyncio",
+            "search",
+            "in",
+            "frust",
+            "High",
+            "\u00e4",
+            "center",
+            "nee"
+          ]
+        },
+        {
+          "rank": 3,
+          "match_count": 3,
+          "layer": 9,
+          "neuron": 2554,
+          "top_tokens": [
+            "hard",
+            "high",
+            "intra",
+            "low",
+            "CESS",
+            "significant",
+            "Intra",
+            "high",
+            "High",
+            "Bard"
+          ]
+        },
+        {
+          "rank": 4,
+          "match_count": 2,
+          "layer": 3,
+          "neuron": 369,
+          "top_tokens": [
+            "iagn",
+            "abets",
+            "osate",
+            "trl",
+            "highest",
+            "unsuccessful",
+            "highest",
+            "Musa",
+            "||-",
+            "hythm"
+          ]
+        },
+        {
+          "rank": 5,
+          "match_count": 2,
+          "layer": 1,
+          "neuron": 1390,
+          "top_tokens": [
+            "doorstep",
+            "conclud",
+            "arp",
+            "upuncture",
+            "High",
+            "ler",
+            "oons",
+            "high",
+            "hurd",
+            "proverb"
+          ]
+        },
+        {
+          "rank": 6,
+          "match_count": 2,
+          "layer": 13,
+          "neuron": 414,
+          "top_tokens": [
+            "}\".",
+            "}'.",
+            "iest",
+            "highest",
+            "main",
+            "hest",
+            "happ",
+            "ail",
+            "highest",
+            "foreground"
+          ]
+        }
+      ]
+    },
+    "low": {
+      "keyword_purity": 0.3,
+      "top1_match_count": 3,
+      "num_neurons_considered": 6,
+      "top_members": [
+        {
+          "rank": 1,
+          "match_count": 3,
+          "layer": 5,
+          "neuron": 1877,
+          "top_tokens": [
+            "miracul",
+            "lower",
+            "worst",
+            "lev",
+            "heric",
+            "iting",
+            "lowest",
+            "Lower",
+            "worse",
+            "Prepar"
+          ]
+        },
+        {
+          "rank": 2,
+          "match_count": 3,
+          "layer": 13,
+          "neuron": 1744,
+          "top_tokens": [
+            ",:]",
+            "M",
+            "lower",
+            "sp",
+            "time",
+            "below",
+            "to",
+            "individual",
+            "K",
+            "Lower"
+          ]
+        },
+        {
+          "rank": 3,
+          "match_count": 3,
+          "layer": 5,
+          "neuron": 1904,
+          "top_tokens": [
+            "ellow",
+            "below",
+            "below",
+            "elona",
+            "berspace",
+            "leys",
+            "ackexchange",
+            "ity",
+            "abetes",
+            "ERAL"
+          ]
+        },
+        {
+          "rank": 4,
+          "match_count": 3,
+          "layer": 10,
+          "neuron": 2349,
+          "top_tokens": [
+            "och",
+            "low",
+            "Fine",
+            "count",
+            "nd",
+            "low",
+            "Low",
+            "ancel",
+            "aux",
+            "optic"
+          ]
+        },
+        {
+          "rank": 5,
+          "match_count": 3,
+          "layer": 3,
+          "neuron": 2003,
+          "top_tokens": [
+            "lower",
+            "--",
+            "picture",
+            "lower",
+            "As",
+            "As",
+            "system",
+            "Lower",
+            "hand",
+            "\u2014"
+          ]
+        },
+        {
+          "rank": 6,
+          "match_count": 3,
+          "layer": 1,
+          "neuron": 1222,
+          "top_tokens": [
+            "lower",
+            "postdocs",
+            "Way",
+            "UE",
+            "Higher",
+            "Developing",
+            "U",
+            "Lower",
+            "Mixed",
+            "Low"
+          ]
+        }
+      ]
+    }
+  }
+}

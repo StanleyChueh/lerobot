@@ -1,0 +1,6 @@
+{
+  "fast": {"pos": ["fast", "risk"], "neg": ["breakfast"]},
+  "slow": {"pos": ["slow", "safe"], "neg": []},
+  "high": {"pos": ["high"], "neg": ["thigh", "low", "slow", "lower"]},
+  "low":  {"pos": ["low"],  "neg": ["follow", "allow", "slow", "blow", "glow", "yellow", "hollow"]}
+}

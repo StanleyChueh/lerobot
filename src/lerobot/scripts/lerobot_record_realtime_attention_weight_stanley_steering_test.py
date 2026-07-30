@@ -630,209 +630,209 @@ def record_loop(
         #   alpha = 0.0 with hook     -> activation ablation
         #   alpha != 0.0 with hook    -> activation steering
 
-        # intervention_name = "high_transport"
-        # alpha = 6.0
+        intervention_name = "high_transport_paper"
+        alpha = 6.0
 
         # intervention_name = "high_transport"
         # alpha = 4.0
 
-        # semantic_neuron_sets = {
+        semantic_neuron_sets = {
 
-        #     # lerobot_reord_top_token.py
-        #     "low_transport_paper": {
-        #         1: [1222],
-        #         3: [2003],
-        #         5: [1877,1904],
-        #         10: [2349],
-        #         13: [1744],
-        #     },
-        #     "high_transport_paper": {
-        #         2: [826],
-        #         3: [369],
-        #         5: [2102],
-        #         7: [1151],
-        #         9:[2554],
-        #         13: [414],
-        #     },
+            # lerobot_reord_top_token.py
+            "low_transport_paper": {
+                1: [1222],
+                3: [2003],
+                5: [1877,1904],
+                10: [2349],
+                13: [1744],
+            },
+            "high_transport_paper": {
+                2: [826],
+                3: [369],
+                5: [2102],
+                7: [1151],
+                9:[2554],
+                13: [414],
+            },
 
-        #     # # eef Z (python src/lerobot/scripts/physical_neuron_picking_test_Z.py)
-        #     # "high_transport": {
-        #     #     8:[333],
-        #     #     9:[327,163,756],
-        #     #     12:[45,902,54],
-        #     #     13:[93,106],
-        #     #     14:[426],
-        #     # },
-        #     # "low_transport": {
-        #     #     8:[640,607],
-        #     #     9:[396],
-        #     #     10:[87],
-        #     #     11:[43,546],
-        #     #     12:[544,652,781,87],
-        #     # },
+            # # eef Z (python src/lerobot/scripts/physical_neuron_picking_test_Z.py)
+            "high_transport": {
+                8:[333],
+                9:[327,163,756],
+                12:[45,902,54],
+                13:[93,106],
+                14:[426],
+            },
+            "low_transport": {
+                8:[640,607],
+                9:[396],
+                10:[87],
+                11:[43,546],
+                12:[544,652,781,87],
+            },
 
-        #     ### Constrative
-        #     # physical_neuron_picking.py
-        #     "high_transport": {
-        #         0: [1293],
-        #         1: [1050],
-        #         3: [2259],
-        #         4: [1183],
-        #         7: [295],
-        #         11: [1115,1595],
-        #         13: [431],
-        #         14: [736,805],
-        #     },
-        #     "low_transport": {
-        #         3: [962],
-        #         4: [1627],
-        #         6: [587],
-        #         7: [1007],
-        #         9: [149],
-        #         11: [1066],
-        #         12:[629,1164],
-        #         14: [423],
-        #         15:[1886],
-        #     },
+            ### Constrative
+            # physical_neuron_picking.py
+            "high_transport": {
+                0: [1293],
+                1: [1050],
+                3: [2259],
+                4: [1183],
+                7: [295],
+                11: [1115,1595],
+                13: [431],
+                14: [736,805],
+            },
+            "low_transport": {
+                3: [962],
+                4: [1627],
+                6: [587],
+                7: [1007],
+                9: [149],
+                11: [1066],
+                12:[629,1164],
+                14: [423],
+                15:[1886],
+            },
 
-        #     "high_transport_v2": {
-        #         3: [962],
-        #         4: [1627,1664],
-        #         6: [103],
-        #         8: [846],
-        #         9: [149],
-        #         10: [2224],
-        #         11: [511,1616],
-        #         13: [164],
-        #     },
-        #     "low_transport_v2": {
-        #         6: [251],
-        #         8: [1056],
-        #         10: [2175],
-        #         11: [1115,1407],
-        #         12: [2247],
-        #         13: [931],
-        #         14:[736,1836],
-        #         15: [762],
-        #     },
-
-
-        #     ### Constrative(dataset from ethanCSL/svla_koch_pick_n_place_vla_steering_height_experiment_setup)
-        #     "high_transport_clean_dataset": {
-        #         6: [1816],
-        #         9: [1596],
-        #         11: [665,1273],
-        #         12: [1937],
-        #         13: [489,500,1034,1261],
-        #         15: [1964],
-        #     },
-        #     "low_transport_clean_dataset": {
-        #         3: [1556],
-        #         6: [1558],
-        #         8: [1034,2114],
-        #         10: [454,2135],
-        #         11: [188,988,1115],
-        #         14: [1836],
-        #     },
+            "high_transport_v2": {
+                3: [962],
+                4: [1627,1664],
+                6: [103],
+                8: [846],
+                9: [149],
+                10: [2224],
+                11: [511,1616],
+                13: [164],
+            },
+            "low_transport_v2": {
+                6: [251],
+                8: [1056],
+                10: [2175],
+                11: [1115,1407],
+                12: [2247],
+                13: [931],
+                14:[736,1836],
+                15: [762],
+            },
 
 
-        #     # physical_neuron_finding.py
-        #     "green": {0: [1930, 491, 2532, 1677, 930, 1286, 1429], 1: [805, 1596], 2: [2033], 4: [1854], 5: [416], 6: [1767], 7: [6, 2055], 8: [1278], 10: [997], 14: [156], 15: [848, 2261]},
+            ### Constrative(dataset from ethanCSL/svla_koch_pick_n_place_vla_steering_height_experiment_setup)
+            "high_transport_clean_dataset": {
+                6: [1816],
+                9: [1596],
+                11: [665,1273],
+                12: [1937],
+                13: [489,500,1034,1261],
+                15: [1964],
+            },
+            "low_transport_clean_dataset": {
+                3: [1556],
+                6: [1558],
+                8: [1034,2114],
+                10: [454,2135],
+                11: [188,988,1115],
+                14: [1836],
+            },
 
-        #     "red" : {0: [1461, 2168, 1728, 1996, 1435], 2: [702, 672], 4: [1262], 6: [1633], 7: [2415, 1466, 934, 2125, 188], 8: [508], 9: [847], 11: [1022], 12: [1396], 14: [1924, 246]},
+
+            # physical_neuron_finding.py
+            "green": {0: [1930, 491, 2532, 1677, 930, 1286, 1429], 1: [805, 1596], 2: [2033], 4: [1854], 5: [416], 6: [1767], 7: [6, 2055], 8: [1278], 10: [997], 14: [156], 15: [848, 2261]},
+
+            "red" : {0: [1461, 2168, 1728, 1996, 1435], 2: [702, 672], 4: [1262], 6: [1633], 7: [2415, 1466, 934, 2125, 188], 8: [508], 9: [847], 11: [1022], 12: [1396], 14: [1924, 246]},
 
 
 
-        #     #####################
-        #     "fast_transport": {
-        #         7: [884],
-        #         8: [735],
-        #         12: [287],
-        #         14: [1994],
-        #     },
-        #     "slow_transport": {
-        #         0: [435],
-        #         5: [779],
-        #         8: [2269],
-        #         10: [1333],
-        #         11: [2157],
-        #         13: [1456],
-        #     },
-        #     # "green": {
-        #     #     1: [798],
-        #     #     7: [230],
-        #     #     8: [1527],
-        #     #     9: [863],
-        #     # },
-        #     # "red" : {
-        #     #     1: [67, 1986],
-        #     #     4: [688],
-        #     #     8: [216],
-        #     #     10: [2283],
-        #     #     13: [268],
-        #     # },
-        #     "right" : {
-        #         4: [1897, 1400],
-        #         10: [1257],
-        #         13: [1122],
-        #         14: [479,1650]
-        #     },
-        #     "left" : {
-        #         3: [583],
-        #         4: [1936],
-        #         5: [1872],
-        #         6: [2374],
-        #         9: [1941],
-        #         11: [1367],
-        #     }
-        # }
+            #####################
+            "fast_transport": {
+                7: [884],
+                8: [735],
+                12: [287],
+                14: [1994],
+            },
+            "slow_transport": {
+                0: [435],
+                5: [779],
+                8: [2269],
+                10: [1333],
+                11: [2157],
+                13: [1456],
+            },
+            # "green": {
+            #     1: [798],
+            #     7: [230],
+            #     8: [1527],
+            #     9: [863],
+            # },
+            # "red" : {
+            #     1: [67, 1986],
+            #     4: [688],
+            #     8: [216],
+            #     10: [2283],
+            #     13: [268],
+            # },
+            "right" : {
+                4: [1897, 1400],
+                10: [1257],
+                13: [1122],
+                14: [479,1650]
+            },
+            "left" : {
+                3: [583],
+                4: [1936],
+                5: [1872],
+                6: [2374],
+                9: [1941],
+                11: [1367],
+            }
+        }
 
-        # if hasattr(policy, "clear_activation_steering"):
-        #     policy.clear_activation_steering()
+        if hasattr(policy, "clear_activation_steering"):
+            policy.clear_activation_steering()
 
-        # if alpha == 0.0:
-        #     print("[BASELINE DEBUG] alpha=0.0: observe activation only, no steering.")
+        if alpha == 0.0:
+            print("[BASELINE DEBUG] alpha=0.0: observe activation only, no steering.")
 
-        #     selected_neurons = semantic_neuron_sets[intervention_name]
+            selected_neurons = semantic_neuron_sets[intervention_name]
 
-        #     policy.set_activation_steering(
-        #         steering_neurons=selected_neurons,
-        #         alpha=0.0,
-        #         record_debug=True,
-        #         top_k_runtime=10,
-        #         enable_steering=False,
-        #     )
-        # else:
-        #     if not hasattr(policy, "set_activation_steering"):
-        #         raise AttributeError(
-        #             "Policy does not have set_activation_steering(). "
-        #             "Make sure modeling_smolvla.py contains the new hook-based steering code."
-        #         )
+            policy.set_activation_steering(
+                steering_neurons=selected_neurons,
+                alpha=0.0,
+                record_debug=True,
+                top_k_runtime=10,
+                enable_steering=False,
+            )
+        else:
+            if not hasattr(policy, "set_activation_steering"):
+                raise AttributeError(
+                    "Policy does not have set_activation_steering(). "
+                    "Make sure modeling_smolvla.py contains the new hook-based steering code."
+                )
 
-        #     selected_neurons = semantic_neuron_sets[intervention_name]
+            selected_neurons = semantic_neuron_sets[intervention_name]
 
-        #     # 1. Print selected neurons and their value-vector top tokens.
-        #     # This is semantic meaning, not runtime activation.
-        #     _, metadata, _ = extract_semantic_embeddings_from_policy(
-        #         policy,
-        #         top_k_tokens=5,
-        #         device=get_safe_torch_device(policy.config.device),
-        #     )
+            # 1. Print selected neurons and their value-vector top tokens.
+            # This is semantic meaning, not runtime activation.
+            _, metadata, _ = extract_semantic_embeddings_from_policy(
+                policy,
+                top_k_tokens=5,
+                device=get_safe_torch_device(policy.config.device),
+            )
 
-        #     print_steered_neurons_info(
-        #         metadata,
-        #         activation_steering_config_for_print(selected_neurons, alpha),
-        #         title=f"[SELECTED BEFORE STEERING] {intervention_name}: Value-Vector Top Tokens",
-        #     )
+            print_steered_neurons_info(
+                metadata,
+                activation_steering_config_for_print(selected_neurons, alpha),
+                title=f"[SELECTED BEFORE STEERING] {intervention_name}: Value-Vector Top Tokens",
+            )
 
-        #     # 2. Register paper-alike activation steering hook.
-        #     policy.set_activation_steering(
-        #         steering_neurons=selected_neurons,
-        #         alpha=alpha,
-        #         record_debug=True,
-        #     )
+            # 2. Register paper-alike activation steering hook.
+            policy.set_activation_steering(
+                steering_neurons=selected_neurons,
+                alpha=alpha,
+                record_debug=True,
+            )
 
-        # print("--------------------------------\n")
+        print("--------------------------------\n")
 
 #########################################################################################
 
@@ -853,7 +853,7 @@ def record_loop(
 #   alpha = 0  -> effectively baseline
 #########################################################################################
 
-        caa_enable = True
+        caa_enable = False
 
         # Use positive alpha for HIGH, negative alpha for LOW.
         # Suggested first tests:

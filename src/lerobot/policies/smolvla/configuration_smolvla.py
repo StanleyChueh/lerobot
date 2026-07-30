@@ -106,6 +106,11 @@ class SmolVLAConfig(PreTrainedConfig):
     # Real-Time Chunking (RTC) configuration
     rtc_config: RTCConfig | None = None
 
+    # Training-time flags saved into config.json by the trainer; ignored at inference
+    compile_model: bool = False
+    compile_mode: str = "max-autotune"
+    use_peft: bool = False
+
     def __post_init__(self):
         super().__post_init__()
 

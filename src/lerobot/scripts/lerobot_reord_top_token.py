@@ -5,7 +5,6 @@ import re
 
 import numpy as np
 import torch
-from sklearn.neighbors import NearestNeighbors
 
 
 @torch.no_grad()
@@ -262,9 +261,6 @@ def extract_semantic_embeddings(text_model, lm_head_weight, tokenizer, top_k_tok
         "metadata": metadata,
     }
 
-<<<<<<< HEAD
-def print_top_neurons_overall_by_logit(metadata, top_n=15):
-=======
 
 @torch.no_grad()
 def build_concept_embedding(concept_text, tokenizer, W_out, device):
@@ -296,7 +292,7 @@ def get_partition_indices(num_vectors, partition="full"):
         raise ValueError("partition must be one of: full, early, late")
 
 
-def build_knn_candidate_clusters(semantic_embeddings, k_values=(10, 20, 40), partition="full"):
+def build_knn_candidate_clusters(semantic_embeddings, k_values=(10, 20, 40), partition="full", chunk_size=4000):
     """
     Faithful approximation of the paper's Appendix B.3 steps 3-4, fitted once
     per partition and reused across every k and every concept:
@@ -304,27 +300,50 @@ def build_knn_candidate_clusters(semantic_embeddings, k_values=(10, 20, 40), par
       - each neighborhood acts as a candidate cluster
       - centroid = average embedding of cluster members
 
-    sklearn's cosine metric has no tree index, so `.kneighbors()` is an
-    O(N^2) brute-force pass over all ~tens-of-thousands of value vectors --
-    running it once per (concept, k) pair instead of once per partition is
-    what makes `--mode all` slow.
+    This computes cosine similarity as a plain dot product, chunked over rows,
+    rather than via sklearn's NearestNeighbors(metric="cosine") -- semantic_embeddings
+    is already L2-normalized (see extract_semantic_embeddings), so cosine
+    similarity IS the dot product, and sklearn's generic brute-force path
+    doesn't need to be involved at all. This matters because sklearn's
+    cosine kNN was measured (via journalctl -k, RSS at OOM-kill) to hold
+    ~120GB+ resident at OpenVLA's ~350K-vector scale regardless of
+    OMP_NUM_THREADS, i.e. it wasn't chunking tightly enough for this vector
+    count. This version's peak is bounded to chunk_size * N * 4 bytes
+    (~5.6GB at the default chunk_size on OpenVLA's largest partition),
+    independent of thread count.
     """
     all_idx = get_partition_indices(len(semantic_embeddings), partition=partition)
-    X = semantic_embeddings[all_idx]
+    X = semantic_embeddings[all_idx]  # already L2-normalized, float32
 
-    max_k = min(max(k_values), len(X))
+    num_vectors = len(X)
+    max_k = min(max(k_values), num_vectors)
     if max_k < 1:
         raise ValueError("No vectors available in this partition.")
 
-    nbrs = NearestNeighbors(n_neighbors=max_k, metric="cosine")
-    nbrs.fit(X)
-    _, neighbors = nbrs.kneighbors(X, n_neighbors=max_k)  # [N, max_k], the one expensive call
+    X_t = torch.from_numpy(X)  # zero-copy view over X
+    neighbors = np.empty((num_vectors, max_k), dtype=np.int64)
+
+    for start in range(0, num_vectors, chunk_size):
+        end = min(start + chunk_size, num_vectors)
+        sims = X_t[start:end] @ X_t.T  # [chunk, N] cosine similarities (dot products of unit vectors)
+        _, top_idx = torch.topk(sims, k=max_k, dim=1)
+        neighbors[start:end] = top_idx.numpy()
+        del sims, top_idx
 
     clusters_by_k = {}
     for k in k_values:
         k = min(k, max_k)
         neighbors_k = neighbors[:, :k]
-        centroids = X[neighbors_k].mean(axis=1)
+        # X[neighbors_k] would fancy-index into a new (N, k, d_model) array before
+        # .mean() ever runs -- for OpenVLA's N=352,256 that's ~58GB at k=10 and
+        # ~231GB at k=40, which is what was actually OOM-killing this step (the
+        # chunked similarity matmul above stayed flat at ~18GB the whole time).
+        # Accumulating one neighbor-slot at a time bounds peak memory to O(N x
+        # d_model), the same order as X itself, regardless of k.
+        centroid_sum = np.zeros((num_vectors, X.shape[1]), dtype=np.float32)
+        for j in range(k):
+            centroid_sum += X[neighbors_k[:, j]]
+        centroids = centroid_sum / k
         centroids /= (np.linalg.norm(centroids, axis=1, keepdims=True) + 1e-8)
         clusters_by_k[k] = {"all_idx": all_idx, "neighbors": neighbors_k, "centroids": centroids}
 
@@ -603,7 +622,6 @@ def plot_multi_policy_antonym_similarity(results, antonym_pairs, output_path):
 
 
 def print_top_neurons_overall_by_logit(metadata, tokenizer, top_n=15):
->>>>>>> e88acf29f60d3f1fca14447057c183f44d6b1666
     """
     不依賴任何輸入概念。
     直接掃描模型中「所有層、所有神經元」，根據神經元對其 Top 1 Token 的 Logit 進行全局排序。
@@ -703,6 +721,76 @@ def print_keyword_ranking_summary(results):
             print(f"{neuron['rank']:<5} | {neuron['match_count']:<11} | L{neuron['layer']:<4} | {neuron['neuron']:<6} | [{tokens_str}]")
 
 
+def export_keyword_results_json(keyword_results, policy_family, policy_path, top_k_tokens, output_path):
+    """
+    Saves per-concept keyword-frequency metrics for cross-policy --mode combine_keyword
+    comparison, mirroring export_results_json's role for the kNN method.
+
+    keyword_purity = mean(match_count)/top_k_tokens across the top-N ranked neurons for
+    that concept -- i.e. what fraction of the top-k token slots, averaged over exactly the
+    neuron population the paper's Appendix C.3 steering-selection method would pick
+    (highest keyword-frequency value vectors), literally match the target concept. This is
+    the keyword-method analog of the kNN method's cluster purity, so the two are on a
+    comparable 0-1 scale even though they're computed from different neuron populations.
+    """
+    payload = {
+        "policy_family": policy_family,
+        "policy_path": policy_path,
+        "top_k_tokens": top_k_tokens,
+        "concepts": {},
+    }
+    for concept, ranked_neurons in keyword_results.items():
+        if not ranked_neurons:
+            continue
+        match_counts = [n["match_count"] for n in ranked_neurons]
+        payload["concepts"][concept] = {
+            "keyword_purity": (sum(match_counts) / len(match_counts)) / top_k_tokens,
+            "top1_match_count": ranked_neurons[0]["match_count"],
+            "num_neurons_considered": len(ranked_neurons),
+            "top_members": ranked_neurons,
+        }
+    with open(output_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"[*] Saved combinable keyword results to {output_path}")
+
+
+def load_multi_policy_keyword_results(paths):
+    results = {}
+    for path in paths:
+        with open(path) as f:
+            data = json.load(f)
+        results[data["policy_family"]] = data
+    return results
+
+
+def plot_multi_policy_keyword_purity(results, concepts, output_path):
+    """
+    One grouped bar chart: x-axis = concept, one bar per policy -- the keyword-method
+    (Appendix C.3) analog of plot_multi_policy_purity, which does this for the kNN method.
+    """
+    import matplotlib.pyplot as plt
+
+    policies = list(results.keys())
+    x = np.arange(len(concepts))
+    width = 0.8 / max(len(policies), 1)
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    for i, policy in enumerate(policies):
+        values = [(results[policy]["concepts"].get(c) or {}).get("keyword_purity", 0.0) * 100 for c in concepts]
+        ax.bar(x + i * width, values, width=width, label=policy)
+
+    ax.set_xticks(x + width * (len(policies) - 1) / 2)
+    ax.set_xticklabels(concepts)
+    ax.set_ylabel("Keyword-match purity (%)")
+    ax.set_ylim(0, 100)
+    ax.set_title("Keyword-frequency purity by concept and policy (Appendix C.3 method)")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200)
+    plt.close(fig)
+    print(f"[*] Saved {output_path}")
+
+
 def export_top_tokens_for_classification(metadata, tokenizer, output_csv_path, top_n=30):
     """
     Dumps top-N tokens per value vector to CSV for manual or LLM-judge
@@ -749,49 +837,17 @@ def compute_semantic_fraction_by_layer(metadata, labels_by_global_id):
 
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    policy_path = "lerobot/smolvla_base"
-    #policy_path = "ethanCSL/svla_koch_pick_n_place_vla_steering_color_unfrozen"
-    
-    bundle = load_smolvla_and_extract_semantic_embeddings(
-        policy_path=policy_path,
-        top_k_tokens=10, 
-    )
-    
-    # 升級版的字典結構：加入 neg (負向排除字)
-    # 將會導致字串誤判的字詞放入 neg 列表中
-    intervention_keywords_map = {
-        "Low Transport": {
-            "pos": ["low"],
-            "neg": ["follow", "allow", "slow", "blow", "glow", "yellow", "hollow"] # 排除包含 low 的無關字
-        },
-        "High Transport": {
-            "pos": ["high"],
-            "neg": ["thigh","low","slow","lower"] # 排除大腿 (雖然不一定會出現，但作為防呆示範)
-        },
-        "Slow Transport": {
-            "pos": ["slow", "safe"],
-            "neg": []
-        },
-        "Fast Transport": {
-            "pos": ["fast", "risk"],
-            "neg": ["breakfast"] # 排除早餐
-        },
-    }
-    
-    # 執行關鍵字頻率排名
-    keyword_ranking_results = run_keyword_based_ranking(
-        metadata=bundle["metadata"],
-        concept_keywords_map=intervention_keywords_map,
-        top_n=6
-=======
     parser = argparse.ArgumentParser(
         description="Extract and analyze FFN semantic neurons across VLA policies (smolvla, pi0, openvla)."
     )
     parser.add_argument("--policy_family", choices=["smolvla", "pi0", "openvla"], default=None)
     parser.add_argument("--policy_path", default=None, help="HF repo id or local checkpoint path")
     parser.add_argument("--top_k_tokens", type=int, default=5)
-    parser.add_argument("--mode", choices=["keyword", "knn", "export", "logit", "all", "combine"], default="all")
+    parser.add_argument(
+        "--mode",
+        choices=["keyword", "knn", "export", "logit", "all", "combine", "combine_keyword"],
+        default="all",
+    )
     parser.add_argument("--keywords_json", default=None, help="Path to JSON: {concept: {pos:[...], neg:[...]}}")
     parser.add_argument("--concepts", nargs="*", default=["fast", "slow", "up", "down"])
     parser.add_argument("--knn_k_values", nargs="*", type=int, default=[10, 20, 40])
@@ -814,10 +870,15 @@ if __name__ == "__main__":
         help="Path to save this run's per-concept metrics+centroids as JSON, for later --mode combine",
     )
     parser.add_argument(
+        "--keyword_results_json",
+        default=None,
+        help="Path to save this run's per-concept keyword-frequency metrics as JSON, for later --mode combine_keyword",
+    )
+    parser.add_argument(
         "--combine_inputs",
         nargs="*",
         default=None,
-        help="--mode combine only: paths to --results_json outputs from separate policy runs",
+        help="--mode combine/combine_keyword only: paths to --results_json/--keyword_results_json outputs from separate policy runs",
     )
     parser.add_argument(
         "--combine_output_prefix",
@@ -846,6 +907,18 @@ if __name__ == "__main__":
         )
         raise SystemExit(0)
 
+    if args.mode == "combine_keyword":
+        if not args.combine_inputs:
+            parser.error("--mode combine_keyword requires --combine_inputs <keyword_results.json> ...")
+
+        multi_keyword_results = load_multi_policy_keyword_results(args.combine_inputs)
+        all_concepts = sorted({c for data in multi_keyword_results.values() for c in data["concepts"]})
+
+        plot_multi_policy_keyword_purity(
+            multi_keyword_results, all_concepts, f"{args.combine_output_prefix}_keyword_purity.png"
+        )
+        raise SystemExit(0)
+
     if not args.policy_family or not args.policy_path:
         parser.error("--policy_family and --policy_path are required unless --mode combine")
 
@@ -854,7 +927,6 @@ if __name__ == "__main__":
     )
     bundle = extract_semantic_embeddings(
         text_model, lm_head_weight, tokenizer, top_k_tokens=args.top_k_tokens, device=device
->>>>>>> e88acf29f60d3f1fca14447057c183f44d6b1666
     )
 
     # Everything downstream only needs bundle's extracted arrays (semantic
@@ -873,6 +945,11 @@ if __name__ == "__main__":
             concept_keywords_map = json.load(f)
         keyword_results = run_keyword_based_ranking(bundle["metadata"], tokenizer, concept_keywords_map, top_n=6)
         print_keyword_ranking_summary(keyword_results)
+
+        if args.keyword_results_json:
+            export_keyword_results_json(
+                keyword_results, args.policy_family, args.policy_path, args.top_k_tokens, args.keyword_results_json
+            )
 
     if args.mode in ("knn", "all"):
         cluster_results = run_concept_clustering(
