@@ -699,3 +699,119 @@ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --
   --width 960 --height 720 \
   --live
 ```
+
+Automatically generate high and low EEF trajectory episodes
+
+```
+python src/lerobot/scripts/collect_libero_height_demos.py     --arc both --n-eps 30 --task-idx 0 --save-video 2>/dev/null
+```
+
+Convert HDF5 to LeRobot format
+
+```
+python src/lerobot/scripts/convert_hdf5_to_lerobot.py     --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5            /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5     --output ~/datasets/lerobot/libero_height_task00     --task "Pick up the black bowl and place it on the plate."     --cameras agentview     --fps 20     --format libero
+```
+
+Training
+
+```
+lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero   --batch_size=8   --steps=20000   --output_dir=outputs/train/svla_franka_pick_n_place_vla_steering_libero   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero   --wandb.enable=false  --rename_map='{                                              
+    "observation.images.agentview": "observation.images.camera1"
+  }'   --policy.empty_cameras=2 --dataset.video_backend=pyav
+
+```
+Neurons finding
+
+```
+python src/lerobot/scripts/libero_find_height_neurons.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --top-n 20 \
+  --top-k-tokens 10 \
+  --output outputs/libero_height_neurons.json
+```
+
+Evaluation
+
+Paper Keyword neurons VLA steering
+
+```
+python src/lerobot/scripts/libero_eval_steering.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
+         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
+  --task "Pick up the black bowl and place it on the plate." \
+  --conditions none keyword_high keyword_low \
+  --neurons-json outputs/libero_height_neurons_ref.json \
+  --keyword-alpha 6.0 \
+  --steering-mode set \
+  --keyword-top-n 10 \
+  --n-rollouts 50 \
+  --save-video --video-rollouts 0 1 2 \
+  --out-dir outputs/libero_eval_paper_keyword \
+  2>&1 | tee outputs/eval_paper_keyword.log
+```
+
+Physical Neurons Finding
+
+```
+python src/lerobot/scripts/libero_find_physical_neurons.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --high-hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
+  --low-hdf5  /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
+  --task "Pick up the black bowl and place it on the plate." \
+  --top-n 10 \
+  --output outputs/libero_physical_neurons.json \
+  2>&1 | tee outputs/find_physical_neurons.log
+```
+
+```
+python src/lerobot/scripts/libero_eval_steering.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
+         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
+  --task "Pick up the black bowl and place it on the plate." \
+  --conditions none keyword_high keyword_low \
+  --neurons-json outputs/libero_physical_neurons.json \
+  --keyword-alpha 6.0 \
+  --steering-mode set \
+  --keyword-top-n 10 \
+  --n-rollouts 50 \
+  --save-video --video-rollouts 0 1 2 \
+  --out-dir outputs/libero_eval_physical_neurons \
+  2>&1 | tee outputs/eval_physical_neurons.log
+```
+
+CAA Prompt Steering
+
+Finding CAA
+
+```
+ python src/lerobot/scripts/libero_compute_caa.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --high-hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
+  --low-hdf5  /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
+  --task "Pick up the black bowl and place it on the plate." \
+  --output outputs/libero_caa_vectors.pt \
+  --stride 10 \
+  2>&1 | tee outputs/compute_caa.log
+```
+
+Steering
+
+```
+python src/lerobot/scripts/libero_eval_steering.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
+  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
+         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
+  --task "Pick up the black bowl and place it on the plate." \
+  --conditions none caa \
+  --caa-path outputs/libero_caa_vectors.pt \
+  --caa-alpha 2.0 \
+  --n-rollouts 50 \
+  --save-video --video-rollouts 0 1 2 \
+  --out-dir outputs/libero_eval_caa \
+  2>&1 | tee outputs/eval_caa.log
+```
+
+
+
