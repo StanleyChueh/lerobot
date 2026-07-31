@@ -217,6 +217,16 @@ LJ_NAMES = [f"LJ{i}.pos" for i in range(1, 8)] + ["LJ8.pos"]
 # Franka Panda (LIBERO) — 7 arm joints + gripper OSC delta actions
 FRANKA_STATE_NAMES = [f"panda_joint_{i+1}" for i in range(7)] + ["gripper"]
 
+# Format of ethanCSL/svla_franka_pick_n_place_vla_steering_libero:
+#   observation.state = 8D  [panda_joint_1..7, gripper]
+#   action            = 8D  next state (no-leader-arm: action[t] = state[t+1])
+#   cameras           = observation.images.agentview + observation.images.robot0_eye_in_hand
+# LeRobot camera key (folder name) -> HDF5 dataset key written by the collector.
+LIBERO_CAM_HDF5 = {
+    "agentview":           "agentview_image",
+    "robot0_eye_in_hand":  "eye_in_hand_image",
+}
+
 
 def _smooth_actions(actions: np.ndarray, sigma: float = 2.0) -> np.ndarray:
     """Gaussian-smooth the 7 arm-joint dims (0:7); leave the gripper dim (7) unsmoothed.
@@ -234,27 +244,32 @@ def _smooth_actions(actions: np.ndarray, sigma: float = 2.0) -> np.ndarray:
 
 
 def _load_episode_libero(hdf5_path: str, ep_name: str, cameras: list) -> dict | None:
-    """Load one LIBERO height-demo episode (ep_NNN root key format).
+    """Load one LIBERO height-demo episode in the format of
+    ethanCSL/svla_franka_pick_n_place_vla_steering_libero.
 
-    Both state and action are in 8D joint space: [panda_joint_1..7, gripper].
-    action[t] = robot_state[t+1]  (next joint target — standard no-leader-arm formulation).
+    observation.state = 8D  [panda_joint_1..7, gripper]
+    action            = 8D  next state  (no leader arm → action[t] = state[t+1],
+                                          so action and observation share the same values)
+    cameras           = --cameras agentview robot0_eye_in_hand
+                        → observation.images.agentview + observation.images.robot0_eye_in_hand
+    Drops the last frame (no "next" state exists for it).
     """
     with h5py.File(hdf5_path, "r") as f:
         g = f[ep_name]
-        joint_pos = g["joint_pos"][()]      # (T, 7) Franka arm joints
-        gripper   = g["actions"][:, 6:7]   # (T, 1) gripper cmd: -1=open, +1=close
-        robot_state = np.concatenate([joint_pos, gripper], axis=1)  # (T, 8)
+        joint_pos = g["joint_pos"][()]        # (L, 7) Franka arm joints
+        gripper   = g["actions"][:, 6:7]      # (L, 1) gripper cmd: -1=open, +1=close
+        robot_state = np.concatenate([joint_pos, gripper], axis=1)  # (L, 8)
         if len(robot_state) < 2:
             return None
-        T = len(robot_state) - 1   # lose last frame (no "next" state exists for it)
+        T = len(robot_state) - 1
         ep_dict: dict = {
             "name":    ep_name,
             "states":  robot_state[:-1].astype(np.float32),  # (T, 8) current
-            "actions": robot_state[1:].astype(np.float32),   # (T, 8) next = target
+            "actions": robot_state[1:].astype(np.float32),   # (T, 8) next = target (no leader arm)
             "success": bool(g.attrs.get("success", False)),
         }
         for cam in cameras:
-            img_key = f"{cam}_image" if f"{cam}_image" in g else cam
+            img_key = LIBERO_CAM_HDF5.get(cam, f"{cam}_image" if f"{cam}_image" in g else cam)
             if img_key in g:
                 ep_dict[f"cam_{cam}"] = g[img_key][()][:T]
     return ep_dict
@@ -307,7 +322,7 @@ def _load_episode(hdf5_path: str, ep_name: str, cameras: list) -> dict | None:
 
 def _joint_names(dim: int, is_action: bool = False, fmt: str = "isaaclab") -> list:
     if fmt == "libero":
-        return FRANKA_STATE_NAMES[:dim]   # same names for action and state (both joint space)
+        return FRANKA_STATE_NAMES[:dim]   # same 8D joint names for action and state (no leader arm)
     if dim == 8:
         return LJ_NAMES
     return [f"joint_{i}" for i in range(dim)]

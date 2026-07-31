@@ -66,7 +66,7 @@ def make_env(bddl_path: Path):
     from libero.libero.envs import OffScreenRenderEnv
     return OffScreenRenderEnv(
         bddl_file_name=str(bddl_path),
-        camera_names=["agentview"],
+        camera_names=["agentview", "robot0_eye_in_hand"],  # third-person + WRIST (standard LIBERO)
         camera_heights=256,
         camera_widths=256,
     )
@@ -300,10 +300,13 @@ def collect_episode(env, arc_type, bddl_fname, demo_actions, demo_init_state,
     carry_to([tgt_pos[0], tgt_pos[1], carry_z], hold_xy=tgt_pos[:2],
              label="G-retract", max_steps=50)
 
-    # ── Package ──
-    images       = np.stack([o["agentview_image"]  for o in all_obs]).astype(np.uint8)
-    eef_pos_traj = np.stack([o["robot0_eef_pos"]  for o in all_obs]).astype(np.float32)
-    joint_pos    = np.stack([o["robot0_joint_pos"] for o in all_obs]).astype(np.float32)
+    # ── Package (standard LIBERO fields: 2 cameras + eef-based state components) ──
+    images       = np.stack([o["agentview_image"]         for o in all_obs]).astype(np.uint8)
+    wrist_images = np.stack([o["robot0_eye_in_hand_image"] for o in all_obs]).astype(np.uint8)
+    eef_pos_traj = np.stack([o["robot0_eef_pos"]          for o in all_obs]).astype(np.float32)
+    eef_quat     = np.stack([o["robot0_eef_quat"]         for o in all_obs]).astype(np.float32)  # [x,y,z,w]
+    gripper_qpos = np.stack([o["robot0_gripper_qpos"]     for o in all_obs]).astype(np.float32)  # (2,)
+    joint_pos    = np.stack([o["robot0_joint_pos"]        for o in all_obs]).astype(np.float32)
     T = len(all_obs)
     actions = np.zeros((T, 7), dtype=np.float32)
     n = min(len(all_acts), T)
@@ -323,13 +326,16 @@ def collect_episode(env, arc_type, bddl_fname, demo_actions, demo_init_state,
               f"final_bowl_xy_dist={dist_xy*100:.1f}cm success={success}")
 
     return {
-        "images":     images,
-        "eef_pos":    eef_pos_traj,
-        "joint_pos":  joint_pos,
-        "actions":    actions,
-        "peak_eef_z": peak_z,
-        "carry_eef_z": carry_eef_z,
-        "success":    success,
+        "images":       images,
+        "wrist_images": wrist_images,
+        "eef_pos":      eef_pos_traj,
+        "eef_quat":     eef_quat,
+        "gripper_qpos": gripper_qpos,
+        "joint_pos":    joint_pos,
+        "actions":      actions,
+        "peak_eef_z":   peak_z,
+        "carry_eef_z":  carry_eef_z,
+        "success":      success,
     }
 
 
@@ -366,10 +372,13 @@ def save_hdf5(episodes: list[dict], path: Path, arc_type: str, task_name: str):
         )
         for i, ep in enumerate(episodes):
             g = f.create_group(f"ep_{i:03d}")
-            g.create_dataset("agentview_image", data=ep["images"],    compression="gzip", compression_opts=4)
-            g.create_dataset("eef_pos",         data=ep["eef_pos"])
-            g.create_dataset("joint_pos",        data=ep["joint_pos"])
-            g.create_dataset("actions",          data=ep["actions"])
+            g.create_dataset("agentview_image",   data=ep["images"],       compression="gzip", compression_opts=4)
+            g.create_dataset("eye_in_hand_image", data=ep["wrist_images"], compression="gzip", compression_opts=4)  # WRIST
+            g.create_dataset("eef_pos",           data=ep["eef_pos"])
+            g.create_dataset("eef_quat",          data=ep["eef_quat"])      # for axis-angle in 8D eef state
+            g.create_dataset("gripper_qpos",      data=ep["gripper_qpos"])  # 2D
+            g.create_dataset("joint_pos",         data=ep["joint_pos"])
+            g.create_dataset("actions",           data=ep["actions"])       # 7D OSC-pose delta
             g.attrs["peak_eef_z"] = ep["peak_eef_z"]
             g.attrs["success"]    = bool(ep["success"])
     print(f"  Saved {len(episodes)} ep → {path}")

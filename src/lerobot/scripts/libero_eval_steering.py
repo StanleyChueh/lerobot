@@ -165,7 +165,7 @@ def _vlm_text_layers(policy):
 
 
 def clear_steering(policy):
-    for attr in ("_caa_handles", "_kw_handles"):
+    for attr in ("_caa_handles", "_kw_handles", "_phys_handles"):
         if hasattr(policy, attr):
             for h in getattr(policy, attr):
                 try:
@@ -304,6 +304,54 @@ def setup_keyword_neurons(
     no = sum(len(v) for v in opposite_map.values())
     print(f"  [KEYWORD-{direction}] mode={mode}, target={nt}n/{len(target_map)}L "
           f"suppress={no}n, alpha={alpha:.1f}, bidir={bidirectional}")
+
+
+def setup_physical_caa(policy, vectors_path: str, direction: str, alpha: float,
+                       top_k: int | None = None):
+    """
+    Sparse-CAA physical-neuron steering (the principled maximum of the
+    physical-neuron method): ADD sign*alpha*(mean_high − mean_low) to the
+    VLM text_model.layers[i].mlp.down_proj INPUT activation.
+
+    Unlike fixed-alpha SET, each neuron is weighted by its ACTUAL contrast
+    magnitude+sign — so both high and low directions are captured faithfully.
+
+    direction: "high" → +alpha*vec  ;  "low" → −alpha*vec
+    top_k: if set, keep only the top-k neurons per layer by |contrast| (sparse);
+           None uses the full dense VLM-space contrast vector.
+    """
+    clear_steering(policy)
+    obj = torch.load(vectors_path, map_location="cpu", weights_only=False)
+    vectors = obj["vectors"] if "vectors" in obj else obj
+    sign = +1.0 if direction == "high" else -1.0
+
+    text_model = policy.model.vlm_with_expert.get_vlm_model().text_model
+    handles = []
+    total_n = 0
+    for layer_key, vec in vectors.items():
+        li = int(layer_key)
+        if not (0 <= li < len(text_model.layers)):
+            continue
+        v = vec.float().flatten().clone()
+        if top_k is not None and top_k < v.numel():
+            # keep only the top-k by |contrast|, zero the rest (sparse)
+            idx = torch.topk(v.abs(), top_k).indices
+            mask = torch.zeros_like(v)
+            mask[idx] = 1.0
+            v = v * mask
+        delta = (sign * alpha * v)
+        nz = int((v != 0).sum().item())
+        total_n += nz
+
+        def _add(module, inputs, _d=delta):
+            act = inputs[0].clone()
+            act = act + _d.to(act.device, act.dtype)
+            return (act,) + tuple(inputs[1:])
+
+        handles.append(text_model.layers[li].mlp.down_proj.register_forward_pre_hook(_add))
+    policy._phys_handles = handles
+    print(f"  [PHYSICAL-CAA-{direction}] {len(handles)} layers, {total_n} active neurons, "
+          f"alpha={alpha:.1f}, top_k={top_k}")
 
 
 # ── Rollout ────────────────────────────────────────────────────────────────────
@@ -637,14 +685,30 @@ def plot_comparison(
     box_data, box_labels, box_colors = [], [], []
     all_peaks_flat = []
 
-    for cond, traces in traces_by_cond.items():
-        peaks = []
-        for tr in traces:
-            valid = tr[np.isfinite(tr)] * 100
+    def _carry_peaks(traces_arr):
+        out = []
+        for tr in traces_arr:
+            valid = np.asarray(tr)[np.isfinite(tr)] * 100
             if len(valid) > 4:
-                lo = int(0.20 * len(valid))
-                hi = int(0.80 * len(valid))
-                peaks.append(float(np.max(valid[lo:hi])))
+                lo = int(0.20 * len(valid)); hi = int(0.80 * len(valid))
+                out.append(float(np.max(valid[lo:hi])))
+        return out
+
+    # Dataset reference boxes first (ground-truth high/low demo range)
+    if isinstance(ref_traces, dict):
+        for arc in ("low", "high"):
+            arr = ref_traces.get(arc)
+            if arr is None or len(arr) == 0:
+                continue
+            peaks = _carry_peaks(arr)
+            if peaks:
+                box_data.append(peaks)
+                box_labels.append(f"Dataset {arc.upper()}")
+                box_colors.append(REF_STYLE.get(arc, ("gray", ""))[0])
+                all_peaks_flat.extend(peaks)
+
+    for cond, traces in traces_by_cond.items():
+        peaks = _carry_peaks(traces)
         if peaks:
             box_data.append(peaks)
             box_labels.append(LABELS.get(cond, cond))

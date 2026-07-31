@@ -233,6 +233,21 @@ def main():
     with open(out, "w") as f:
         json.dump(neurons_out, f, indent=2)
 
+    # ── Save per-layer contrast VECTORS (for sparse-CAA steering) ─────────────
+    # vectors[layer] = mean_high − mean_low  (dim = intermediate_dim, 2560).
+    # This is the VLM-space CAA vector; the eval can ADD ±alpha × (top-k masked)
+    # to down_proj input for principled, per-neuron-weighted physical steering.
+    vec_out = {}
+    for layer_idx in range(n_layers):
+        diff = (high_means[layer_idx].astype(np.float32)
+                - low_means[layer_idx].astype(np.float32))
+        vec_out[str(layer_idx)] = torch.from_numpy(diff)
+    vec_path = out.with_name(out.stem + "_vectors.pt")
+    torch.save({"vectors": vec_out, "n_layers": n_layers,
+                "module": "vlm.text_model.layers[i].mlp.down_proj(input)",
+                "direction": "high_minus_low"}, vec_path)
+    print(f"[✓] Saved contrast vectors → {vec_path}")
+
     print(f"\n[✓] Saved → {out}")
     for concept, lm in neurons_out.items():
         total = sum(len(v) for v in lm.values())
