@@ -700,23 +700,22 @@ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --
   --live
 ```
 
+Automatically generate episode(normal height)
+
+```
+python src/lerobot/scripts/collect_libero_standard_height.py \
+  --repo-id ethanCSL/svla_franka_libero_natural \
+  --root /home/bruce/datasets/libero_task0_natural \
+  --suite libero_spatial --task-idx 0 --n-eps 50 --arc natural 
+```
+
 Automatically generate high and low EEF trajectory episodes
 
 ```
-python src/lerobot/scripts/collect_libero_height_demos.py \
-  --arc both --n-eps 30 --task-idx 0 --save-video
-```
-
-Convert HDF5 to LeRobot format
-
-```
- python src/lerobot/scripts/convert_hdf5_to_lerobot.py \
-  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --output ~/datasets/lerobot/libero_height_task00 \
-  --task "Pick up the black bowl and place it on the plate." \
-  --cameras agentview robot0_eye_in_hand \
-  --fps 20 --format libero
+python src/lerobot/scripts/collect_libero_standard_height.py \
+  --repo-id ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc \
+  --root /home/bruce/datasets/libero_task0_osc \
+  --suite libero_spatial --task-idx 0 --n-eps 50 --arc both 
 ```
 
 Training
