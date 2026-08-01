@@ -214,6 +214,31 @@ def collect_episode(env, arc_type, bddl_fname, demo_actions, demo_init, obj_key,
     return frames, success
 
 
+def collect_episode_natural(env, demo_actions, demo_init, obj_key, tgt_key):
+    """Replay the FULL human demo (natural grasp→carry→place) and record
+    (obs, action) at each step, where action = the demo's own OSC 7D command.
+
+    This is the cleanest official-LIBERO training data: real teleop task
+    completion at natural height, no scripted lift/carry. Use this for the BASE
+    model (paper arXiv:2509.00328 trains the base VLA on normal demos and derives
+    the height-steering vector separately from high/low groups). Returns
+    (frames, success); frames = list of (obs, action)."""
+    env.reset()
+    obs = env.set_init_state(demo_init)
+    tgt_pos = obs[tgt_key].copy()
+    frames = []
+    for t in range(len(demo_actions)):
+        a = np.asarray(demo_actions[t], dtype=np.float32)
+        frames.append((obs, a.copy()))
+        obs, _, done, _ = env.step(a)
+        if done:
+            break
+    final_bowl = obs[obj_key]
+    dist_xy = float(np.linalg.norm(final_bowl[:2] - tgt_pos[:2]))
+    success = dist_xy < 0.08 and final_bowl[2] > 0.90
+    return frames, success
+
+
 def build_features(use_videos=True):
     img = {"dtype": "video" if use_videos else "image", "shape": (256, 256, 3),
            "names": ["height", "width", "channel"]}
@@ -233,7 +258,9 @@ def main():
     ap.add_argument("--suite", default="libero_spatial")
     ap.add_argument("--task-idx", type=int, default=None, help="single task 0-9; omit=all")
     ap.add_argument("--n-eps", type=int, default=50, help="human demos per (task, arc)")
-    ap.add_argument("--arc", choices=["high", "low", "both"], default="both")
+    ap.add_argument("--arc", choices=["high", "low", "both", "natural"], default="both",
+                    help="high/low/both = scripted carry heights (for steering-vector data); "
+                         "natural = replay full human demo (clean data for the BASE model)")
     ap.add_argument("--root", default=None, help="local dataset root (default HF cache)")
     ap.add_argument("--smoke", action="store_true", help="tiny 2-demo test")
     ap.add_argument("--push", action="store_true", help="push dataset to HF hub when done")
@@ -256,6 +283,7 @@ def main():
     bddl_files = suite.get_task_bddl_files()
     task_indices = [args.task_idx] if args.task_idx is not None else list(range(len(bddl_files)))
     arcs = ["high", "low"] if args.arc == "both" else [args.arc]
+    natural = args.arc == "natural"
 
     print(f"Creating LeRobot dataset: {args.repo_id}")
     ds = LeRobotDataset.create(
@@ -290,7 +318,10 @@ def main():
             for ep_i in range(n_demo):
                 da, di = demos[ep_i]
                 try:
-                    frames, success = collect_episode(env, arc, fname, da, di, obj_key, tgt_key)
+                    if natural:
+                        frames, success = collect_episode_natural(env, da, di, obj_key, tgt_key)
+                    else:
+                        frames, success = collect_episode(env, arc, fname, da, di, obj_key, tgt_key)
                 except Exception as e:
                     print(f"    ep {ep_i} {arc}: EXCEPTION {e}"); continue
                 if frames is None:
