@@ -6,9 +6,9 @@ Re-collect LIBERO height-steering demos in the STANDARD LeRobot/LIBERO format so
 the base model can actually complete the task in closed-loop (unlike the old
 single-camera, joint-action, 60-episode model).
 
-Standard format (matches HuggingFaceVLA/libero, Pi0.5 ~97% success):
-  observation.images.image   agentview  (256x256x3)         [third-person]
-  observation.images.image2  robot0_eye_in_hand (256x256x3) [WRIST — key for grasping]
+Standard LIBERO format (matches HuggingFaceVLA/libero, Pi0.5 ~97% success):
+  observation.images.agentview           (256x256x3)  [third-person]
+  observation.images.robot0_eye_in_hand  (256x256x3)  [WRIST — key for grasping]
   observation.state          8D  [eef_pos(3), eef_axisangle(3), gripper_qpos(2)]
   action                     7D  OSC-pose delta [dx,dy,dz,drx,dry,drz, gripper]
 
@@ -218,8 +218,10 @@ def build_features(use_videos=True):
     img = {"dtype": "video" if use_videos else "image", "shape": (256, 256, 3),
            "names": ["height", "width", "channel"]}
     return {
-        "observation.images.image":  dict(img),
-        "observation.images.image2": dict(img),
+        # LIBERO camera names (agentview = third-person, robot0_eye_in_hand = wrist).
+        # These match your training rename_map (agentview→camera1, robot0_eye_in_hand→camera2).
+        "observation.images.agentview":          dict(img),
+        "observation.images.robot0_eye_in_hand": dict(img),
         "observation.state":  {"dtype": "float32", "shape": (8,), "names": None},
         "action":             {"dtype": "float32", "shape": (7,), "names": None},
     }
@@ -296,8 +298,8 @@ def main():
                 n_total += 1; n_ok += int(success)
                 for obs, action in frames:
                     ds.add_frame({
-                        "observation.images.image":  obs["agentview_image"].astype(np.uint8),
-                        "observation.images.image2": obs["robot0_eye_in_hand_image"].astype(np.uint8),
+                        "observation.images.agentview":          obs["agentview_image"].astype(np.uint8),
+                        "observation.images.robot0_eye_in_hand": obs["robot0_eye_in_hand_image"].astype(np.uint8),
                         "observation.state": eef_state(obs),
                         "action": action.astype(np.float32),
                         "task": instruction,
