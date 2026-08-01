@@ -71,13 +71,17 @@ _EMPTY_480 = np.zeros((480, 640, 3), dtype=np.uint8)
 
 # ── Observation builder (matches training input format) ───────────────────────
 
-def build_obs(img_hwc: np.ndarray, state8: np.ndarray) -> dict:
+def build_obs(img_hwc: np.ndarray, state8: np.ndarray,
+              wrist_hwc: np.ndarray | None = None) -> dict:
+    """Two-camera SmolVLA input (matches the retrained model):
+      camera1 = agentview (third-person), camera2 = robot0_eye_in_hand (WRIST),
+      camera3 + empty_camera_0 = blank padding.
+    """
     return {
-        "observation.images.agentview":      img_hwc,
-        "observation.images.camera2":        _EMPTY_256,
+        "observation.images.camera1":        img_hwc,
+        "observation.images.camera2":        wrist_hwc if wrist_hwc is not None else _EMPTY_256,
         "observation.images.camera3":        _EMPTY_256,
         "observation.images.empty_camera_0": _EMPTY_480,
-        "observation.images.empty_camera_1": _EMPTY_480,
         "observation.state": state8.astype(np.float32),
     }
 
@@ -105,7 +109,7 @@ def make_env(bddl_path: Path):
     from libero.libero.envs import OffScreenRenderEnv
     env = OffScreenRenderEnv(
         bddl_file_name=str(bddl_path),
-        camera_names=["agentview"],
+        camera_names=["agentview", "robot0_eye_in_hand"],
         camera_heights=256, camera_widths=256,
         controller="JOINT_POSITION",
     )
@@ -138,7 +142,10 @@ def load_demo_init_states(demo_file: Path) -> list[np.ndarray]:
 # ── One closed-loop rollout ───────────────────────────────────────────────────
 
 def run_closedloop_rollout(env, init_state, policy, preprocessor, postprocessor,
-                           device, task, max_steps, arc_type):
+                           device, task, max_steps, arc_type, plate_key=None):
+    """PURE closed-loop: policy drives the whole task from the initial pose (no grasp
+    replay, no scripted place). This is the test of whether the base model can
+    actually complete the task on its own. Reports grasp + on-plate success."""
     from lerobot.utils.control_utils import predict_action
 
     policy.reset()
@@ -152,17 +159,22 @@ def run_closedloop_rollout(env, init_state, policy, preprocessor, postprocessor,
     for _ in range(5):
         obs, _, _, _ = env.step(np.concatenate([np.zeros(7), [-1.0]]))
 
+    bowls = _bowl_keys(obs)
+    b0 = {b: float(obs[b][2]) for b in bowls}
+    bowl_peak = dict(b0)  # track max lift per bowl
+
     gripper_cmd = -1.0  # open
     eef_z, images, joints = [], [], []
 
     for t in range(max_steps):
         img = obs["agentview_image"]
+        wrist = obs["robot0_eye_in_hand_image"]
         cur_joints = obs["robot0_joint_pos"].astype(np.float64)
         state8 = np.concatenate([cur_joints, [gripper_cmd]]).astype(np.float32)
 
         with torch.no_grad():
             action = predict_action(
-                observation=build_obs(img, state8),
+                observation=build_obs(img, state8, wrist),
                 policy=policy, device=device,
                 preprocessor=preprocessor, postprocessor=postprocessor,
                 use_amp=False, task=task,
@@ -177,16 +189,31 @@ def run_closedloop_rollout(env, init_state, policy, preprocessor, postprocessor,
         obs, _, done, _ = env.step(env_action)
 
         eef_z.append(float(obs["robot0_eef_pos"][2]))
+        for b in bowls:
+            bowl_peak[b] = max(bowl_peak[b], float(obs[b][2]))
         images.append(img)
         joints.append(cur_joints)
         if done:
             break
+
+    # Success detection (pure closed-loop)
+    lifted_bowl = max(bowls, key=lambda b: bowl_peak[b] - b0[b]) if bowls else None
+    grasped = bool(lifted_bowl is not None and bowl_peak[lifted_bowl] - b0[lifted_bowl] > 0.03)
+    on_plate = False
+    if grasped and plate_key is not None and plate_key in obs:
+        fb = obs[lifted_bowl]; tp = obs[plate_key]
+        dxy = float(np.linalg.norm(fb[:2] - tp[:2])); dz = float(fb[2] - tp[2])
+        on_plate = bool(dxy < 0.06 and -0.02 < dz < 0.08)
 
     return {
         "eef_heights": np.array(eef_z, dtype=np.float64),          # world-frame z (m)
         "ref_eef_z":   np.array(eef_z, dtype=np.float64),           # no separate demo ref here
         "pred_joints": np.array(joints, dtype=np.float64),
         "imgs":        np.array(images, dtype=np.uint8),
+        "bowl_held":   grasped,
+        "on_plate":    on_plate,
+        "n_grasp":     0,
+        "n_carry":     len(images),
         "T": len(eef_z),
         "arc_type": arc_type,
     }
@@ -246,11 +273,12 @@ def run_hybrid_rollout(env, init_state, ref_jp, ref_grip, policy, preprocessor, 
     eef_z, images, joints, bowl_z = [], [], [], []
     for t in range(max_steps):
         img = obs["agentview_image"]
+        wrist = obs["robot0_eye_in_hand_image"]
         cur = obs["robot0_joint_pos"].astype(np.float64)
         state8 = np.concatenate([cur, [gripper_cmd]]).astype(np.float32)
         with torch.no_grad():
             action = predict_action(
-                observation=build_obs(img, state8), policy=policy, device=device,
+                observation=build_obs(img, state8, wrist), policy=policy, device=device,
                 preprocessor=preprocessor, postprocessor=postprocessor, use_amp=False, task=task,
             )
         act = (action.detach().cpu().numpy() if torch.is_tensor(action) else np.asarray(action)).reshape(-1)
@@ -555,7 +583,7 @@ def main():
             print(f"  [skip] unknown condition '{cond}'"); continue
 
         cond_traces, cond_metrics = [], []
-        n_held = 0
+        n_held = n_grasp_ok = n_plate = 0
         for ri in tqdm(range(args.n_rollouts), desc=f"  {cond}"):
             init = init_states[ri % len(init_states)]
             if args.hybrid:
@@ -571,11 +599,14 @@ def main():
                 result = run_closedloop_rollout(
                     env, init, policy, preprocessor, postprocessor,
                     device, args.task, args.max_steps, arc_type=cond,
+                    plate_key=plate_key,
                 )
             m = rollout_metrics(ri, result, cond)
             m["bowl_held"] = int(result.get("bowl_held", 0))
             m["on_plate"]  = int(result.get("on_plate", 0))
             n_held += m["on_plate"] if args.scripted_place else m["bowl_held"]
+            n_grasp_ok += m["bowl_held"]
+            n_plate    += m["on_plate"]
             cond_traces.append(result["eef_heights"])
             cond_metrics.append(m)
             # Save video for the requested rollouts (empty list / [-1] = ALL rollouts).
@@ -594,8 +625,14 @@ def main():
 
         agg = aggregate(cond_metrics, "carry_peak_cm")
         if agg:
-            label = "on_plate" if args.scripted_place else "bowl_held"
-            hb = f"  {label}={n_held}/{len(cond_metrics)}" if args.hybrid else ""
+            n = len(cond_metrics)
+            if args.hybrid:
+                label = "on_plate" if args.scripted_place else "bowl_held"
+                hb = f"  {label}={n_held}/{n}"
+            else:
+                # pure closed-loop: report BOTH grasp and task-completion success
+                hb = f"  grasp={n_grasp_ok}/{n} ({100*n_grasp_ok/n:.0f}%)  " \
+                     f"on_plate={n_plate}/{n} ({100*n_plate/n:.0f}%)"
             print(f"\n  carry_peak: mean={agg['mean']:.2f} ± {agg['std']:.2f} cm  "
                   f"CI95=[{agg['ci95_lo']:.2f},{agg['ci95_hi']:.2f}]  n={agg['n']}{hb}")
 
