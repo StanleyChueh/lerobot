@@ -176,12 +176,22 @@ def main():
     ap.add_argument("--save-video", action="store_true")
     ap.add_argument("--out-dir", default="outputs/libero_osc_baseline")
     ap.add_argument("--device", default=None)
+    # ── steering ──
+    ap.add_argument("--conditions", nargs="+", default=["none"],
+                    help="none, caa_high, caa_low, physical_high, physical_low")
+    ap.add_argument("--caa-path", default=None, help="expert-space CAA vectors (setup_caa)")
+    ap.add_argument("--caa-alpha", type=float, default=6.0)
+    ap.add_argument("--physical-vectors", default=None, help="VLM-space contrast vectors (setup_physical_caa)")
+    ap.add_argument("--physical-alpha", type=float, default=6.0)
+    ap.add_argument("--physical-top-k", type=int, default=None)
     args = ap.parse_args()
 
     from lerobot.policies.factory import make_pre_post_processors
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
     from lerobot.utils.utils import get_safe_torch_device
     from libero.libero import benchmark
+    from lerobot.scripts.libero_eval_steering import (
+        setup_caa, setup_physical_caa, clear_steering)
 
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     device = get_safe_torch_device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
@@ -213,28 +223,82 @@ def main():
                       and k.endswith("_pos") and "to_robot" not in k), None)
     print(f"plate_key={plate_key}")
 
-    n_grasp = n_plate = 0
-    peaks = []
-    for ri in tqdm(range(args.n_rollouts), desc="rollouts"):
-        init = init_states[ri % len(init_states)]
-        r = run_rollout(env, init, policy, preprocessor, postprocessor,
-                        device, args.task, args.max_steps, plate_key)
-        n_grasp += int(r["grasped"]); n_plate += int(r["on_plate"])
-        eef = r["eef_heights"] * 100
-        peaks.append(float(eef.max()) if len(eef) else 0.0)
-        if args.save_video:
-            ok = "OK" if r["on_plate"] else ("GRASP" if r["grasped"] else "FAIL")
-            save_rollout_video(r, f"r{ri:03d} {ok}",
-                               out_dir / "videos" / f"rollout_{ri:03d}_{ok}.mp4")
-    env.close()
+    def carry_peak_cm(eef_m):
+        e = np.asarray(eef_m) * 100
+        if len(e) > 4:
+            lo, hi = int(0.20 * len(e)), int(0.80 * len(e))
+            return float(np.max(e[lo:hi]))
+        return float(np.max(e)) if len(e) else 0.0
+
+    def apply_condition(cond):
+        if cond == "none":
+            clear_steering(policy)
+        elif cond == "caa_high":
+            setup_caa(policy, args.caa_path, alpha=+args.caa_alpha)
+        elif cond == "caa_low":
+            setup_caa(policy, args.caa_path, alpha=-args.caa_alpha)
+        elif cond == "physical_high":
+            setup_physical_caa(policy, args.physical_vectors, "high",
+                               alpha=args.physical_alpha, top_k=args.physical_top_k)
+        elif cond == "physical_low":
+            setup_physical_caa(policy, args.physical_vectors, "low",
+                               alpha=args.physical_alpha, top_k=args.physical_top_k)
+        else:
+            raise ValueError(f"unknown condition {cond}")
 
     n = args.n_rollouts
-    print("\n" + "=" * 56)
-    print(f"OSC closed-loop eval  ({args.policy_path})")
-    print(f"  grasp     = {n_grasp}/{n}  ({100*n_grasp/n:.0f}%)")
-    print(f"  on_plate  = {n_plate}/{n}  ({100*n_plate/n:.0f}%)   <-- task success")
-    print(f"  eef peak  = {np.mean(peaks):.1f} ± {np.std(peaks):.1f} cm")
-    print("=" * 56)
+    peaks_by_cond, summary = {}, {}
+    for cond in args.conditions:
+        print(f"\n{'='*56}\nCondition: {cond}\n{'='*56}")
+        apply_condition(cond)
+        n_grasp = n_plate = 0
+        cond_peaks = []
+        for ri in tqdm(range(n), desc=f"  {cond}"):
+            init = init_states[ri % len(init_states)]
+            r = run_rollout(env, init, policy, preprocessor, postprocessor,
+                            device, args.task, args.max_steps, plate_key)
+            n_grasp += int(r["grasped"]); n_plate += int(r["on_plate"])
+            cond_peaks.append(carry_peak_cm(r["eef_heights"]))
+            if args.save_video:
+                ok = "OK" if r["on_plate"] else ("GRASP" if r["grasped"] else "FAIL")
+                save_rollout_video(r, f"{cond} r{ri:03d} {ok}",
+                                   out_dir / "videos" / cond / f"rollout_{ri:03d}_{ok}.mp4")
+        peaks_by_cond[cond] = cond_peaks
+        summary[cond] = (n_grasp, n_plate, float(np.mean(cond_peaks)), float(np.std(cond_peaks)))
+        print(f"  grasp={n_grasp}/{n}  on_plate={n_plate}/{n}  "
+              f"carry-peak={np.mean(cond_peaks):.1f}±{np.std(cond_peaks):.1f}cm")
+    clear_steering(policy)
+    env.close()
+
+    # ── summary + separation ──
+    print("\n" + "=" * 64)
+    print(f"OSC steering eval  ({args.policy_path})")
+    print(f"{'condition':<16}{'grasp':>8}{'on_plate':>10}{'carry-peak (cm)':>20}")
+    base = summary.get("none", (0, 0, 0, 0))[2]
+    for cond, (g, p, mu, sd) in summary.items():
+        d = f"  (Δ{mu-base:+.1f})" if cond != "none" else ""
+        print(f"{cond:<16}{g:>6}/{n}{p:>8}/{n}{mu:>14.1f} ± {sd:<4.1f}{d}")
+    print("=" * 64)
+
+    # boxplot of carry-peak by condition (the steering-separation figure)
+    if len(peaks_by_cond) > 1:
+        import matplotlib; matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots(figsize=(6, 5))
+        labels = list(peaks_by_cond.keys())
+        bp = ax.boxplot([peaks_by_cond[c] for c in labels], patch_artist=True,
+                        medianprops={"color": "white", "lw": 2})
+        cols = {"none": "#555", "caa_high": "#C0392B", "caa_low": "#E8A87C",
+                "physical_high": "#1ABC9C", "physical_low": "#8E44AD"}
+        for patch, c in zip(bp["boxes"], labels):
+            patch.set_facecolor(cols.get(c, "#888")); patch.set_alpha(0.85)
+        ax.set_xticklabels(labels, rotation=15, fontsize=10)
+        ax.set_ylabel("Carry-phase peak EEF z (cm)")
+        ax.set_title(f"Height steering separation\n{Path(args.policy_path).name}")
+        ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(out_dir / "steering_separation_boxplot.png", dpi=200)
+        print(f"[✓] boxplot → {out_dir/'steering_separation_boxplot.png'}")
     print(f"[✓] outputs → {out_dir.resolve()}")
 
 
