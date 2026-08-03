@@ -75,7 +75,7 @@ def register_mlp_hooks(policy):
 
 
 def iter_carry_frames(hdf5_path, n_eps, carry_lo=0.20, carry_hi=0.80, stride=10):
-    """Yield (agentview, wrist, eef_state8) for carry-phase frames."""
+    """Yield (agentview, wrist, eef_state8) for carry-phase frames (HDF5 source)."""
     with h5py.File(hdf5_path, "r") as f:
         ep_keys = sorted(k for k in f.keys() if k.startswith("ep_"))
         if n_eps is not None:
@@ -93,16 +93,83 @@ def iter_carry_frames(hdf5_path, n_eps, carry_lo=0.20, carry_hi=0.80, stride=10)
                 yield agent[t], wrist[t], s8
 
 
+def _to_uint8_hwc(t):
+    """LeRobot image tensor (CHW float [0,1]) → HWC uint8, matching env obs."""
+    a = t.detach().cpu().numpy()
+    if a.ndim == 3 and a.shape[0] in (1, 3):
+        a = np.transpose(a, (1, 2, 0))
+    if a.dtype != np.uint8:
+        a = (np.clip(a, 0, 1) * 255).round().astype(np.uint8) if a.max() <= 1.001 else a.astype(np.uint8)
+    return a
+
+
+def episode_bounds(ds):
+    """dict episode_index → (from_frame, to_frame) via the episode_index column."""
+    eidx = np.asarray(ds.hf_dataset["episode_index"])
+    return {int(e): (int(np.where(eidx == e)[0][0]), int(np.where(eidx == e)[0][-1]) + 1)
+            for e in np.unique(eidx)}
+
+
+def episode_carry_heights(ds, bounds, carry_lo=0.20, carry_hi=0.80):
+    """Mean carry-phase eef-z (observation.state[2]) per episode — read from the
+    state column only (no image decode, fast). This is the SELF-LABEL used to split
+    high vs low episodes by their ACTUAL end-effector height."""
+    states = np.asarray([np.asarray(s, dtype=np.float32)
+                         for s in ds.hf_dataset["observation.state"]])  # (N, 8)
+    z = {}
+    for ei, (f, t) in bounds.items():
+        T = t - f
+        lo, hi = f + int(carry_lo * T), f + int(carry_hi * T)
+        z[ei] = float(states[lo:hi, 2].mean())
+    return z
+
+
+def detect_camera_keys(ds):
+    """Return (agent_key, wrist_key) for either naming convention
+    (image/image2 or agentview/robot0_eye_in_hand). Wrist = camera2."""
+    keys = [k for k in ds.meta.features if k.startswith("observation.images")]
+    def is_wrist(k):
+        return any(w in k for w in ("image2", "wrist", "eye_in_hand"))
+    wrist = next((k for k in keys if is_wrist(k)), None)
+    agent = next((k for k in keys if k != wrist), None)
+    if agent is None or wrist is None:
+        raise RuntimeError(f"could not resolve agent/wrist cameras from {keys}")
+    return agent, wrist
+
+
+def iter_carry_frames_dataset(ds, ep_indices, bounds, agent_key, wrist_key,
+                              carry_lo=0.20, carry_hi=0.80, stride=10):
+    """Yield (agentview, wrist, eef_state8) for carry-phase frames from a LeRobot
+    dataset (HF). eef state is observation.state (already 8D eef in OSC format)."""
+    for ei in ep_indices:
+        f, t = bounds[ei]
+        T = t - f
+        for k in range(int(carry_lo * T), int(carry_hi * T), stride):
+            row = ds[f + k]
+            agent = _to_uint8_hwc(row[agent_key])
+            wrist = _to_uint8_hwc(row[wrist_key])
+            s8 = row["observation.state"].detach().cpu().numpy().astype(np.float32)
+            yield agent, wrist, s8
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--policy-path", required=True)
-    ap.add_argument("--high-hdf5", required=True)
-    ap.add_argument("--low-hdf5", required=True)
+    ap.add_argument("--high-hdf5", default=None)
+    ap.add_argument("--low-hdf5", default=None)
+    ap.add_argument("--dataset-repo-id", default=None,
+                    help="LeRobot dataset (HF) holding BOTH high+low episodes; "
+                         "high=first half, low=second half. Alternative to --high/low-hdf5.")
+    ap.add_argument("--dataset-root", default=None, help="local dataset root (default HF cache)")
+    ap.add_argument("--dataset-revision", default="main",
+                    help="HF dataset revision (default 'main' = freshest; avoids stale version-tagged cache)")
     ap.add_argument("--task", default=DEFAULT_TASK)
     ap.add_argument("--output", required=True)
-    ap.add_argument("--n-eps", type=int, default=25)
+    ap.add_argument("--n-eps", type=int, default=25, help="episodes per arc (high, low)")
     ap.add_argument("--stride", type=int, default=10)
     args = ap.parse_args()
+    if not args.dataset_repo_id and not (args.high_hdf5 and args.low_hdf5):
+        ap.error("provide either --dataset-repo-id OR both --high-hdf5 and --low-hdf5")
 
     from lerobot.policies.factory import make_pre_post_processors
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
@@ -120,13 +187,38 @@ def main():
     n_layers = len(policy.model.vlm_with_expert.lm_expert.layers)
     print(f"lm_expert: {n_layers} layers")
 
+    # Build per-condition frame iterators (HF dataset OR HDF5)
+    if args.dataset_repo_id:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        ds = LeRobotDataset(args.dataset_repo_id, root=args.dataset_root,
+                            revision=args.dataset_revision)
+        n_ep = ds.num_episodes
+        agent_key, wrist_key = detect_camera_keys(ds)
+        bounds = episode_bounds(ds)
+        # SELF-LABEL by measured EEF height: top-N carry-height eps = high, bottom-N = low.
+        zmap = episode_carry_heights(ds, bounds)
+        ordered = sorted(zmap, key=zmap.get)          # low → high
+        k = min(args.n_eps, n_ep // 2)
+        low_eps  = ordered[:k]
+        high_eps = ordered[-k:]
+        print(f"Dataset {args.dataset_repo_id}: {n_ep} eps, split by carry eef-z (top/bottom {k})")
+        print(f"  HIGH eps {sorted(high_eps)}  z={np.mean([zmap[e] for e in high_eps])*100:.1f}cm")
+        print(f"  LOW  eps {sorted(low_eps)}  z={np.mean([zmap[e] for e in low_eps])*100:.1f}cm")
+        print(f"  cameras: camera1={agent_key}, camera2={wrist_key}")
+        iters = [("high", lambda: iter_carry_frames_dataset(ds, high_eps, bounds, agent_key, wrist_key, stride=args.stride)),
+                 ("low",  lambda: iter_carry_frames_dataset(ds, low_eps,  bounds, agent_key, wrist_key, stride=args.stride))]
+    else:
+        iters = [("high", lambda: iter_carry_frames(args.high_hdf5, args.n_eps, stride=args.stride)),
+                 ("low",  lambda: iter_carry_frames(args.low_hdf5,  args.n_eps, stride=args.stride))]
+
     mean_acts = {}
-    for cond, hdf5_path in [("high", args.high_hdf5), ("low", args.low_hdf5)]:
-        print(f"\nProcessing {cond}: {hdf5_path}")
+    z_means = {}
+    for cond, make_iter in iters:
+        print(f"\nProcessing {cond}")
         handles, buffer = register_mlp_hooks(policy)
-        nf = 0
-        for agent, wrist, s8 in tqdm(iter_carry_frames(hdf5_path, args.n_eps, stride=args.stride),
-                                     desc=f"  {cond}"):
+        nf = 0; zsum = 0.0
+        for agent, wrist, s8 in tqdm(make_iter(), desc=f"  {cond}"):
+            zsum += float(s8[2])
             with torch.no_grad():
                 predict_action(observation=build_obs(agent, wrist, s8), policy=policy,
                                device=device, preprocessor=preprocessor,
@@ -135,7 +227,12 @@ def main():
         for h in handles:
             h.remove()
         mean_acts[cond] = [torch.stack(b).mean(0).numpy() if b else None for b in buffer]
-        print(f"  {nf} carry frames")
+        z_means[cond] = zsum / max(nf, 1)
+        print(f"  {nf} carry frames, mean carry eef-z = {z_means[cond]*100:.1f} cm")
+
+    if z_means["high"] < z_means["low"]:
+        print("  [!] WARNING: 'high' group mean height < 'low' — episode split may be reversed; "
+              "the CAA sign will be inverted (swap caa_high/caa_low or flip alpha).")
 
     caa = {str(i): torch.from_numpy(mean_acts["high"][i] - mean_acts["low"][i])
            for i in range(n_layers) if mean_acts["high"][i] is not None}

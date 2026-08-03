@@ -247,58 +247,73 @@ def main():
             raise ValueError(f"unknown condition {cond}")
 
     n = args.n_rollouts
-    peaks_by_cond, summary = {}, {}
+    peaks_by_cond, peaks_grasped_by_cond, summary = {}, {}, {}
     for cond in args.conditions:
         print(f"\n{'='*56}\nCondition: {cond}\n{'='*56}")
         apply_condition(cond)
         n_grasp = n_plate = 0
-        cond_peaks = []
+        cond_peaks, cond_peaks_grasped = [], []
         for ri in tqdm(range(n), desc=f"  {cond}"):
             init = init_states[ri % len(init_states)]
             r = run_rollout(env, init, policy, preprocessor, postprocessor,
                             device, args.task, args.max_steps, plate_key)
             n_grasp += int(r["grasped"]); n_plate += int(r["on_plate"])
-            cond_peaks.append(carry_peak_cm(r["eef_heights"]))
+            pk = carry_peak_cm(r["eef_heights"])
+            cond_peaks.append(pk)
+            if r["grasped"]:                       # only a HELD bowl → real controlled carry
+                cond_peaks_grasped.append(pk)
             if args.save_video:
                 ok = "OK" if r["on_plate"] else ("GRASP" if r["grasped"] else "FAIL")
                 save_rollout_video(r, f"{cond} r{ri:03d} {ok}",
                                    out_dir / "videos" / cond / f"rollout_{ri:03d}_{ok}.mp4")
         peaks_by_cond[cond] = cond_peaks
-        summary[cond] = (n_grasp, n_plate, float(np.mean(cond_peaks)), float(np.std(cond_peaks)))
+        peaks_grasped_by_cond[cond] = cond_peaks_grasped
+        gmu = float(np.mean(cond_peaks_grasped)) if cond_peaks_grasped else float("nan")
+        summary[cond] = (n_grasp, n_plate, float(np.mean(cond_peaks)), float(np.std(cond_peaks)), gmu)
         print(f"  grasp={n_grasp}/{n}  on_plate={n_plate}/{n}  "
-              f"carry-peak={np.mean(cond_peaks):.1f}±{np.std(cond_peaks):.1f}cm")
+              f"carry-peak(all)={np.mean(cond_peaks):.1f}cm  "
+              f"carry-peak(grasped n={len(cond_peaks_grasped)})={gmu:.1f}cm")
     clear_steering(policy)
     env.close()
 
     # ── summary + separation ──
-    print("\n" + "=" * 64)
+    # carry-peak(grasped) is the HONEST steering metric: it only counts rollouts
+    # where the bowl was actually held, so a broken direction (e.g. caa_high that
+    # fails to grasp) can't fake a "high carry" from flailing on failed rollouts.
+    print("\n" + "=" * 78)
     print(f"OSC steering eval  ({args.policy_path})")
-    print(f"{'condition':<16}{'grasp':>8}{'on_plate':>10}{'carry-peak (cm)':>20}")
-    base = summary.get("none", (0, 0, 0, 0))[2]
-    for cond, (g, p, mu, sd) in summary.items():
-        d = f"  (Δ{mu-base:+.1f})" if cond != "none" else ""
-        print(f"{cond:<16}{g:>6}/{n}{p:>8}/{n}{mu:>14.1f} ± {sd:<4.1f}{d}")
-    print("=" * 64)
+    print(f"{'condition':<15}{'grasp':>8}{'on_plate':>10}{'peak all':>11}{'peak grasped(n)':>18}")
+    base = summary.get("none", (0, 0, 0, 0, float('nan')))[4]
+    for cond, (g, p, mu, sd, gmu) in summary.items():
+        ng = len(peaks_grasped_by_cond[cond])
+        d = f"  Δ{gmu-base:+.1f}" if (cond != "none" and base == base and gmu == gmu) else ""
+        print(f"{cond:<15}{g:>6}/{n}{p:>8}/{n}{mu:>11.1f}{gmu:>13.1f}(n={ng}){d}")
+    print("=" * 78)
 
-    # boxplot of carry-peak by condition (the steering-separation figure)
-    if len(peaks_by_cond) > 1:
+    # boxplot of carry-peak by condition — GRASPED rollouts only (honest metric)
+    if len(peaks_grasped_by_cond) > 1:
         import matplotlib; matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        fig, ax = plt.subplots(figsize=(6, 5))
-        labels = list(peaks_by_cond.keys())
-        bp = ax.boxplot([peaks_by_cond[c] for c in labels], patch_artist=True,
-                        medianprops={"color": "white", "lw": 2})
         cols = {"none": "#555", "caa_high": "#C0392B", "caa_low": "#E8A87C",
                 "physical_high": "#1ABC9C", "physical_low": "#8E44AD"}
+        labels = list(peaks_grasped_by_cond.keys())
+        data = [peaks_grasped_by_cond[c] if peaks_grasped_by_cond[c] else [np.nan] for c in labels]
+        fig, ax = plt.subplots(figsize=(6, 5))
+        bp = ax.boxplot(data, patch_artist=True, medianprops={"color": "white", "lw": 2})
         for patch, c in zip(bp["boxes"], labels):
             patch.set_facecolor(cols.get(c, "#888")); patch.set_alpha(0.85)
+        # annotate each box with its sample count (grasped rollouts)
+        ymax = np.nanmax([np.nanmax(d) for d in data])
+        for i, c in enumerate(labels):
+            ax.text(i + 1, ymax + 1, f"n={len(peaks_grasped_by_cond[c])}",
+                    ha="center", fontsize=9, color="black")
         ax.set_xticklabels(labels, rotation=15, fontsize=10)
-        ax.set_ylabel("Carry-phase peak EEF z (cm)")
-        ax.set_title(f"Height steering separation\n{Path(args.policy_path).name}")
+        ax.set_ylabel("Carry-phase peak EEF z (cm)  [grasped rollouts only]")
+        ax.set_title(f"Height steering separation (task-valid)\n{Path(args.policy_path).name}")
         ax.grid(axis="y", alpha=0.3)
         fig.tight_layout()
         fig.savefig(out_dir / "steering_separation_boxplot.png", dpi=200)
-        print(f"[✓] boxplot → {out_dir/'steering_separation_boxplot.png'}")
+        print(f"[✓] boxplot (grasped-only) → {out_dir/'steering_separation_boxplot.png'}")
     print(f"[✓] outputs → {out_dir.resolve()}")
 
 

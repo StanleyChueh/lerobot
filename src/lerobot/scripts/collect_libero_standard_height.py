@@ -147,16 +147,79 @@ def move_to(env, obs, target_xyz, gripper, hold_xy=None,
     return obs, frames
 
 
-def collect_episode(env, arc_type, bddl_fname, demo_actions, demo_init, obj_key, tgt_key):
-    """Replay grasp → waypoint carry at ARC_Z → place. Returns (frames, success).
-    frames = list of (obs, action)."""
-    carry_z = ARC_Z[arc_type]
+def _scene_object_xy(obs):
+    """xy of all task objects (bowls/plate/ramekin/...) — always in the camera view."""
+    xy = []
+    for k, v in obs.items():
+        if not k.endswith("_pos") or not hasattr(v, "__len__") or len(v) != 3:
+            continue
+        if "to_" in k or any(s in k for s in ("robot", "eef", "gripper", "hand")):
+            continue
+        xy.append(np.asarray(v[:2], dtype=float))
+    return np.array(xy) if xy else None
+
+
+def randomize_object_xy(env, obs, obj_pos_key, radius, rng, margin=0.02, min_sep=0.12):
+    """Move a free object (e.g. the plate) to a random xy within `radius` (m) of its
+    current position, CLAMPED into the bounding box of the scene's objects (± margin,
+    so it stays in view) AND kept at least `min_sep` (m) from every OTHER object so it
+    never overlaps/stacks on the bowl or ramekin (which would make grasping pull both
+    objects off the table). Keeps z + orientation. Returns True if it moved.
+
+    Decorrelates target position from carry height (like the real-robot recipe) so the
+    model must visually servo to the target instead of memorizing one fixed place spot."""
+    base = obj_pos_key[:-4] if obj_pos_key.endswith("_pos") else obj_pos_key  # "plate_1"
+    jname = base + "_joint0" if (base + "_joint0") in env.sim.model.joint_names else None
+    if jname is None:
+        for jn in env.sim.model.joint_names:
+            if base.split("_")[0] in jn and "joint" in jn:
+                jname = jn
+                break
+    if jname is None:
+        return False
+    try:
+        addr = env.sim.model.get_joint_qpos_addr(jname)
+        start = addr[0] if isinstance(addr, tuple) else addr
+        cur = env.sim.data.qpos[start:start + 2].copy()
+        # other objects (exclude the one being moved) — the plate must stay clear of these
+        others = []
+        for k, v in obs.items():
+            if not k.endswith("_pos") or not hasattr(v, "__len__") or len(v) != 3:
+                continue
+            if k == obj_pos_key or "to_" in k or any(s in k for s in ("robot", "eef", "gripper", "hand")):
+                continue
+            others.append(np.asarray(v[:2], dtype=float))
+        allxy = _scene_object_xy(obs)
+        lo, hi = ((allxy.min(0) - margin, allxy.max(0) + margin)
+                  if allxy is not None and len(allxy) >= 2 else (None, None))
+        # sample a spot that is in-view AND ≥ min_sep from every other object
+        for _ in range(50):
+            cand = cur + rng.uniform(-radius, radius, size=2)
+            if lo is not None:
+                cand = np.clip(cand, lo, hi)
+            if others and min(np.linalg.norm(cand - o) for o in others) < min_sep:
+                continue
+            env.sim.data.qpos[start:start + 2] = cand
+            env.sim.forward()
+            return True
+        return False   # no non-overlapping spot found → keep original (already valid)
+    except Exception:
+        return False
+
+
+def collect_episode(env, carry_z, demo_actions, demo_init, obj_key, tgt_key,
+                    randomize_plate=0.0, rng=None):
+    """Replay grasp → waypoint carry at carry_z → place. Returns (frames, success).
+    frames = list of (obs, action). If randomize_plate>0, the plate is moved to a
+    random xy (radius m) after reset, and the scripted place targets the new spot."""
     obs = env.reset()
     obs = env.set_init_state(demo_init)
+    if randomize_plate > 0 and rng is not None:
+        randomize_object_xy(env, obs, tgt_key, randomize_plate, rng)
     for _ in range(5):
         obs, _, _, _ = env.step(np.zeros(7))
 
-    tgt_pos = obs[tgt_key].copy()
+    tgt_pos = obs[tgt_key].copy()   # read AFTER the plate move → place targets new spot
     grip_seq = demo_actions[:, 6]
     close_idx = np.where(grip_seq > 0)[0]
     if len(close_idx) == 0:
@@ -210,7 +273,8 @@ def collect_episode(env, arc_type, bddl_fname, demo_actions, demo_init, obj_key,
     final_bowl = obs[obj_key]
     dist_xy = float(np.linalg.norm(final_bowl[:2] - tgt_pos[:2]))
     grasp_ok = handoff_qpos > 0.0012 and handoff_bowl_z > bowl_grasp_z + 0.01
-    success = grasp_ok and dist_xy < 0.08 and final_bowl[2] > 0.90
+    # bowl must end ON the plate (xy within 6cm, resting height) — matches the eval's on_plate
+    success = grasp_ok and dist_xy < 0.06 and final_bowl[2] > 0.90
     return frames, success
 
 
@@ -268,12 +332,30 @@ def main():
                     help="store frames as images (PNG) instead of encoding video "
                          "(much faster collection; larger on disk; trains fine)")
     ap.add_argument("--img-threads", type=int, default=4, help="parallel image-writer threads")
+    ap.add_argument("--randomize-plate", type=float, default=0.0,
+                    help="move the plate to a random xy within this radius (m) per episode "
+                         "(decorrelates target position from carry height; e.g. 0.10). "
+                         "Only applies to scripted arcs, not --arc natural.")
+    ap.add_argument("--arc-z-high", type=float, default=ARC_Z["high"],
+                    help="carry EEF world-z (m) for the HIGH arc (default 1.30; try 1.20 for less-extreme)")
+    ap.add_argument("--arc-z-low", type=float, default=ARC_Z["low"],
+                    help="carry EEF world-z (m) for the LOW arc (default 1.10; try 1.08 for less-extreme)")
+    ap.add_argument("--seed", type=int, default=0, help="RNG seed for plate randomization")
+    ap.add_argument("--max-retries", type=int, default=8,
+                    help="with --randomize-plate, retry a new plate position up to this many "
+                         "times until the task COMPLETES; only completed episodes are saved")
     args = ap.parse_args()
 
     if args.smoke:
         args.n_eps = 2
         if args.task_idx is None:
             args.task_idx = 0
+
+    arc_z = {"high": args.arc_z_high, "low": args.arc_z_low}
+    rng = np.random.default_rng(args.seed)
+    if args.randomize_plate > 0 and args.arc == "natural":
+        print("[!] --randomize-plate is ignored for --arc natural (the demo's fixed place "
+              "motion can't reach a moved plate). Use it with high/low/both.")
 
     from libero.libero import benchmark
     import h5py
@@ -292,7 +374,7 @@ def main():
         image_writer_threads=args.img_threads,
     )
 
-    n_ok = n_total = 0
+    n_ok = n_skip = 0
     for task_idx in task_indices:
         fname = bddl_files[task_idx]
         bddl_path = BDDL_ROOT / args.suite / fname
@@ -314,19 +396,10 @@ def main():
             print(f"  [skip] {e}"); env.close(); continue
 
         for arc in arcs:
-            n_demo = min(args.n_eps, len(demos))
-            for ep_i in range(n_demo):
-                da, di = demos[ep_i]
-                try:
-                    if natural:
-                        frames, success = collect_episode_natural(env, da, di, obj_key, tgt_key)
-                    else:
-                        frames, success = collect_episode(env, arc, fname, da, di, obj_key, tgt_key)
-                except Exception as e:
-                    print(f"    ep {ep_i} {arc}: EXCEPTION {e}"); continue
-                if frames is None:
-                    continue
-                n_total += 1; n_ok += int(success)
+            n_target = min(args.n_eps, len(demos))
+            can_retry = args.randomize_plate > 0 and not natural
+
+            def _save(frames):
                 for obs, action in frames:
                     ds.add_frame({
                         "observation.images.agentview":          obs["agentview_image"].astype(np.uint8),
@@ -336,13 +409,50 @@ def main():
                         "task": instruction,
                     })
                 ds.save_episode()
-                if ep_i < 3 or ep_i % 10 == 0:
-                    print(f"    task{task_idx} {arc} ep{ep_i}: {'OK' if success else 'FAIL'} "
-                          f"({len(frames)} frames)")
+
+            def _try(ep_i):
+                da, di = demos[ep_i]
+                try:
+                    if natural:
+                        return collect_episode_natural(env, da, di, obj_key, tgt_key)
+                    return collect_episode(env, arc_z[arc], da, di, obj_key, tgt_key,
+                                           randomize_plate=args.randomize_plate, rng=rng)
+                except Exception as e:
+                    print(f"    ep {ep_i} {arc}: EXCEPTION {e}")
+                    return None, False
+
+            saved = 0
+            ok_demos = []
+            # ── pass 1: try each unique demo (with per-demo retries) ──
+            for ep_i in range(n_target):
+                frames, success = None, False
+                for _ in range(args.max_retries if can_retry else 1):
+                    frames, success = _try(ep_i)
+                    if success and frames is not None:
+                        break
+                if success and frames is not None:
+                    _save(frames); saved += 1; n_ok += 1; ok_demos.append(ep_i)
+                    if ep_i < 3 or ep_i % 10 == 0:
+                        print(f"    task{task_idx} {arc} ep{ep_i}: OK ({len(frames)} frames)")
+                else:
+                    print(f"    task{task_idx} {arc} ep{ep_i}: fail after retries → will top up from a good demo")
+            # ── top-up: reach the target count using KNOWN-good demos + fresh randomization ──
+            if can_retry and saved < n_target and ok_demos:
+                cap = (n_target - saved) * args.max_retries * 3
+                att = j = 0
+                while saved < n_target and att < cap:
+                    ep_i = ok_demos[j % len(ok_demos)]; j += 1; att += 1
+                    frames, success = _try(ep_i)
+                    if success and frames is not None:
+                        _save(frames); saved += 1; n_ok += 1
+                        print(f"    task{task_idx} {arc} top-up (demo {ep_i}): OK  [{saved}/{n_target}]")
+            if saved < n_target:
+                n_skip += (n_target - saved)
+                print(f"    [!] task{task_idx} {arc}: only {saved}/{n_target} (could not reach target)")
         env.close()
 
-    print(f"\n[✓] Collected {n_total} episodes, {n_ok} successful "
-          f"({100*n_ok/max(n_total,1):.0f}%)")
+    print(f"\n[✓] Saved {n_ok} episodes — ALL task-completed"
+          + (f"  ({n_skip} short of target — even top-up failed)" if n_skip else " (target count reached)"))
     print(f"    dataset: {ds.root}")
     if args.push:
         print("Pushing to hub ...")
