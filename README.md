@@ -706,16 +706,23 @@ Automatically generate episode(normal height)
 python src/lerobot/scripts/collect_libero_standard_height.py \
   --repo-id ethanCSL/svla_franka_libero_natural \
   --root /home/bruce/datasets/libero_task0_natural \
-  --suite libero_spatial --task-idx 0 --n-eps 50 --arc natural 
+  --suite libero_spatial --task-idx 0 --n-eps 50 --arc natural
+
+python src/lerobot/scripts/collect_libero_standard_height.py \
+  --repo-id ethanCSL/svla_franka_libero_natural \
+  --root /home/bruce/datasets/libero_task0_natural \
+  --suite libero_spatial --task-idx 0 --n-eps 50 --arc natural \
+  --randomize-plate 0.06 --arc-z-high 1.20 --arc-z-low 1.08 
 ```
 
 Automatically generate high and low EEF trajectory episodes
 
 ```
 python src/lerobot/scripts/collect_libero_standard_height.py \
-  --repo-id ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc \
-  --root /home/bruce/datasets/libero_task0_osc \
-  --suite libero_spatial --task-idx 0 --n-eps 50 --arc both 
+  --repo-id ethanCSL/svla_franka_libero_osc_rndplate \
+  --root /home/bruce/datasets/libero_osc_rndplate \
+  --suite libero_spatial --task-idx 0 --n-eps 50 --arc both \
+  --randomize-plate 0.06 --arc-z-high 1.20 --arc-z-low 1.08 
 ```
 
 Training
