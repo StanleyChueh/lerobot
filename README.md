@@ -707,7 +707,7 @@ Replay real-world trajectory in MuJoCO simulation
 
 Automatically generate episode(normal height)
 
-<img width="538" height="333" alt="image" src="https://github.com/user-attachments/assets/906ab0b4-05c8-4570-b7ad-7fd8292093db" />
+<img width="276" height="311" alt="image" src="https://github.com/user-attachments/assets/b488bcaa-3c93-462d-9f9b-44a6a7083bef" />
 
 ```
 python src/lerobot/scripts/collect_libero_standard_height.py \
@@ -718,18 +718,13 @@ python src/lerobot/scripts/collect_libero_standard_height.py \
   --max-retries 8
 ```
 
-Automatically generate high and low EEF trajectory episodes
+Automatically generate high and normal EEF trajectory episodes
 
-<img width="538" height="333" alt="image" src="https://github.com/user-attachments/assets/a1c3cf9c-4071-4842-87f0-dd4cc48d5e46" />
-<img width="538" height="333" alt="image" src="https://github.com/user-attachments/assets/d1247e91-fb9c-4249-bca1-8ff0d7f58417" />
+<img width="276" height="311" alt="image" src="https://github.com/user-attachments/assets/8f94dc07-1ebf-4b55-9fb1-7437ac56160d" />
+<img width="276" height="311" alt="image" src="https://github.com/user-attachments/assets/b488bcaa-3c93-462d-9f9b-44a6a7083bef" />
 
 ```
-python src/lerobot/scripts/collect_libero_standard_height.py \
-  --repo-id ethanCSL/svla_franka_libero_osc_rndplate_v3 \
-  --root /home/bruce/datasets/libero_osc_rndplate_v3 \
-  --suite libero_spatial --task-idx 0 --n-eps 50 --arc both \
-  --randomize-plate 0.06 --arc-z-high 1.20 --arc-z-low 1.08 \
-  --max-retries 8
+python src/lerobot/scripts/collect_libero_standard_height.py   --repo-id ethanCSL/svla_franka_pick_n_place_vla_steering_libero_three_cams   --suite libero_spatial   --task-idx 0   --arc high_natural   --arc-z-high 1.20   --randomize-plate 0.10   --seed 42   --n-eps 50
 ```
 
 Training 
