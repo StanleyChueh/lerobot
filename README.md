@@ -745,6 +745,17 @@ Train with domain randomization
 
 Evaluation
 
+No Steering(based model evaluation)
+
+```
+python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_random \
+  --conditions none \
+  --task-idx 0 --n-rollouts 20 --max-steps 400 --n-action-steps 10 \
+  --save-video \
+  --out-dir outputs/baseline_random
+```
+
 Paper Keyword neurons VLA steering
 
 ```
