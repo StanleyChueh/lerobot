@@ -688,7 +688,11 @@ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --
   }'   --policy_type=pi0_fast   --pretrained_name_or_path=ethanCSL/pi0fast_koch_pick_n_place_vla_steering_height_test2   --policy_device=cuda   --client_device=cpu   --actions_per_chunk=10   --task="Put the red cube in the box."   --server_address=10.100.4.125:8080   --fps=30
 ```
 
-# Simulation Benchmark
+# Simulation 
+
+Replay real-world trajectory in MuJoCO simulation
+
+<img width="1922" height="817" alt="image" src="https://github.com/user-attachments/assets/9a64b3a0-22c5-4dbd-b876-41d093446208" />
 
 ```
  python src/lerobot/scripts/lerobot_replay_in_mujoco.py \
@@ -700,50 +704,52 @@ python -m lerobot.async_inference.robot_client   --robot.type=koch_follower   --
   --live
 ```
 
+
 Automatically generate episode(normal height)
 
-```
-python src/lerobot/scripts/collect_libero_standard_height.py \
-  --repo-id ethanCSL/svla_franka_libero_natural \
-  --root /home/bruce/datasets/libero_task0_natural \
-  --suite libero_spatial --task-idx 0 --n-eps 50 --arc natural
+<img width="276" height="311" alt="image" src="https://github.com/user-attachments/assets/b488bcaa-3c93-462d-9f9b-44a6a7083bef" />
 
+```
 python src/lerobot/scripts/collect_libero_standard_height.py \
   --repo-id ethanCSL/svla_franka_libero_natural \
   --root /home/bruce/datasets/libero_task0_natural \
   --suite libero_spatial --task-idx 0 --n-eps 50 --arc natural \
-  --randomize-plate 0.06 --arc-z-high 1.20 --arc-z-low 1.08 
+  --randomize-plate 0.06 --arc-z-high 1.20 --arc-z-low 1.08 \
+  --max-retries 8
 ```
 
-Automatically generate high and low EEF trajectory episodes
+Automatically generate high and normal EEF trajectory episodes
+
+<img width="276" height="311" alt="image" src="https://github.com/user-attachments/assets/8f94dc07-1ebf-4b55-9fb1-7437ac56160d" />
+<img width="276" height="311" alt="image" src="https://github.com/user-attachments/assets/b488bcaa-3c93-462d-9f9b-44a6a7083bef" />
 
 ```
-python src/lerobot/scripts/collect_libero_standard_height.py \
-  --repo-id ethanCSL/svla_franka_libero_osc_rndplate \
-  --root /home/bruce/datasets/libero_osc_rndplate \
-  --suite libero_spatial --task-idx 0 --n-eps 50 --arc both \
-  --randomize-plate 0.06 --arc-z-high 1.20 --arc-z-low 1.08 
+python src/lerobot/scripts/collect_libero_standard_height.py   --repo-id ethanCSL/svla_franka_pick_n_place_vla_steering_libero_three_cams   --suite libero_spatial   --task-idx 0   --arc high_natural   --arc-z-high 1.20   --randomize-plate 0.10   --seed 42   --n-eps 50
 ```
 
-Training
+Training 
+
+Train with domain randomization
 
 ```
-lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero   --batch_size=8   --steps=20000   --output_dir=outputs/train/svla_franka_pick_n_place_vla_steering_libero   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero   --wandb.enable=false  --rename_map='{                                              
-    "observation.images.agentview": "observation.images.camera1"
-  }'   --policy.empty_cameras=2 --dataset.video_backend=pyav
-
-```
-Neurons finding
-
-```
-python src/lerobot/scripts/libero_find_height_neurons.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --top-n 20 \
-  --top-k-tokens 10 \
-  --output outputs/libero_height_neurons.json
+ lerobot-train   --policy.path=lerobot/smolvla_base   --dataset.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_random   --batch_size=16   --steps=40000   --output_dir=outputs/train/svla_franka_pick_n_place_vla_steering_libero_osc_random   --job_name=my_smolvla_training   --policy.device=cuda   --policy.repo_id=ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_random   --wandb.enable=false  --rename_map='{                                              
+    "observation.images.agentview": "observation.images.camera1",
+    "observation.images.robot0_eye_in_hand":   "observation.images.camera2"
+  }'   --policy.empty_cameras=1 --dataset.video_backend=pyav  --dataset.image_transforms.enable=true --dataset.image_transforms.random_order=true --dataset.image_transforms.max_num_transforms=3
 ```
 
 Evaluation
+
+No Steering(based model evaluation)
+
+```
+python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_random \
+  --conditions none \
+  --task-idx 0 --n-rollouts 20 --max-steps 400 --n-action-steps 10 \
+  --save-video \
+  --out-dir outputs/baseline_random
+```
 
 Paper Keyword neurons VLA steering
 
@@ -799,31 +805,23 @@ CAA Prompt Steering
 Finding CAA
 
 ```
- python src/lerobot/scripts/libero_compute_caa.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --high-hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-  --low-hdf5  /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --task "Pick up the black bowl and place it on the plate." \
-  --output outputs/libero_caa_vectors.pt \
-  --stride 10 \
-  2>&1 | tee outputs/compute_caa.log
+ python src/lerobot/scripts/libero_compute_caa_osc.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_random_60k \
+  --dataset-repo-id ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_random \
+  --dataset-revision main \
+  --output outputs/caa_random_60k.pt --n-eps 50 --stride 10
 ```
 
 Steering
 
 ```
-python src/lerobot/scripts/libero_eval_steering.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --task "Pick up the black bowl and place it on the plate." \
-  --conditions none caa \
-  --caa-path outputs/libero_caa_vectors.pt \
-  --caa-alpha 2.0 \
-  --n-rollouts 50 \
-  --save-video --video-rollouts 0 1 2 \
-  --out-dir outputs/libero_eval_caa \
-  2>&1 | tee outputs/eval_caa.log
+python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_random_60k \
+  --conditions none caa_high caa_low \
+  --caa-path outputs/caa_random_60k.pt --caa-alpha 3.0 \
+  --task-idx 0 --n-rollouts 20 --max-steps 400 --n-action-steps 10 \
+  --save-video --save-success-only \
+  --out-dir outputs/steer_random_60k
 ```
 
 
