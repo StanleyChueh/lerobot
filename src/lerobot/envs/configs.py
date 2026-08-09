@@ -253,6 +253,7 @@ class LiberoEnv(EnvConfig):
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 360
     observation_width: int = 360
+    task_id: list[int] | None = None  # restrict to specific task indices within the suite
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
@@ -322,10 +323,13 @@ class LiberoEnv(EnvConfig):
 
     @property
     def gym_kwargs(self) -> dict:
-        return {
+        kwargs = {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
         }
+        if self.task_id is not None:
+            kwargs["task_ids"] = self.task_id
+        return kwargs
 
 
 @EnvConfig.register_subclass("metaworld")

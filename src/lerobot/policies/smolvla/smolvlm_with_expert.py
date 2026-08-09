@@ -58,6 +58,12 @@ def get_intermediate_size(hidden_dim, ffn_dim_multiplier=4, multiple_of=256):
     return hidden_dim
 
 
+class PassthroughModule(nn.Module):
+    """Identity module used as a hookable no-op at each layer position."""
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x
+
+
 class SmolVLMWithExpertModel(nn.Module):
     def __init__(
         self,
@@ -136,6 +142,13 @@ class SmolVLMWithExpertModel(nn.Module):
         self.last_attn_weights = None
         self._debug_num_img_tokens = None
         self._debug_num_images = None
+
+        self.layer_hooks = nn.ModuleList(
+            [
+                nn.ModuleList([PassthroughModule() for _ in range(self.num_vlm_layers)])
+                for _ in range(2)
+            ]
+        )
 
         self.set_requires_grad()
 
@@ -512,6 +525,7 @@ class SmolVLMWithExpertModel(nn.Module):
                     # # ---------------------------------------
 
                     out_emb += after_first_residual
+                    out_emb = self.layer_hooks[i][layer_idx](out_emb)
 
                     outputs_embeds.append(out_emb)
 

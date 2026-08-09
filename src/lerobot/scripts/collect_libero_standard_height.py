@@ -55,6 +55,12 @@ KEYWORD_TO_OBS_PREFIX = {
 }
 
 
+def _flip_upright(img: np.ndarray) -> np.ndarray:
+    """LIBERO/MuJoCo renders images vertically flipped (bottom-left origin).
+    Flip to upright so the saved dataset matches a natural view."""
+    return np.ascontiguousarray(img[::-1]).astype(np.uint8)
+
+
 def make_env(bddl_path: Path):
     from libero.libero.envs import OffScreenRenderEnv
     return OffScreenRenderEnv(
@@ -307,8 +313,8 @@ def build_features(use_videos=True):
     img = {"dtype": "video" if use_videos else "image", "shape": (256, 256, 3),
            "names": ["height", "width", "channel"]}
     return {
-        # LIBERO camera names (agentview = third-person, robot0_eye_in_hand = wrist).
-        # These match your training rename_map (agentview→camera1, robot0_eye_in_hand→camera2).
+        # LIBERO camera names → training rename_map:
+        #   agentview (FRONT, third-person) → camera1, robot0_eye_in_hand (WRIST) → camera2
         "observation.images.agentview":          dict(img),
         "observation.images.robot0_eye_in_hand": dict(img),
         "observation.state":  {"dtype": "float32", "shape": (8,), "names": None},
@@ -322,9 +328,10 @@ def main():
     ap.add_argument("--suite", default="libero_spatial")
     ap.add_argument("--task-idx", type=int, default=None, help="single task 0-9; omit=all")
     ap.add_argument("--n-eps", type=int, default=50, help="human demos per (task, arc)")
-    ap.add_argument("--arc", choices=["high", "low", "both", "natural"], default="both",
-                    help="high/low/both = scripted carry heights (for steering-vector data); "
-                         "natural = replay full human demo (clean data for the BASE model)")
+    ap.add_argument("--arc", choices=["high", "low", "both", "natural", "high_natural"], default="both",
+                    help="high/low/both = scripted carry heights; natural = full human demo; "
+                         "high_natural = scripted HIGH + natural demos as LOW "
+                         "(natural carry is lower than any scripted low arc)")
     ap.add_argument("--root", default=None, help="local dataset root (default HF cache)")
     ap.add_argument("--smoke", action="store_true", help="tiny 2-demo test")
     ap.add_argument("--push", action="store_true", help="push dataset to HF hub when done")
@@ -353,9 +360,9 @@ def main():
 
     arc_z = {"high": args.arc_z_high, "low": args.arc_z_low}
     rng = np.random.default_rng(args.seed)
-    if args.randomize_plate > 0 and args.arc == "natural":
-        print("[!] --randomize-plate is ignored for --arc natural (the demo's fixed place "
-              "motion can't reach a moved plate). Use it with high/low/both.")
+    if args.randomize_plate > 0 and args.arc in ("natural", "high_natural"):
+        print("[!] --randomize-plate is applied to the HIGH scripted arc only; "
+              "the NATURAL arc ignores it (fixed human place motion can't reach a moved plate).")
 
     from libero.libero import benchmark
     import h5py
@@ -364,8 +371,12 @@ def main():
     suite = benchmark.get_benchmark_dict()[args.suite]()
     bddl_files = suite.get_task_bddl_files()
     task_indices = [args.task_idx] if args.task_idx is not None else list(range(len(bddl_files)))
-    arcs = ["high", "low"] if args.arc == "both" else [args.arc]
-    natural = args.arc == "natural"
+    if args.arc == "both":
+        arcs = ["high", "low"]
+    elif args.arc == "high_natural":
+        arcs = ["high", "natural"]   # scripted high + natural demos as low
+    else:
+        arcs = [args.arc]
 
     print(f"Creating LeRobot dataset: {args.repo_id}")
     ds = LeRobotDataset.create(
@@ -396,24 +407,29 @@ def main():
             print(f"  [skip] {e}"); env.close(); continue
 
         for arc in arcs:
+            is_natural = (arc == "natural")
             n_target = min(args.n_eps, len(demos))
-            can_retry = args.randomize_plate > 0 and not natural
+            can_retry = args.randomize_plate > 0 and not is_natural
 
             def _save(frames):
                 for obs, action in frames:
                     ds.add_frame({
-                        "observation.images.agentview":          obs["agentview_image"].astype(np.uint8),
-                        "observation.images.robot0_eye_in_hand": obs["robot0_eye_in_hand_image"].astype(np.uint8),
+                        # LIBERO's OffScreenRenderEnv returns images vertically flipped
+                        # (MuJoCo bottom-left origin). Flip to UPRIGHT so the dataset
+                        # matches a natural front/wrist view and the pretrained SmolVLM
+                        # vision encoder sees in-distribution (upright) images.
+                        "observation.images.agentview":          _flip_upright(obs["agentview_image"]),
+                        "observation.images.robot0_eye_in_hand": _flip_upright(obs["robot0_eye_in_hand_image"]),
                         "observation.state": eef_state(obs),
                         "action": action.astype(np.float32),
                         "task": instruction,
                     })
                 ds.save_episode()
 
-            def _try(ep_i):
+            def _try(ep_i, _is_natural=is_natural):
                 da, di = demos[ep_i]
                 try:
-                    if natural:
+                    if _is_natural:
                         return collect_episode_natural(env, da, di, obj_key, tgt_key)
                     return collect_episode(env, arc_z[arc], da, di, obj_key, tgt_key,
                                            randomize_plate=args.randomize_plate, rng=rng)

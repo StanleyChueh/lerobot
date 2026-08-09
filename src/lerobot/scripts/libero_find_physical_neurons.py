@@ -83,6 +83,36 @@ def iter_carry_frames(hdf5_path: str, carry_lo: float = 0.20, carry_hi: float = 
                 yield imgs[t], state8
 
 
+def _capture_vlm_layer_means(policy, text_model):
+    """Register pre-hooks on each VLM text_model down_proj; return (handles, sums, counts)."""
+    n_layers = len(text_model.layers)
+    layer_sums: list[np.ndarray | None] = [None] * n_layers
+    layer_counts = [0] * n_layers
+    handles = []
+    for i in range(n_layers):
+        def _hook(module, inputs, _i=i):
+            arr = inputs[0].detach().float().cpu().mean(dim=(0, 1)).numpy()
+            if layer_sums[_i] is None:
+                layer_sums[_i] = arr.copy()
+            else:
+                layer_sums[_i] += arr
+            layer_counts[_i] += 1
+        handles.append(text_model.layers[i].mlp.down_proj.register_forward_pre_hook(_hook))
+    return handles, layer_sums, layer_counts
+
+
+def _finish_means(text_model, layer_sums, layer_counts, frame_count, desc):
+    n_layers = len(text_model.layers)
+    print(f"    {frame_count} carry frames, {n_layers} VLM layers captured  [{desc}]")
+    means = []
+    for i in range(n_layers):
+        if layer_sums[i] is not None and layer_counts[i] > 0:
+            means.append(layer_sums[i] / layer_counts[i])
+        else:
+            means.append(np.zeros(text_model.layers[i].mlp.down_proj.weight.shape[1], dtype=np.float32))
+    return means
+
+
 def collect_neuron_means(
     policy,
     preprocessor,
@@ -92,63 +122,63 @@ def collect_neuron_means(
     hdf5_path: str,
     stride: int,
 ) -> list[np.ndarray]:
-    """
-    Run inference on carry-phase frames and capture VLM text_model
-    pre-down_proj activations. Returns mean across all frames:
-    list of n_layers arrays, each shape (intermediate_dim=2560,).
-    """
+    """Capture VLM text_model pre-down_proj mean activations from HDF5 carry frames."""
     from lerobot.utils.control_utils import predict_action
 
     text_model = policy.model.vlm_with_expert.get_vlm_model().text_model
-    n_layers = len(text_model.layers)
-
-    # Accumulate sum and count per layer for computing mean
-    layer_sums: list[np.ndarray | None] = [None] * n_layers
-    layer_counts = [0] * n_layers
-
-    handles = []
-    for i in range(n_layers):
-        def _hook(module, inputs, _i=i):
-            act = inputs[0]  # (batch, seq_len, intermediate_dim)
-            arr = act.detach().float().cpu().mean(dim=(0, 1)).numpy()  # (intermediate_dim,)
-            if layer_sums[_i] is None:
-                layer_sums[_i] = arr.copy()
-            else:
-                layer_sums[_i] += arr
-            layer_counts[_i] += 1
-        handles.append(text_model.layers[i].mlp.down_proj.register_forward_pre_hook(_hook))
+    handles, layer_sums, layer_counts = _capture_vlm_layer_means(policy, text_model)
 
     frame_count = 0
     for img, state8 in tqdm(iter_carry_frames(hdf5_path, stride=stride),
                              desc=f"  {Path(hdf5_path).parent.name}"):
         obs = build_obs(img, state8)
         with torch.no_grad():
-            predict_action(
-                observation=obs,
-                policy=policy,
-                device=device,
-                preprocessor=preprocessor,
-                postprocessor=postprocessor,
-                use_amp=False,
-                task=task,
-            )
+            predict_action(observation=obs, policy=policy, device=device,
+                           preprocessor=preprocessor, postprocessor=postprocessor,
+                           use_amp=False, task=task)
         policy.reset()
         frame_count += 1
 
     for h in handles:
         h.remove()
+    return _finish_means(text_model, layer_sums, layer_counts, frame_count,
+                         Path(hdf5_path).parent.name)
 
-    print(f"    {frame_count} carry frames, {n_layers} VLM layers captured")
 
-    means = []
-    for i in range(n_layers):
-        if layer_sums[i] is not None and layer_counts[i] > 0:
-            means.append(layer_sums[i] / layer_counts[i])
-        else:
-            d_ff = text_model.layers[i].mlp.down_proj.weight.shape[1]
-            means.append(np.zeros(d_ff, dtype=np.float32))
+def collect_neuron_means_from_iter(
+    policy,
+    preprocessor,
+    postprocessor,
+    device: torch.device,
+    task: str,
+    frame_iter,
+    n_frames: int,
+    desc: str = "frames",
+) -> list[np.ndarray]:
+    """Capture VLM text_model pre-down_proj mean activations from a (agent,wrist,front,state8) iterator.
 
-    return means
+    Used with HF LeRobot datasets; frame format matches iter_carry_frames_dataset()
+    from libero_compute_caa_osc.py.
+    """
+    from lerobot.utils.control_utils import predict_action
+    from lerobot.scripts.libero_compute_caa_osc import build_obs as build_obs_cams
+
+    text_model = policy.model.vlm_with_expert.get_vlm_model().text_model
+    handles, layer_sums, layer_counts = _capture_vlm_layer_means(policy, text_model)
+
+    frame_count = 0
+    for agent, wrist, front, s8 in tqdm(frame_iter, total=n_frames, desc=f"  {desc}"):
+        obs = build_obs_cams(agent, wrist, s8, front)
+        with torch.no_grad():
+            predict_action(observation=obs, policy=policy, device=device,
+                           preprocessor=preprocessor, postprocessor=postprocessor,
+                           use_amp=False, task=task)
+        policy.reset()
+        frame_count += 1
+
+    for h in handles:
+        h.remove()
+    return _finish_means(text_model, layer_sums, layer_counts, frame_count, desc)
 
 
 def main():
@@ -156,13 +186,25 @@ def main():
         description="Find LIBERO physical height neurons by behavioral activation contrast."
     )
     ap.add_argument("--policy-path", default="ethanCSL/svla_franka_pick_n_place_vla_steering_libero")
-    ap.add_argument("--high-hdf5",   required=True, help="HDF5 file with high-carry episodes")
-    ap.add_argument("--low-hdf5",    required=True, help="HDF5 file with low-carry episodes")
-    ap.add_argument("--task",        default="Pick up the black bowl and place it on the plate.")
+    # HDF5 mode (original)
+    ap.add_argument("--high-hdf5",   default=None, help="HDF5 file with high-carry episodes")
+    ap.add_argument("--low-hdf5",    default=None, help="HDF5 file with low-carry episodes")
+    # HF dataset mode (for models trained on HF LeRobot datasets)
+    ap.add_argument("--dataset-repo-id",  default=None,
+                    help="HF LeRobot dataset; episodes auto-split by carry EEF-z height")
+    ap.add_argument("--dataset-revision", default="main",
+                    help="HF dataset revision (default: 'main' — avoids stale cached tags)")
+    ap.add_argument("--dataset-root",     default=None)
+    ap.add_argument("--n-eps", type=int, default=25,
+                    help="Episodes per condition (high, low) when using HF dataset")
+    ap.add_argument("--task",        default="pick the akita black bowl between the plate and the ramekin "
+                    "and place it on the plate")
     ap.add_argument("--top-n",       type=int, default=10, help="Top neurons per concept to output")
     ap.add_argument("--stride",      type=int, default=5,  help="Frame stride within carry phase")
     ap.add_argument("--output",      default="outputs/libero_physical_neurons.json")
     args = ap.parse_args()
+    if not args.dataset_repo_id and not (args.high_hdf5 and args.low_hdf5):
+        ap.error("provide either --dataset-repo-id OR both --high-hdf5 and --low-hdf5")
 
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import make_pre_post_processors
@@ -189,15 +231,52 @@ def main():
     print(f"VLM text_model: {n_layers} layers, intermediate_dim={d_ff}")
 
     # ── Collect mean activations per condition ────────────────────────────────
-    print("\nCollecting carry-phase activations — HIGH episodes ...")
-    high_means = collect_neuron_means(
-        policy, preprocessor, postprocessor, device, args.task, args.high_hdf5, args.stride
-    )
-
-    print("\nCollecting carry-phase activations — LOW episodes ...")
-    low_means = collect_neuron_means(
-        policy, preprocessor, postprocessor, device, args.task, args.low_hdf5, args.stride
-    )
+    if args.dataset_repo_id:
+        import numpy as _np
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+        from lerobot.scripts.libero_compute_caa_osc import (
+            detect_camera_keys, episode_bounds, episode_carry_heights,
+            iter_carry_frames_dataset, count_carry_frames_dataset,
+        )
+        print(f"\nLoading HF dataset: {args.dataset_repo_id}  revision={args.dataset_revision}")
+        ds = LeRobotDataset(args.dataset_repo_id, root=args.dataset_root,
+                            revision=args.dataset_revision)
+        agent_key, wrist_key, front_key = detect_camera_keys(ds)
+        print(f"  cameras: agent={agent_key}, wrist={wrist_key}, front={front_key}")
+        bounds = episode_bounds(ds)
+        zmap   = episode_carry_heights(ds, bounds)
+        ordered = sorted(zmap, key=zmap.get)
+        k = min(args.n_eps, len(ordered) // 2)
+        if k == 0:
+            raise RuntimeError(f"Not enough episodes ({len(ordered)}) to split high/low.")
+        low_eps, high_eps = ordered[:k], ordered[-k:]
+        z_high = _np.mean([zmap[e] for e in high_eps]) * 100
+        z_low  = _np.mean([zmap[e] for e in low_eps])  * 100
+        print(f"  HIGH: {k} eps, mean z={z_high:.1f}cm  |  LOW: {k} eps, mean z={z_low:.1f}cm  "
+              f"(Δ={z_high-z_low:.1f}cm)")
+        if z_high - z_low < 3.0:
+            print("  WARNING: very small height gap — vectors may be weak!")
+        n_high = count_carry_frames_dataset(high_eps, bounds, stride=args.stride)
+        n_low  = count_carry_frames_dataset(low_eps,  bounds, stride=args.stride)
+        print(f"\nCollecting carry-phase activations — HIGH episodes ({n_high} frames) ...")
+        high_means = collect_neuron_means_from_iter(
+            policy, preprocessor, postprocessor, device, args.task,
+            iter_carry_frames_dataset(ds, high_eps, bounds, agent_key, wrist_key,
+                                      front_key, stride=args.stride),
+            n_high, desc="HIGH")
+        print(f"\nCollecting carry-phase activations — LOW episodes ({n_low} frames) ...")
+        low_means = collect_neuron_means_from_iter(
+            policy, preprocessor, postprocessor, device, args.task,
+            iter_carry_frames_dataset(ds, low_eps, bounds, agent_key, wrist_key,
+                                      front_key, stride=args.stride),
+            n_low, desc="LOW")
+    else:
+        print("\nCollecting carry-phase activations — HIGH episodes ...")
+        high_means = collect_neuron_means(
+            policy, preprocessor, postprocessor, device, args.task, args.high_hdf5, args.stride)
+        print("\nCollecting carry-phase activations — LOW episodes ...")
+        low_means = collect_neuron_means(
+            policy, preprocessor, postprocessor, device, args.task, args.low_hdf5, args.stride)
 
     # ── Score: mean_high − mean_low per neuron ────────────────────────────────
     all_neurons = []

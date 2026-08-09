@@ -165,7 +165,8 @@ def _vlm_text_layers(policy):
 
 
 def clear_steering(policy):
-    for attr in ("_caa_handles", "_kw_handles", "_phys_handles"):
+    for attr in ("_caa_handles", "_kw_handles", "_phys_handles", "_dimas_handles",
+                 "_coast_handles"):
         if hasattr(policy, attr):
             for h in getattr(policy, attr):
                 try:
@@ -180,22 +181,59 @@ def clear_steering(policy):
             pass
 
 
-def setup_caa(policy, caa_path: str, alpha: float):
+def setup_caa(policy, caa_path: str, alpha: float,
+              layer_lo: int | None = None, layer_hi: int | None = None,
+              exclude_last: bool = False, normalize: bool = False):
+    """Inject the CAA delta at each lm_expert layer's MLP OUTPUT — the SAME point
+    where libero_compute_caa_osc.register_mlp_hooks() captured the contrast.
+
+    SmolVLA's fused VLM+expert forward decomposes each layer manually (no
+    layer.forward call), so a layer-level residual hook never fires; layer.mlp is
+    the reachable injection point, and the delta added here propagates into the
+    residual stream via the forward's `out_emb += after_first_residual`. Capture
+    and injection MUST use the same module (layer.mlp).
+
+    Layer selection / scaling (standard CAA/RepE practice):
+      layer_lo, layer_hi : restrict steering to layers [layer_lo, layer_hi) —
+                           middle layers steer cleanly; early/late layers tend to
+                           scramble the output. None = no bound on that side.
+      exclude_last       : skip the final expert layer (often a degenerate,
+                           high-norm contrast that corrupts the action head).
+      normalize          : unit-normalize each layer's vector so alpha means the
+                           same thing regardless of the model's activation scale
+                           (portable alpha; recommended when norms vary a lot)."""
     clear_steering(policy)
     obj = torch.load(caa_path, map_location="cpu", weights_only=False)
     if "vectors" not in obj:
         raise KeyError(f"'vectors' key missing in {caa_path}")
     layers = _expert_layers(policy)
+    n_layers = len(layers)
+    lo = 0 if layer_lo is None else layer_lo
+    hi = n_layers if layer_hi is None else layer_hi
     handles = []
+    used = []
     for layer_key, vec in obj["vectors"].items():
         idx = int(layer_key)
-        if not (0 <= idx < len(layers)):
+        if not (0 <= idx < n_layers):
+            continue
+        if not (lo <= idx < hi):
+            continue
+        if exclude_last and idx == n_layers - 1:
             continue
         v = vec.float().cpu()
         if v.ndim == 1:
             v = v.unsqueeze(0)
+        if normalize:
+            nrm = v.norm()
+            if nrm > 1e-8:
+                v = v / nrm
 
-        def _hook(module, inputs, output, _v=v, _a=alpha):
+        def _hook(module, inputs, output, _v=v, _a=alpha, _pol=policy):
+            # Phase gate: when a caller sets policy._caa_gate=False (e.g. outside the
+            # carry sub-phase), pass activations through unperturbed so grasp/place
+            # run at native behavior and only the carry height is steered.
+            if not getattr(_pol, "_caa_gate", True):
+                return output
             h = output[0] if isinstance(output, tuple) else output
             delta = _a * _v.to(h.device, h.dtype)
             if isinstance(output, tuple):
@@ -203,8 +241,85 @@ def setup_caa(policy, caa_path: str, alpha: float):
             return h + delta
 
         handles.append(layers[idx].mlp.register_forward_hook(_hook))
+        used.append(idx)
     policy._caa_handles = handles
-    print(f"  [CAA] {len(handles)} hooks, alpha={alpha}")
+    print(f"  [CAA] {len(handles)} hooks (layer.mlp), alpha={alpha}, "
+          f"layers={used}, normalize={normalize}")
+
+
+def setup_dimas(policy, artifact_path: str, direction: str, alpha: float,
+                gate: bool = True):
+    """DiMaS (distribution-matching) steering — the OT alternative to linear CAA.
+
+    Ref: Khayatan et al., arXiv:2607.14280. At the target action-expert layer's
+    mlp output, pool the token reps to p, standardize, and:
+      - GATE: only steer reps where the target feature is ABSENT (a linear
+        classifier says p is in the source tail), leaving already-correct reps alone.
+      - TRANSPORT: nearest-neighbor project p onto the source tail samples, take
+        that sample's barycentric OT image in the target tail, and interpolate
+        p_new = (1-alpha) p + alpha * T(P(p))  (alpha in [0,1] preserves success).
+      - Add the resulting delta (broadcast over tokens) to the layer.mlp output.
+
+    Unlike CAA's single fixed vector, the shift here DEPENDS on where p lands in
+    the source distribution — that per-sample adaptivity is what lets it match the
+    high/low distributions that a fixed linear shift cannot.
+
+    direction: "high" (steer toward high feature) or "low".
+    """
+    clear_steering(policy)
+    art = torch.load(artifact_path, map_location="cpu", weights_only=False)
+    if art.get("kind") != "dimas":
+        raise ValueError(f"{artifact_path} is not a DiMaS artifact (kind={art.get('kind')})")
+    if direction not in ("high", "low"):
+        raise ValueError("direction must be 'high' or 'low'")
+
+    layers = _expert_layers(policy)
+    li = int(art["layer"])
+    if not (0 <= li < len(layers)):
+        raise ValueError(f"artifact layer {li} out of range for this model")
+
+    dev = next(policy.parameters()).device
+    mean = art["mean"].to(dev).float()
+    std = art["std"].to(dev).float()
+    source = art[direction]["source"].to(dev).float()   # standardized source-tail reps
+    target = art[direction]["target"].to(dev).float()   # their barycentric OT images
+    gate_w = art["gate_w"].to(dev).float()
+    gate_b = float(art["gate_b"])
+    feature = art["feature"]
+
+    # Gate fires (=steer) when the target feature is ABSENT:
+    #   direction high  -> steer reps predicted LOW  -> p(high) < 0.5
+    #   direction low   -> steer reps predicted HIGH -> p(high) > 0.5
+    steer_when_high = (direction == "low")
+
+    def _hook(module, inputs, output, _src=source, _tgt=target, _a=alpha,
+              _mean=mean, _std=std, _gw=gate_w, _gb=gate_b, _gate=gate,
+              _steer_when_high=steer_when_high):
+        h = output[0] if isinstance(output, tuple) else output   # (B,T,d)
+        p = h.mean(dim=1)                                        # (B,d)
+        p_std = (p - _mean) / _std
+        # gate
+        if _gate:
+            logit = p_std @ _gw + _gb
+            fire = (logit > 0) if _steer_when_high else (logit < 0)   # (B,)
+        else:
+            fire = torch.ones(p.shape[0], dtype=torch.bool, device=p.device)
+        # nearest-neighbor transport in standardized space
+        d2 = torch.cdist(p_std, _src)              # (B, Nsrc)
+        j = d2.argmin(dim=1)                       # (B,)
+        tgt_std = _tgt[j]                          # (B,d)
+        p_new_std = (1 - _a) * p_std + _a * tgt_std
+        p_new = p_new_std * _std + _mean
+        delta = (p_new - p) * fire.float()[:, None]   # zero where gate off
+        h2 = h + delta[:, None, :]
+        if isinstance(output, tuple):
+            return (h2,) + output[1:]
+        return h2
+
+    handle = layers[li].mlp.register_forward_hook(_hook)
+    policy._dimas_handles = [handle]
+    print(f"  [DiMaS-{direction}] layer={li}, feature={feature}, alpha={alpha}, "
+          f"gate={gate}, src={tuple(source.shape)}")
 
 
 def setup_keyword_neurons(
@@ -352,6 +467,61 @@ def setup_physical_caa(policy, vectors_path: str, direction: str, alpha: float,
     policy._phys_handles = handles
     print(f"  [PHYSICAL-CAA-{direction}] {len(handles)} layers, {total_n} active neurons, "
           f"alpha={alpha:.1f}, top_k={top_k}")
+
+
+def setup_coast(policy, coast_path: str, direction: str, beta: float):
+    """COAST multiplicative conceptor gating on lm_expert MLP outputs.
+
+    Math (arxiv:2605.17144):
+      C_steer fitted offline as C_high ∧ ¬C_low  (or C_low ∧ ¬C_high for "low")
+      M = (1−β)I + β·C_steer
+      h' = h @ M   (multiplicative, not additive — key difference from CAA)
+
+    direction: "high" | "low"   β ∈ [0,1] — 0 = no steering, 1 = full projection
+    """
+    clear_steering(policy)
+    import torch as _torch
+    art = _torch.load(coast_path, map_location="cpu", weights_only=False)
+    if art.get("kind") != "coast":
+        raise ValueError(f"Not a COAST artifact (kind={art.get('kind')}): {coast_path}")
+
+    layers = _expert_layers(policy)
+    n_layers = len(layers)
+    ekey = f"{direction}_eigvals"
+    vkey = f"{direction}_eigvecs"
+    handles = []
+    used = []
+
+    for layer_key, data in art["layers"].items():
+        li = int(layer_key)
+        if not (0 <= li < n_layers):
+            continue
+        if ekey not in data or vkey not in data:
+            continue
+        eigvals = data[ekey].float()   # (k,)
+        eigvecs = data[vkey].float()   # (d, k)
+
+        def _hook(module, inputs, output,
+                  _ev=eigvals, _V=eigvecs, _b=beta):
+            h = output[0] if isinstance(output, tuple) else output   # (B, T, d)
+            dev, dt = h.device, h.dtype
+            V  = _V.to(dev, dt)     # (d, k)
+            ev = _ev.to(dev, dt)    # (k,)
+            # C_steer @ h (row-major: h (B,T,d), h @ V gives (B,T,k))
+            proj    = h @ V                    # (B, T, k)
+            Csteer_h = (proj * ev) @ V.T      # (B, T, d)
+            # Multiplicative gate: h' = (1−β)*h + β*C_steer*h
+            h_new = (1.0 - _b) * h + _b * Csteer_h
+            if isinstance(output, tuple):
+                return (h_new,) + output[1:]
+            return h_new
+
+        handles.append(layers[li].mlp.register_forward_hook(_hook))
+        used.append(li)
+
+    policy._coast_handles = handles
+    print(f"  [COAST-{direction}] {len(handles)} layers, beta={beta:.3f}, "
+          f"z_high={art.get('z_high_cm', '?'):.1f}cm / z_low={art.get('z_low_cm', '?'):.1f}cm")
 
 
 # ── Rollout ────────────────────────────────────────────────────────────────────

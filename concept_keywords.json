@@ -1,6 +1,6 @@
 {
   "fast": {"pos": ["fast", "risk"], "neg": ["breakfast"]},
   "slow": {"pos": ["slow", "safe"], "neg": []},
-  "high": {"pos": ["high"], "neg": ["thigh", "low", "slow", "lower"]},
-  "low":  {"pos": ["low"],  "neg": ["follow", "allow", "slow", "blow", "glow", "yellow", "hollow"]}
+  "high": {"pos": ["high"], "neg": ["thigh", "low", "slow", "lower", "highlight", "highway", "highland", "highness", "highschool"]},
+  "low":  {"pos": ["low"],  "neg": ["llow", "flow", "slow", "blow", "glow", "plow", "clow"]}
 }
