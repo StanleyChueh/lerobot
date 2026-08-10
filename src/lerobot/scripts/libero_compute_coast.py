@@ -28,18 +28,21 @@ Usage:
   conda run -n lerobot python src/lerobot/scripts/libero_compute_coast.py \\
     --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_three_cams_40k \\
     --output outputs/coast_three_cams_40k.pt \\
-    --n-rollouts 40 --aperture 10.0 --top-k 64 \\
+    --n-rollouts 40 --aperture 10.0 \\
     --task-idx 0 --max-steps 400 --n-action-steps 10
 
 Speed tips:
-  --n-rollouts 20  : faster; needs at least ~10 rollouts per split for stable covariance
-  --top-k 32       : smaller artifact, marginally less faithful
+  --n-rollouts 20  : faster; needs enough success AND failure rollouts for both conceptors
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
+
+# Must be set before the CUDA context / first cuBLAS call for deterministic matmuls.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import h5py
 import numpy as np
@@ -114,30 +117,43 @@ def _bowl_keys(obs):
     return [k for k in obs if "bowl" in k.lower() and k.endswith("_pos") and "to_robot" not in k]
 
 
+def _plate_key(obs):
+    return next((k for k in obs if "plate" in k.lower()
+                 and k.endswith("_pos") and "to_robot" not in k), None)
+
+
 # ── Activation collection ──────────────────────────────────────────────────────
 
 def _register_hooks(policy):
     """Hook lm_expert MLP outputs. Returns (handles, buf).
-    buf[i] = list of (d,) float32 arrays, one per predict_action call."""
+    buf[i] = list of (d,) GPU tensors, one per expert forward.
+
+    IMPORTANT: accumulate on-GPU (NO per-step .cpu()). A .cpu() call inside the
+    hook forces a CUDA sync every layer every step, which — under warn_only
+    deterministic mode — shifts nondeterministic-kernel scheduling enough to
+    PERTURB the model's own actions (observed: num_steps=1 collection dropped to
+    14% vs 50% hook-free). Keeping the read on-GPU makes the hook truly
+    non-perturbing; convert to numpy once, after the rollout."""
     layers = policy.model.vlm_with_expert.lm_expert.layers
     buf = [[] for _ in range(len(layers))]
     handles = []
     for i, layer in enumerate(layers):
         def _h(m, inp, out, _i=i):
             h = out[0] if isinstance(out, tuple) else out
-            buf[_i].append(h.detach().mean(dim=1).squeeze(0).cpu().float().numpy())
+            buf[_i].append(h.detach().mean(dim=1).squeeze(0))   # stays on GPU
         handles.append(layer.mlp.register_forward_hook(_h))
     return handles, buf
 
 
 def run_collection_rollout(env, init_state, policy, preprocessor, postprocessor,
                            device, task, max_steps):
-    """Run one rollout collecting lm_expert activations + carry EEF-z.
+    """Run one rollout collecting lm_expert activations + outcome labels.
 
-    Returns:
-        layer_acts : list[ndarray | None]  shape (N_calls, d) per layer
-        carry_z    : float  mean carry-phase EEF-z (m)
-        grasped    : bool
+    Returns dict with:
+        acts     : list[ndarray | None]  shape (N_calls, d) per layer
+        carry_z  : float  mean carry-phase EEF-z (m)
+        grasped  : bool
+        on_plate : bool   task success (bowl on plate) — paper's success label
     """
     from lerobot.utils.control_utils import predict_action
 
@@ -150,6 +166,7 @@ def run_collection_rollout(env, init_state, policy, preprocessor, postprocessor,
         obs, _, _, _ = env.step(np.array([0, 0, 0, 0, 0, 0, -1.0], dtype=np.float32))
 
     bowls = _bowl_keys(obs)
+    plate_key = _plate_key(obs)
     b0 = {b: float(obs[b][2]) for b in bowls}
     bowl_peak = dict(b0)
     eef_z_trace = []
@@ -181,11 +198,24 @@ def run_collection_rollout(env, init_state, policy, preprocessor, postprocessor,
     T = len(z)
     lo, hi = int(0.2 * T), int(0.8 * T)
     carry_z = float(np.mean(z[lo:hi])) if hi > lo else float(np.mean(z))
-    grasped = bool(bowls and max(bowl_peak[b] - b0[b] for b in bowls) > 0.03)
+
+    lifted = max(bowls, key=lambda b: bowl_peak[b] - b0[b]) if bowls else None
+    grasped = bool(lifted is not None and bowl_peak[lifted] - b0[lifted] > 0.03)
+    on_plate = False
+    if lifted is not None and plate_key is not None and plate_key in obs:
+        fb, tp = obs[lifted], obs[plate_key]
+        dxy = float(np.linalg.norm(fb[:2] - tp[:2])); dz = float(fb[2] - tp[2])
+        on_plate = bool(dxy < 0.06 and -0.02 < dz < 0.08 and fb[2] > 0.88)
 
     n_layers = len(policy.model.vlm_with_expert.lm_expert.layers)
-    layer_acts = [np.stack(buf[i], axis=0) if buf[i] else None for i in range(n_layers)]
-    return layer_acts, carry_z, grasped
+    # Convert GPU-accumulated activations to numpy AFTER the rollout (single sync,
+    # non-perturbing — see _register_hooks).
+    layer_acts = [
+        torch.stack(buf[i], dim=0).float().cpu().numpy() if buf[i] else None
+        for i in range(n_layers)
+    ]
+    return {"acts": layer_acts, "carry_z": carry_z,
+            "grasped": grasped, "on_plate": on_plate}
 
 
 # ── Conceptor algebra ──────────────────────────────────────────────────────────
@@ -243,13 +273,21 @@ def main():
     ap.add_argument("--task-idx",    type=int,   default=0)
     ap.add_argument("--task",        default=DEFAULT_TASK)
     ap.add_argument("--n-rollouts",  type=int,   default=40,
-                    help="Total rollouts; top/bottom halves become high/low (default: 40)")
+                    help="Total rollouts to collect (default: 40)")
+    ap.add_argument("--split",       choices=["success", "height"], default="success",
+                    help="'success' = paper-exact (C_success ∧ ¬C_failure, improves task "
+                         "success rate); 'height' = split by carry EEF-z (height steering)")
+    ap.add_argument("--positive-only", action="store_true",
+                    help="paper's positive-only variant: C_steer = C_success (no ¬C_failure). "
+                         "Tests whether projecting toward success alone suffices.")
     ap.add_argument("--max-steps",   type=int,   default=400)
     ap.add_argument("--n-action-steps", type=int, default=10)
+    ap.add_argument("--num-steps",   type=int,   default=None,
+                    help="flow-matching denoising steps (config.num_steps); lower = "
+                         "less-refined actions = lower baseline (more COAST headroom). "
+                         "None keeps the model default. MUST match the eval setting.")
     ap.add_argument("--aperture",    type=float, default=10.0,
                     help="Conceptor aperture α — larger = less regularised (default: 10)")
-    ap.add_argument("--top-k",       type=int,   default=64,
-                    help="Eigenvectors to keep in compressed C_steer (default: 64)")
     ap.add_argument("--output",      required=True)
     ap.add_argument("--device",      default=None)
     args = ap.parse_args()
@@ -258,9 +296,11 @@ def main():
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
     from lerobot.utils.utils import get_safe_torch_device
     from libero.libero import benchmark
+    from lerobot.scripts.libero_eval_steering import enable_determinism
 
+    enable_determinism()   # reproducible success/failure labels for clean conceptor fitting
     device = get_safe_torch_device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    print(f"Device: {device}")
+    print(f"Device: {device}  (deterministic algorithms ON)")
 
     suite_obj = benchmark.get_benchmark_dict()[args.suite]()
     fname     = suite_obj.get_task_bddl_files()[args.task_idx]
@@ -277,6 +317,9 @@ def main():
     policy = SmolVLAPolicy.from_pretrained(args.policy_path)
     policy.config.device = str(device)
     policy.config.n_action_steps = args.n_action_steps
+    if args.num_steps is not None:
+        policy.config.num_steps = args.num_steps
+        print(f"  flow-matching num_steps = {policy.config.num_steps}")
     policy.eval().to(device)
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy.config, pretrained_path=args.policy_path)
@@ -287,44 +330,55 @@ def main():
     env = make_env(bddl_path)
 
     # ── Phase 1: collect rollouts ──────────────────────────────────────────────
-    all_acts  = []   # list[list[ndarray|None]]  — [rollout][layer]
-    all_z     = []   # float per rollout
-    all_grasp = []
+    all_acts, all_z, all_grasp, all_plate = [], [], [], []
 
     print(f"\nCollecting {args.n_rollouts} rollouts …")
     t0 = time.time()
     for ri in tqdm(range(args.n_rollouts), desc="rollouts"):
         init = init_states[ri % len(init_states)]
-        acts, cz, grasped = run_collection_rollout(
+        r = run_collection_rollout(
             env, init, policy, preprocessor, postprocessor,
             device, args.task, args.max_steps)
-        all_acts.append(acts)
-        all_z.append(cz)
-        all_grasp.append(grasped)
-        tqdm.write(f"  r{ri:03d}  carry_z={cz*100:.1f}cm  grasp={grasped}")
+        all_acts.append(r["acts"])
+        all_z.append(r["carry_z"])
+        all_grasp.append(r["grasped"])
+        all_plate.append(r["on_plate"])
+        tqdm.write(f"  r{ri:03d}  carry_z={r['carry_z']*100:.1f}cm  "
+                   f"grasp={int(r['grasped'])}  on_plate={int(r['on_plate'])}")
 
     env.close()
     elapsed = time.time() - t0
+    n_succ = sum(all_plate)
     print(f"\nCollection done: {args.n_rollouts} rollouts in {elapsed/60:.1f} min  "
-          f"(grasp {sum(all_grasp)}/{args.n_rollouts})")
+          f"(grasp {sum(all_grasp)}/{args.n_rollouts}, success {n_succ}/{args.n_rollouts})")
 
-    # ── Phase 2: split by carry EEF-z ─────────────────────────────────────────
+    # ── Phase 2: split into positive (pos) / negative (neg) groups ─────────────
     z_arr = np.array(all_z)
-    order = np.argsort(z_arr)
-    k     = max(1, len(order) // 2)
-    high_idx = list(order[-k:])
-    low_idx  = list(order[:k])
+    if args.split == "success":
+        pos_idx = [i for i, ok in enumerate(all_plate) if ok]        # success rollouts
+        neg_idx = [i for i, ok in enumerate(all_plate) if not ok]    # failure rollouts
+        meaning = {"pos": "success", "neg": "failure"}
+        print(f"\nSplit (success)  POS=success({len(pos_idx)})  NEG=failure({len(neg_idx)})")
+        if len(pos_idx) < 3 or len(neg_idx) < 3:
+            raise RuntimeError(
+                f"Need >=3 success AND >=3 failure rollouts to fit contrastive conceptors "
+                f"(got success={len(pos_idx)}, failure={len(neg_idx)}). "
+                f"Baseline is too near-ceiling/floor on this task — pick a harder --task-idx "
+                f"or collect more --n-rollouts.")
+    else:  # height
+        order = np.argsort(z_arr)
+        k = max(1, len(order) // 2)
+        pos_idx = list(order[-k:]); neg_idx = list(order[:k])
+        meaning = {"pos": "high", "neg": "low"}
+        print(f"\nSplit (height)  POS=high({len(pos_idx)}) z={np.mean(z_arr[pos_idx])*100:.1f}cm  "
+              f"NEG=low({len(neg_idx)}) z={np.mean(z_arr[neg_idx])*100:.1f}cm")
 
-    z_high = float(np.mean(z_arr[high_idx])) * 100
-    z_low  = float(np.mean(z_arr[low_idx]))  * 100
-    print(f"\nSplit  HIGH({k} rollouts) z={z_high:.1f}cm  "
-          f"LOW({k} rollouts) z={z_low:.1f}cm  Δ={z_high-z_low:.1f}cm")
-    if z_high - z_low < 2.0:
-        print("  WARNING: very small height gap — conceptors may not separate well. "
-              "Try more rollouts or a different task.")
+    z_pos = float(np.mean(z_arr[pos_idx])) * 100
+    z_neg = float(np.mean(z_arr[neg_idx])) * 100
 
     # ── Phase 3: fit conceptors per layer ─────────────────────────────────────
-    print(f"\nFitting conceptors (aperture={args.aperture}, top_k={args.top_k}) …")
+    tag = "positive-only (C_success)" if args.positive_only else "contrastive (C_pos ∧ ¬C_neg)"
+    print(f"\nFitting conceptors [{tag}] (aperture={args.aperture}) …")
 
     def stack_layer(indices, li):
         parts = [all_acts[ri][li] for ri in indices if all_acts[ri][li] is not None]
@@ -332,50 +386,61 @@ def main():
 
     coast_layers = {}
     for li in tqdm(range(n_layers), desc="layers"):
-        X_h = stack_layer(high_idx, li)
-        X_l = stack_layer(low_idx,  li)
-        if X_h is None or X_l is None or len(X_h) < 4 or len(X_l) < 4:
+        X_p = stack_layer(pos_idx, li)
+        X_n = stack_layer(neg_idx, li)
+        if X_p is None or X_n is None or len(X_p) < 4 or len(X_n) < 4:
             continue
 
-        C_h  = _make_conceptor(X_h, args.aperture)
-        C_l  = _make_conceptor(X_l, args.aperture)
+        C_p = _make_conceptor(X_p, args.aperture)
+        C_n = _make_conceptor(X_n, args.aperture)
 
-        # Contrastive conceptors
-        C_steer_high = _conceptor_and(C_h, _conceptor_not(C_l))  # high ∧ ¬low
-        C_steer_low  = _conceptor_and(C_l, _conceptor_not(C_h))  # low  ∧ ¬high
+        if args.positive_only:
+            # C_steer = C_success (steer toward success subspace only)
+            C_steer_pos = C_p
+            C_steer_neg = C_n
+        else:
+            # Contrastive: C_pos ∧ ¬C_neg  (keeps directions in pos, absent from neg)
+            C_steer_pos = _conceptor_and(C_p, _conceptor_not(C_n))
+            C_steer_neg = _conceptor_and(C_n, _conceptor_not(C_p))
 
-        ev_h, V_h = _compress(C_steer_high, args.top_k)
-        ev_l, V_l = _compress(C_steer_low,  args.top_k)
-
+        # Store the FULL (d,d) conceptor — applied as h' = (1-β)h + β·h·C_steer at
+        # eval. Full matrix is exact (top-k eigen-compression drops the many
+        # mid-eigenvalue directions of C_steer and distorts the gate); d≈720 so
+        # 16 layers × 2 dirs is only ~66 MB.
         coast_layers[str(li)] = {
-            "high_eigvals": torch.from_numpy(ev_h),  # (k,)
-            "high_eigvecs": torch.from_numpy(V_h),   # (d, k)
-            "low_eigvals":  torch.from_numpy(ev_l),
-            "low_eigvecs":  torch.from_numpy(V_l),
+            "pos": torch.from_numpy(C_steer_pos.astype(np.float32)),
+            "neg": torch.from_numpy(C_steer_neg.astype(np.float32)),
+            "d": int(C_steer_pos.shape[0]),
         }
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         "kind":        "coast",
+        "split":       args.split,
+        "meaning":     meaning,              # {"pos": "success"/"high", "neg": "failure"/"low"}
+        "positive_only": args.positive_only,
         "n_layers":    n_layers,
         "aperture":    args.aperture,
-        "top_k":       args.top_k,
-        "z_high_cm":   z_high,
-        "z_low_cm":    z_low,
+        "z_pos_cm":    z_pos,
+        "z_neg_cm":    z_neg,
+        "n_success":   n_succ,
+        "n_rollouts":  args.n_rollouts,
         "policy_path": args.policy_path,
         "layers":      coast_layers,
         "hook_point":  "lm_expert.layers[i].mlp  (forward hook on output)",
     }, out)
-    norms_h = [coast_layers[k]["high_eigvals"].abs().max().item() for k in coast_layers]
-    norms_l = [coast_layers[k]["low_eigvals"].abs().max().item()  for k in coast_layers]
+    # diagnostic: mean eigenvalue of C_steer_pos per layer (fraction of variance kept)
+    tr = [float(np.trace(coast_layers[k]["pos"].numpy())) / coast_layers[k]["d"]
+          for k in coast_layers]
     print(f"\n[✓] Saved {len(coast_layers)}/{n_layers} layer conceptors → {out}")
-    print(f"    C_steer_high: max eigval min={min(norms_h):.4f}  max={max(norms_h):.4f}")
-    print(f"    C_steer_low:  max eigval min={min(norms_l):.4f}  max={max(norms_l):.4f}")
-    print(f"\nEval command:")
+    print(f"    split={args.split}  meaning={meaning}  C_steer_pos mean-eigval "
+          f"min={min(tr):.4f} max={max(tr):.4f} (per-layer avg retained variance)")
+    steer_cond = "coast_pos" if args.split == "height" else "coast_success"
+    print(f"\nEval command (steer toward {meaning['pos']}):")
     print(f"  python src/lerobot/scripts/libero_osc_eval.py \\")
     print(f"    --policy-path {args.policy_path} \\")
-    print(f"    --conditions none coast_high coast_low \\")
+    print(f"    --conditions none {steer_cond} \\")
     print(f"    --coast-path {out} --coast-beta 0.5 \\")
     print(f"    --task-idx {args.task_idx} --n-rollouts 20 --max-steps {args.max_steps}")
 

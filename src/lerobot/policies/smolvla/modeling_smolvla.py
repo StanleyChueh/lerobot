@@ -949,9 +949,15 @@ class SmolVLAPolicy(PreTrainedPolicy):
         # else:
         #     print(f"[DEBUG] action queue reused, remaining={len(self._queues[ACTION])}")
 
+        # Debug prints / per-chunk artifact dumps are gated behind SMOLVLA_DEBUG=1
+        # (default off) so closed-loop eval + COAST collection stay fast and quiet.
+        import os as _os
+        _dbg = _os.environ.get("SMOLVLA_DEBUG", "0") == "1"
+
         # Set fixed noise
         if self._check_get_actions_condition():
-            print("[DEBUG] action queue empty -> generating new action chunk")
+            if _dbg:
+                print("[DEBUG] action queue empty -> generating new action chunk")
 
             if noise is None:
                 bsize = batch[OBS_STATE].shape[0]
@@ -977,31 +983,32 @@ class SmolVLAPolicy(PreTrainedPolicy):
 
             actions = self._get_action_chunk(batch, noise)
 
-            print("[DEBUG] chunk_id:", self._debug_chunk_id)
-            print("[DEBUG] noise mean/std:", noise.mean().item(), noise.std().item())
-            print("[DEBUG] actions mean/std:", actions.mean().item(), actions.std().item())
-            print("[DEBUG] first action:", actions[0, 0].detach().cpu().numpy())
-            print("[DEBUG] last action:", actions[0, -1].detach().cpu().numpy())
-            print("[DEBUG] state:", batch[OBS_STATE][0].detach().cpu().numpy())
+            if _dbg:
+                print("[DEBUG] chunk_id:", self._debug_chunk_id)
+                print("[DEBUG] noise mean/std:", noise.mean().item(), noise.std().item())
+                print("[DEBUG] actions mean/std:", actions.mean().item(), actions.std().item())
+                print("[DEBUG] first action:", actions[0, 0].detach().cpu().numpy())
+                print("[DEBUG] last action:", actions[0, -1].detach().cpu().numpy())
+                print("[DEBUG] state:", batch[OBS_STATE][0].detach().cpu().numpy())
 
-            debug_dir = Path(getattr(self, "_debug_run_dir", "debug_runs/manual"))
-            debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_dir = Path(getattr(self, "_debug_run_dir", "debug_runs/manual"))
+                debug_dir.mkdir(parents=True, exist_ok=True)
 
-            torch.save(
-                {
-                    "chunk_id": self._debug_chunk_id,
-                    "batch_keys": list(batch.keys()),
-                    "state": batch[OBS_STATE].detach().cpu(),
-                    "noise": noise.detach().cpu(),
-                    "actions": actions.detach().cpu(),
-                    "policy_batch": {
-                        k: v.detach().cpu()
-                        for k, v in batch.items()
-                        if torch.is_tensor(v)
+                torch.save(
+                    {
+                        "chunk_id": self._debug_chunk_id,
+                        "batch_keys": list(batch.keys()),
+                        "state": batch[OBS_STATE].detach().cpu(),
+                        "noise": noise.detach().cpu(),
+                        "actions": actions.detach().cpu(),
+                        "policy_batch": {
+                            k: v.detach().cpu()
+                            for k, v in batch.items()
+                            if torch.is_tensor(v)
+                        },
                     },
-                },
-                debug_dir / f"debug_chunk_{self._debug_chunk_id:03d}.pt",
-            )
+                    debug_dir / f"debug_chunk_{self._debug_chunk_id:03d}.pt",
+                )
 
             self._debug_just_generated_chunk = True
             self._debug_last_chunk_id = self._debug_chunk_id
@@ -1013,7 +1020,8 @@ class SmolVLAPolicy(PreTrainedPolicy):
             )
 
         else:
-            print(f"[DEBUG] action queue reused, remaining={len(self._queues[ACTION])}")
+            if _dbg:
+                print(f"[DEBUG] action queue reused, remaining={len(self._queues[ACTION])}")
 
         return self._queues[ACTION].popleft()
 

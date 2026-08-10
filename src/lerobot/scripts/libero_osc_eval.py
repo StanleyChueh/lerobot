@@ -25,9 +25,13 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
+
+# Must be set before the CUDA context / first cuBLAS call for deterministic matmuls.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import cv2
 import h5py
@@ -244,6 +248,9 @@ def main():
     ap.add_argument("--coast-path",  default=None, help="COAST artifact (libero_compute_coast.py output)")
     ap.add_argument("--coast-beta",  type=float, default=0.5,
                     help="COAST gate strength β ∈ [0,1]: 0=no steering, 1=full projection (default: 0.5)")
+    ap.add_argument("--coast-layer-lo", type=int, default=None,
+                    help="steer only expert layers [lo, hi) with COAST (None = all fitted)")
+    ap.add_argument("--coast-layer-hi", type=int, default=None)
     ap.add_argument("--third-camera", default=None,
                     help="Third camera to render and pass to the model. Use 'sideview' for "
                          "three-cam models (svla_franka_pick_n_place_vla_steering_libero_three_cams_*). "
@@ -256,11 +263,12 @@ def main():
     from libero.libero import benchmark
     from lerobot.scripts.libero_eval_steering import (
         setup_caa, setup_physical_caa, setup_keyword_neurons, setup_dimas,
-        setup_coast, clear_steering)
+        setup_coast, clear_steering, enable_determinism)
 
+    enable_determinism()   # reproducible, history-independent rollouts
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     device = get_safe_torch_device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    print(f"Device: {device}")
+    print(f"Device: {device}  (deterministic algorithms ON)")
 
     suite_obj = benchmark.get_benchmark_dict()[args.suite]()
     fname = suite_obj.get_task_bddl_files()[args.task_idx]
@@ -351,14 +359,16 @@ def main():
         elif cond == "dimas_low":
             setup_dimas(policy, args.dimas_path, "low",
                         alpha=args.dimas_alpha, gate=not args.dimas_no_gate)
-        elif cond == "coast_high":
+        elif cond in ("coast_high", "coast_success", "coast_pos"):
             if not args.coast_path:
-                raise ValueError("--coast-path required for coast_high/low")
-            setup_coast(policy, args.coast_path, "high", beta=args.coast_beta)
-        elif cond == "coast_low":
+                raise ValueError("--coast-path required for coast conditions")
+            setup_coast(policy, args.coast_path, "pos", beta=args.coast_beta,
+                        layer_lo=args.coast_layer_lo, layer_hi=args.coast_layer_hi)
+        elif cond in ("coast_low", "coast_failure", "coast_neg"):
             if not args.coast_path:
-                raise ValueError("--coast-path required for coast_high/low")
-            setup_coast(policy, args.coast_path, "low", beta=args.coast_beta)
+                raise ValueError("--coast-path required for coast conditions")
+            setup_coast(policy, args.coast_path, "neg", beta=args.coast_beta,
+                        layer_lo=args.coast_layer_lo, layer_hi=args.coast_layer_hi)
         else:
             raise ValueError(f"unknown condition {cond}")
 
@@ -489,23 +499,49 @@ def main():
           "For SPEED steering read the SPEED/Δspeed cols; for height read cMEAN/Δheight.)")
     print("=" * 104)
 
-    # boxplot of carry-peak by condition — SUCCESSFUL (on-plate) rollouts only
-    if len(peaks_success_by_cond) > 1:
+    # ── save JSON summary (always) ──────────────────────────────────────────────
+    import json as _json
+    base = summary.get("none", (0,)*10)[6]
+    base_sp = summary.get("none", (0,)*10)[8]
+    summary_rows = []
+    for cond, (g, p, nattempts, mu, sd, smu, cmean_all, cmean_succ, csp_all, csp_succ) in summary.items():
+        summary_rows.append({
+            "condition":       cond,
+            "attempts":        nattempts,
+            "grasp_pct":       round(100 * g / nattempts, 1),
+            "success_pct":     round(100 * p / nattempts, 1),
+            "carry_mean_all_cm":    round(cmean_all, 2),
+            "carry_mean_succ_cm":   round(cmean_succ, 2) if cmean_succ == cmean_succ else None,
+            "delta_height_cm":      round(cmean_all - base, 2) if cond != "none" else 0.0,
+            "speed_all_cmps":       round(csp_all, 3),
+            "speed_succ_cmps":      round(csp_succ, 3) if csp_succ == csp_succ else None,
+            "delta_speed_pct":      round(100 * (csp_all - base_sp) / base_sp, 1) if (cond != "none" and base_sp) else 0.0,
+            "peaks_success":        peaks_success_by_cond.get(cond, []),
+        })
+    summary_path = out_dir / "summary.json"
+    with open(summary_path, "w") as _f:
+        _json.dump({"policy": args.policy_path, "task_idx": args.task_idx,
+                    "results": summary_rows}, _f, indent=2)
+    print(f"[✓] summary JSON → {summary_path}")
+
+    # ── boxplot of carry-peak by condition — SUCCESSFUL (on-plate) rollouts only ─
+    if len(peaks_success_by_cond) >= 1:
         import matplotlib; matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         cols = {"none": "#555", "caa_high": "#C0392B", "caa_low": "#E8A87C",
                 "physical_high": "#1ABC9C", "physical_low": "#8E44AD"}
         labels = list(peaks_success_by_cond.keys())
         data = [peaks_success_by_cond[c] if peaks_success_by_cond[c] else [np.nan] for c in labels]
-        fig, ax = plt.subplots(figsize=(6, 5))
+        fig, ax = plt.subplots(figsize=(max(4, 2 * len(labels)), 5))
         bp = ax.boxplot(data, patch_artist=True, medianprops={"color": "white", "lw": 2})
         for patch, c in zip(bp["boxes"], labels):
             patch.set_facecolor(cols.get(c, "#888")); patch.set_alpha(0.85)
-        # annotate each box with its sample count (successful rollouts)
-        ymax = np.nanmax([np.nanmax(d) for d in data])
-        for i, c in enumerate(labels):
-            ax.text(i + 1, ymax + 1, f"n={len(peaks_success_by_cond[c])}",
-                    ha="center", fontsize=9, color="black")
+        all_vals = [v for d in data for v in d if v == v]
+        if all_vals:
+            ymax = max(all_vals)
+            for i, c in enumerate(labels):
+                ax.text(i + 1, ymax + 1, f"n={len(peaks_success_by_cond[c])}",
+                        ha="center", fontsize=9, color="black")
         ax.set_xticklabels(labels, rotation=15, fontsize=10)
         ax.set_ylabel("Carry-phase peak EEF z (cm)  [successful rollouts only]")
         ax.set_title(f"Height steering separation (task-completed only)\n{Path(args.policy_path).name}")

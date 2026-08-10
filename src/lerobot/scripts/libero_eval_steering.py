@@ -156,6 +156,26 @@ def load_all_episodes(hdf5_paths: list[str]) -> list[dict]:
 
 # ── Steering infrastructure ────────────────────────────────────────────────────
 
+def enable_determinism(seed: int = 0):
+    """Make SmolVLA rollouts reproducible + history-independent.
+
+    Non-deterministic CUDA kernels (atomic reductions in attention/matmuls) flip
+    borderline LIBERO rollouts run-to-run, so the SAME (init_state, steering) can
+    succeed or fail depending on execution history. That breaks any paired
+    baseline-vs-steering comparison. Enabling deterministic algorithms makes each
+    rollout a pure function of (init_state, steering). Call BEFORE the first CUDA
+    op; also set env CUBLAS_WORKSPACE_CONFIG=:4096:8 before the process starts."""
+    import os
+    import random
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+
 def _expert_layers(policy):
     return policy.model.vlm_with_expert.lm_expert.layers
 
@@ -469,15 +489,20 @@ def setup_physical_caa(policy, vectors_path: str, direction: str, alpha: float,
           f"alpha={alpha:.1f}, top_k={top_k}")
 
 
-def setup_coast(policy, coast_path: str, direction: str, beta: float):
+def setup_coast(policy, coast_path: str, direction: str, beta: float,
+                layer_lo: int | None = None, layer_hi: int | None = None):
     """COAST multiplicative conceptor gating on lm_expert MLP outputs.
 
     Math (arxiv:2605.17144):
-      C_steer fitted offline as C_high ∧ ¬C_low  (or C_low ∧ ¬C_high for "low")
+      C_steer fitted offline as C_pos ∧ ¬C_neg  (Boolean conceptor algebra)
       M = (1−β)I + β·C_steer
-      h' = h @ M   (multiplicative, not additive — key difference from CAA)
+      h' = h @ Mᵀ ⇒ per-token: h'ᵀ = M hᵀ  (multiplicative — key difference from CAA)
 
-    direction: "high" | "low"   β ∈ [0,1] — 0 = no steering, 1 = full projection
+    direction: which conceptor to gate with, as an alias:
+      "pos"/"success"/"high" → steer toward the positive group (success or high)
+      "neg"/"failure"/"low"  → steer toward the negative group
+    beta ∈ [0,1] — 0 = no steering, 1 = full projection.
+    layer_lo/layer_hi: restrict steering to expert layers [lo, hi) (None = all fitted).
     """
     clear_steering(policy)
     import torch as _torch
@@ -485,32 +510,33 @@ def setup_coast(policy, coast_path: str, direction: str, beta: float):
     if art.get("kind") != "coast":
         raise ValueError(f"Not a COAST artifact (kind={art.get('kind')}): {coast_path}")
 
+    alias = {"pos": "pos", "success": "pos", "high": "pos",
+             "neg": "neg", "failure": "neg", "low": "neg"}
+    if direction not in alias:
+        raise ValueError(f"direction must be one of {list(alias)}, got {direction}")
+    key = alias[direction]
+
     layers = _expert_layers(policy)
     n_layers = len(layers)
-    ekey = f"{direction}_eigvals"
-    vkey = f"{direction}_eigvecs"
-    handles = []
-    used = []
+    lo = 0 if layer_lo is None else layer_lo
+    hi = n_layers if layer_hi is None else layer_hi
+    handles, used = [], []
 
     for layer_key, data in art["layers"].items():
         li = int(layer_key)
-        if not (0 <= li < n_layers):
+        if not (0 <= li < n_layers) or not (lo <= li < hi):
             continue
-        if ekey not in data or vkey not in data:
+        if key not in data:
             continue
-        eigvals = data[ekey].float()   # (k,)
-        eigvecs = data[vkey].float()   # (d, k)
+        C = data[key].float()   # (d, d)  full contrastive conceptor C_steer
 
-        def _hook(module, inputs, output,
-                  _ev=eigvals, _V=eigvecs, _b=beta):
+        def _hook(module, inputs, output, _C=C, _b=beta, _pol=policy):
+            if not getattr(_pol, "_caa_gate", True):
+                return output
             h = output[0] if isinstance(output, tuple) else output   # (B, T, d)
-            dev, dt = h.device, h.dtype
-            V  = _V.to(dev, dt)     # (d, k)
-            ev = _ev.to(dev, dt)    # (k,)
-            # C_steer @ h (row-major: h (B,T,d), h @ V gives (B,T,k))
-            proj    = h @ V                    # (B, T, k)
-            Csteer_h = (proj * ev) @ V.T      # (B, T, d)
-            # Multiplicative gate: h' = (1−β)*h + β*C_steer*h
+            C = _C.to(h.device, h.dtype)
+            # Multiplicative gate M = (1−β)I + β·C_steer ⇒ h' = h·M = (1−β)h + β·(h·C)
+            Csteer_h = h @ C                             # (B, T, d)
             h_new = (1.0 - _b) * h + _b * Csteer_h
             if isinstance(output, tuple):
                 return (h_new,) + output[1:]
@@ -520,8 +546,10 @@ def setup_coast(policy, coast_path: str, direction: str, beta: float):
         used.append(li)
 
     policy._coast_handles = handles
-    print(f"  [COAST-{direction}] {len(handles)} layers, beta={beta:.3f}, "
-          f"z_high={art.get('z_high_cm', '?'):.1f}cm / z_low={art.get('z_low_cm', '?'):.1f}cm")
+    meaning = art.get("meaning", {})
+    tgt = meaning.get(key, key)
+    print(f"  [COAST→{tgt}] {len(handles)} layers {used}, beta={beta:.3f}, "
+          f"split={art.get('split','?')}, positive_only={art.get('positive_only', False)}")
 
 
 # ── Rollout ────────────────────────────────────────────────────────────────────
