@@ -824,5 +824,31 @@ python src/lerobot/scripts/libero_osc_eval.py \
   --out-dir outputs/steer_random_60k
 ```
 
+# Contrastive Conceptor Activation Steering(COAST) Reproduction Experiments
 
+```
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_compute_coast.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_natural \
+  --split success --positive-only --aperture 10.0 \
+  --task-idx 0 --n-rollouts 50 --max-steps 400 --n-action-steps 10 \
+  --output outputs/coast_repro/coast_ns10_posonly_a10.pt
+```
 
+Evaluation the before/after success rate 
+
+```
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_natural \
+  --task-idx 0 \
+  --task "pick up the black bowl between the plate and the ramekin and place it on the plate" \
+  --conditions none coast_success \
+  --coast-path outputs/coast_repro/coast_ns10_posonly_a10.pt \
+  --coast-beta 0.35 --coast-layer-lo 10 --coast-layer-hi 11 \
+  --n-rollouts 50 --max-steps 400 --n-action-steps 10 \
+  --save-video \
+  --out-dir outputs/coast_repro/videos_beforeafter
+```
+
+Result:
+Baseline:90% success rate(45/50)
+W COAST:96% success rate(48/50)
