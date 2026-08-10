@@ -774,30 +774,23 @@ Physical Neurons Finding
 
 ```
 python src/lerobot/scripts/libero_find_physical_neurons.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --high-hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-  --low-hdf5  /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --task "Pick up the black bowl and place it on the plate." \
-  --top-n 10 \
-  --output outputs/libero_physical_neurons.json \
-  2>&1 | tee outputs/find_physical_neurons.log
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams \
+  --dataset-repo-id ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams \
+  --dataset-revision main \
+  --task "pick the akita black bowl between the plate and the ramekin and place it on the plate" \
+  --n-eps 25 --top-n 10 \
+  --output outputs/libero_physical_neurons_two_cams.json
 ```
 
 ```
-python src/lerobot/scripts/libero_eval_steering.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --task "Pick up the black bowl and place it on the plate." \
-  --conditions none keyword_high keyword_low \
-  --neurons-json outputs/libero_physical_neurons.json \
-  --keyword-alpha 6.0 \
-  --steering-mode set \
-  --keyword-top-n 10 \
-  --n-rollouts 50 \
-  --save-video --video-rollouts 0 1 2 \
-  --out-dir outputs/libero_eval_physical_neurons \
-  2>&1 | tee outputs/eval_physical_neurons.log
+python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams \
+  --conditions none physical_high physical_low \
+  --physical-vectors outputs/libero_physical_neurons_two_cams_vectors.pt \
+  --physical-alpha 3.0 \
+  --task-idx 0 --n-rollouts 20 --max-steps 400 --n-action-steps 10 \
+  --out-dir outputs/physical_two_cams \
+  --save-video
 ```
 
 CAA Prompt Steering
