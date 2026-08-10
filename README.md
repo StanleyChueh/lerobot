@@ -754,50 +754,39 @@ python src/lerobot/scripts/libero_osc_eval.py \
 Paper Keyword neurons VLA steering
 
 ```
-python src/lerobot/scripts/libero_eval_steering.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --task "Pick up the black bowl and place it on the plate." \
+python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams \
   --conditions none keyword_high keyword_low \
   --neurons-json outputs/libero_height_neurons_ref.json \
   --keyword-alpha 6.0 \
-  --steering-mode set \
+  --keyword-mode set \
   --keyword-top-n 10 \
-  --n-rollouts 50 \
-  --save-video --video-rollouts 0 1 2 \
-  --out-dir outputs/libero_eval_paper_keyword \
-  2>&1 | tee outputs/eval_paper_keyword.log
+  --task-idx 0 --n-rollouts 20 --max-steps 400 --n-action-steps 10 \
+  --out-dir outputs/keyword_two_cams \
+  --save-video
 ```
 
 Physical Neurons Finding
 
 ```
 python src/lerobot/scripts/libero_find_physical_neurons.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --high-hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-  --low-hdf5  /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --task "Pick up the black bowl and place it on the plate." \
-  --top-n 10 \
-  --output outputs/libero_physical_neurons.json \
-  2>&1 | tee outputs/find_physical_neurons.log
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams \
+  --dataset-repo-id ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams \
+  --dataset-revision main \
+  --task "pick the akita black bowl between the plate and the ramekin and place it on the plate" \
+  --n-eps 25 --top-n 10 \
+  --output outputs/libero_physical_neurons_two_cams.json
 ```
 
 ```
-python src/lerobot/scripts/libero_eval_steering.py \
-  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero \
-  --hdf5 /home/bruce/datasets/libero_height_demos/libero_spatial/high/task_00.hdf5 \
-         /home/bruce/datasets/libero_height_demos/libero_spatial/low/task_00.hdf5 \
-  --task "Pick up the black bowl and place it on the plate." \
-  --conditions none keyword_high keyword_low \
-  --neurons-json outputs/libero_physical_neurons.json \
-  --keyword-alpha 6.0 \
-  --steering-mode set \
-  --keyword-top-n 10 \
-  --n-rollouts 50 \
-  --save-video --video-rollouts 0 1 2 \
-  --out-dir outputs/libero_eval_physical_neurons \
-  2>&1 | tee outputs/eval_physical_neurons.log
+python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams \
+  --conditions none physical_high physical_low \
+  --physical-vectors outputs/libero_physical_neurons_two_cams_vectors.pt \
+  --physical-alpha 3.0 \
+  --task-idx 0 --n-rollouts 20 --max-steps 400 --n-action-steps 10 \
+  --out-dir outputs/physical_two_cams \
+  --save-video
 ```
 
 CAA Prompt Steering
@@ -824,5 +813,45 @@ python src/lerobot/scripts/libero_osc_eval.py \
   --out-dir outputs/steer_random_60k
 ```
 
+# Contrastive Conceptor Activation Steering(COAST) Reproduction Experiments
 
+```
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_compute_coast.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_natural \
+  --split success --positive-only --aperture 10.0 \
+  --task-idx 0 --n-rollouts 50 --max-steps 400 --n-action-steps 10 \
+  --output outputs/coast_repro/coast_ns10_posonly_a10.pt
+```
 
+Evaluation the before/after success rate 
+
+```
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_natural \
+  --task-idx 0 \
+  --task "pick up the black bowl between the plate and the ramekin and place it on the plate" \
+  --conditions none coast_success \
+  --coast-path outputs/coast_repro/coast_ns10_posonly_a10.pt \
+  --coast-beta 0.35 --coast-layer-lo 10 --coast-layer-hi 11 \
+  --n-rollouts 50 --max-steps 400 --n-action-steps 10 \
+  --save-video \
+  --out-dir outputs/coast_repro/videos_beforeafter
+```
+
+Result:
+Baseline:90% success rate(45/50)
+W COAST:96% success rate(48/50)
+
+Another COAST example to improve success rate 
+
+```
+python src/lerobot/scripts/libero_compute_coast.py   --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams   --split success --positive-only --aperture 10   --n-rollouts 80 --task-idx 0   --max-steps 400 --n-action-steps 10   --output outputs/coast_height_two_cams.pt
+```
+
+```
+python src/lerobot/scripts/libero_osc_eval.py   --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams   --conditions none coast_success   --coast-path outputs/coast_height_two_cams.pt   --coast-beta 0.35   --task-idx 0 --n-rollouts 30 --max-steps 400 --n-action-steps 10   --out-dir outputs/coast_two_cams   --save-video
+```
+
+Result:
+Baseline:17% success rate(5/30)
+W COAST:33% success rate(10/30)
