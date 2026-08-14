@@ -146,7 +146,7 @@ def _register_hooks(policy):
 
 
 def run_collection_rollout(env, init_state, policy, preprocessor, postprocessor,
-                           device, task, max_steps):
+                           device, task, max_steps, collect_frames=False):
     """Run one rollout collecting lm_expert activations + outcome labels.
 
     Returns dict with:
@@ -154,6 +154,7 @@ def run_collection_rollout(env, init_state, policy, preprocessor, postprocessor,
         carry_z  : float  mean carry-phase EEF-z (m)
         grasped  : bool
         on_plate : bool   task success (bowl on plate) — paper's success label
+        frames   : list[ndarray] | None  agentview RGB frames (if collect_frames)
     """
     from lerobot.utils.control_utils import predict_action
 
@@ -170,10 +171,13 @@ def run_collection_rollout(env, init_state, policy, preprocessor, postprocessor,
     b0 = {b: float(obs[b][2]) for b in bowls}
     bowl_peak = dict(b0)
     eef_z_trace = []
+    frames = [] if collect_frames else None
 
     for _ in range(max_steps):
         agent = np.ascontiguousarray(obs["agentview_image"][::-1])
         wrist = np.ascontiguousarray(obs["robot0_eye_in_hand_image"][::-1])
+        if collect_frames:
+            frames.append(agent.copy())
         policy._caa_gate = True
         with torch.no_grad():
             action = predict_action(
@@ -215,7 +219,22 @@ def run_collection_rollout(env, init_state, policy, preprocessor, postprocessor,
         for i in range(n_layers)
     ]
     return {"acts": layer_acts, "carry_z": carry_z,
-            "grasped": grasped, "on_plate": on_plate}
+            "grasped": grasped, "on_plate": on_plate,
+            "frames": frames, "eef_z_trace": eef_z_trace}
+
+
+def save_collection_video(frames, eef_z_trace, out_path: Path, tag, fps=20.0):
+    """Write one collection rollout to mp4 with an EEF-z overlay (256x256 RGB)."""
+    import cv2
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    w = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (256, 256))
+    for t in range(len(frames)):
+        f = cv2.cvtColor(frames[t], cv2.COLOR_RGB2BGR)
+        z = eef_z_trace[t] * 100 if t < len(eef_z_trace) else float("nan")
+        cv2.putText(f, f"{tag}  z={z:.1f}cm", (6, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 255, 0), 2, cv2.LINE_AA)
+        w.write(f)
+    w.release()
 
 
 # ── Conceptor algebra ──────────────────────────────────────────────────────────
@@ -290,6 +309,11 @@ def main():
                     help="Conceptor aperture α — larger = less regularised (default: 10)")
     ap.add_argument("--output",      required=True)
     ap.add_argument("--device",      default=None)
+    ap.add_argument("--save-video",  action="store_true",
+                    help="render each collection rollout to mp4, filed under "
+                         "<video-dir>/success|failure/ by outcome label")
+    ap.add_argument("--video-dir",   default=None,
+                    help="dir for --save-video mp4s (default: <output>_videos next to --output)")
     args = ap.parse_args()
 
     from lerobot.policies.factory import make_pre_post_processors
@@ -329,6 +353,12 @@ def main():
 
     env = make_env(bddl_path)
 
+    video_dir = None
+    if args.save_video:
+        video_dir = Path(args.video_dir) if args.video_dir else \
+            Path(str(args.output).rsplit(".", 1)[0] + "_videos")
+        print(f"Saving collection-rollout videos → {video_dir}/(success|failure)/")
+
     # ── Phase 1: collect rollouts ──────────────────────────────────────────────
     all_acts, all_z, all_grasp, all_plate = [], [], [], []
 
@@ -338,13 +368,19 @@ def main():
         init = init_states[ri % len(init_states)]
         r = run_collection_rollout(
             env, init, policy, preprocessor, postprocessor,
-            device, args.task, args.max_steps)
+            device, args.task, args.max_steps, collect_frames=args.save_video)
         all_acts.append(r["acts"])
         all_z.append(r["carry_z"])
         all_grasp.append(r["grasped"])
         all_plate.append(r["on_plate"])
         tqdm.write(f"  r{ri:03d}  carry_z={r['carry_z']*100:.1f}cm  "
                    f"grasp={int(r['grasped'])}  on_plate={int(r['on_plate'])}")
+        if args.save_video and r["frames"]:
+            label = "success" if r["on_plate"] else "failure"
+            save_collection_video(
+                r["frames"], r["eef_z_trace"],
+                video_dir / label / f"rollout_{ri:03d}_{label}.mp4",
+                tag=f"r{ri:03d} {label}")
 
     env.close()
     elapsed = time.time() - t0

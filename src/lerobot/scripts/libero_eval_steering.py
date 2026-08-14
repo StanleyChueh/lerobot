@@ -268,7 +268,7 @@ def setup_caa(policy, caa_path: str, alpha: float,
 
 
 def setup_dimas(policy, artifact_path: str, direction: str, alpha: float,
-                gate: bool = True):
+                gate: bool = True, step_m=None):
     """DiMaS (distribution-matching) steering — the OT alternative to linear CAA.
 
     Ref: Khayatan et al., arXiv:2607.14280. At the target action-expert layer's
@@ -312,10 +312,20 @@ def setup_dimas(policy, artifact_path: str, direction: str, alpha: float,
     #   direction low   -> steer reps predicted HIGH -> p(high) > 0.5
     steer_when_high = (direction == "low")
 
+    # Per-DENOISING-STEP injection (paper injects at ONE step m, not all steps).
+    # sample_actions runs exactly num_steps expert forwards per chunk, so a free-
+    # running call counter mod num_steps recovers the current denoising step index.
+    num_steps = int(getattr(policy.config, "num_steps", 10))
+    _state = {"call": 0}
+
     def _hook(module, inputs, output, _src=source, _tgt=target, _a=alpha,
               _mean=mean, _std=std, _gw=gate_w, _gb=gate_b, _gate=gate,
-              _steer_when_high=steer_when_high):
+              _steer_when_high=steer_when_high, _step_m=step_m, _ns=num_steps):
+        cur_step = _state["call"] % _ns
+        _state["call"] += 1
         h = output[0] if isinstance(output, tuple) else output   # (B,T,d)
+        if _step_m is not None and cur_step != _step_m:
+            return output                                        # skip other steps
         p = h.mean(dim=1)                                        # (B,d)
         p_std = (p - _mean) / _std
         # gate
@@ -339,7 +349,7 @@ def setup_dimas(policy, artifact_path: str, direction: str, alpha: float,
     handle = layers[li].mlp.register_forward_hook(_hook)
     policy._dimas_handles = [handle]
     print(f"  [DiMaS-{direction}] layer={li}, feature={feature}, alpha={alpha}, "
-          f"gate={gate}, src={tuple(source.shape)}")
+          f"gate={gate}, step_m={step_m}/{num_steps}, src={tuple(source.shape)}")
 
 
 def setup_keyword_neurons(

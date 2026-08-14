@@ -61,9 +61,20 @@ def eef_state(obs) -> np.ndarray:
     ])
 
 
+# Obs key layout: "custom" = the retrained OSC model (camera1/2/3 + empty_camera_0,
+# empty_cameras=1); "standard" = the paper checkpoint HuggingFaceVLA/smolvla_libero
+# (observation.images.image=agentview, image2=wrist, state8; empty_cameras=0).
+INPUT_FORMAT = "custom"
+
+
 def build_obs(agent_hwc: np.ndarray, wrist_hwc: np.ndarray, state8: np.ndarray,
               front_hwc: np.ndarray | None = None) -> dict:
-    """camera1=agentview, camera2=wrist, camera3=sideview (or blank), empty_camera_0 blank."""
+    if INPUT_FORMAT == "standard":
+        return {
+            "observation.images.image":  agent_hwc,
+            "observation.images.image2": wrist_hwc,
+            "observation.state":         state8.astype(np.float32),
+        }
     return {
         "observation.images.camera1":        agent_hwc,
         "observation.images.camera2":        wrist_hwc,
@@ -124,6 +135,9 @@ def run_rollout(env, init_state, policy, preprocessor, postprocessor,
     b0 = {b: float(obs[b][2]) for b in bowls}
     bowl_peak = dict(b0)
     eef_z, eef_xyz, images = [], [], []
+    # Paper-faithful steering metric = the feature computed from the model's OWN
+    # predicted action each step (DiMaS steers this, not realized EEF motion).
+    act_speed, act_dz = [], []
 
     for t in range(max_steps):
         # Flip upright to match the collector (LIBERO renders vertically flipped).
@@ -153,6 +167,8 @@ def run_rollout(env, init_state, policy, preprocessor, postprocessor,
             )
         act = (action.detach().cpu().numpy() if torch.is_tensor(action)
                else np.asarray(action)).reshape(-1)[:7].astype(np.float32)
+        act_speed.append(float(np.linalg.norm(act[:3])))   # DiMaS 'speed' feature
+        act_dz.append(float(act[2]))                        # DiMaS 'height' feature
         obs, _, done, _ = env.step(act)
         eef_z.append(float(obs["robot0_eef_pos"][2]))
         eef_xyz.append(np.asarray(obs["robot0_eef_pos"], dtype=np.float64).copy())
@@ -175,17 +191,27 @@ def run_rollout(env, init_state, policy, preprocessor, postprocessor,
         "eef_xyz": np.array(eef_xyz, dtype=np.float64),
         "imgs": np.array(images, dtype=np.uint8),
         "grasped": grasped, "on_plate": on_plate, "T": len(eef_z),
+        "act_speed": np.array(act_speed, dtype=np.float64),
+        "act_dz": np.array(act_dz, dtype=np.float64),
     }
 
 
-def save_rollout_video(result, tag, out_path: Path, fps=20.0):
-    imgs = result["imgs"]; eef = result["eef_heights"] * 100
+def save_rollout_video(result, tag, out_path: Path, fps=20.0, feature="height"):
+    """Overlay the steered feature per frame: height run -> EEF z (cm); speed run
+    -> instantaneous EEF displacement per step (cm), the paper's speed metric."""
+    imgs = result["imgs"]
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if feature == "speed":
+        p = result["eef_xyz"] * 100
+        step = np.linalg.norm(np.diff(p, axis=0), axis=1) if len(p) > 1 else np.array([])
+        overlay = [f"speed={step[t]:.2f}cm/step" if t < len(step) else "" for t in range(len(imgs))]
+    else:
+        eef = result["eef_heights"] * 100
+        overlay = [f"z={eef[t]:.1f}cm" if t < len(eef) else "" for t in range(len(imgs))]
     w = cv2.VideoWriter(str(out_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (256, 256))
     for t in range(len(imgs)):
         f = cv2.cvtColor(imgs[t], cv2.COLOR_RGB2BGR)
-        z = f"z={eef[t]:.1f}cm" if t < len(eef) else ""
-        cv2.putText(f, f"{tag}  {z}", (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+        cv2.putText(f, f"{tag}  {overlay[t]}", (6, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (0, 255, 0), 2, cv2.LINE_AA)
         w.write(f)
     w.release()
@@ -251,6 +277,9 @@ def main():
     ap.add_argument("--coast-layer-lo", type=int, default=None,
                     help="steer only expert layers [lo, hi) with COAST (None = all fitted)")
     ap.add_argument("--coast-layer-hi", type=int, default=None)
+    ap.add_argument("--input-format", choices=["custom", "standard"], default="custom",
+                    help="'standard' = paper checkpoint HuggingFaceVLA/smolvla_libero "
+                         "(observation.images.image/image2 + state8); 'custom' = retrained OSC model.")
     ap.add_argument("--third-camera", default=None,
                     help="Third camera to render and pass to the model. Use 'sideview' for "
                          "three-cam models (svla_franka_pick_n_place_vla_steering_libero_three_cams_*). "
@@ -265,7 +294,24 @@ def main():
         setup_caa, setup_physical_caa, setup_keyword_neurons, setup_dimas,
         setup_coast, clear_steering, enable_determinism)
 
+    global INPUT_FORMAT
+    INPUT_FORMAT = args.input_format
     enable_determinism()   # reproducible, history-independent rollouts
+
+    # Detect the steered behavioral feature (speed vs height) so plots, labels and
+    # video overlays match what is actually being intervened on (DiMaS, arXiv 2607.14280).
+    steer_feature = "height"
+    if args.dimas_path and any(c.startswith("dimas") for c in args.conditions):
+        try:
+            steer_feature = torch.load(args.dimas_path, map_location="cpu",
+                                       weights_only=False).get("feature", "height")
+        except Exception:
+            pass
+    _DISP = {"speed": {"dimas_high": "dimas_faster", "dimas_low": "dimas_slower"},
+             "height": {"dimas_high": "dimas_higher", "dimas_low": "dimas_lower"}}
+
+    def disp_label(cond):
+        return _DISP.get(steer_feature, {}).get(cond, cond)
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     device = get_safe_torch_device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     print(f"Device: {device}  (deterministic algorithms ON)")
@@ -380,7 +426,7 @@ def main():
         n_success_target * 6 if n_success_target else args.n_rollouts
     )
 
-    peaks_success_by_cond, summary = {}, {}
+    peaks_success_by_cond, speed_all_by_cond, summary = {}, {}, {}
     for cond in args.conditions:
         print(f"\n{'='*56}\nCondition: {cond}\n{'='*56}")
         apply_condition(cond)
@@ -388,6 +434,7 @@ def main():
         cond_peaks_all, cond_peaks_success = [], []
         cond_means_all, cond_means_success = [], []
         cond_speed_all, cond_speed_success = [], []
+        cond_actsp_all, cond_actdz_all = [], []   # predicted-action feature (paper metric)
         ri = 0
         target = n_success_target if n_success_target else None
 
@@ -416,6 +463,9 @@ def main():
             cond_means_all.append(mk)
             if sp == sp:
                 cond_speed_all.append(sp)
+            if len(r["act_speed"]):
+                cond_actsp_all.append(float(np.mean(r["act_speed"])))
+                cond_actdz_all.append(float(np.mean(r["act_dz"])))
 
             ok_str  = "OK" if r["on_plate"] else ("GRASP" if r["grasped"] else "FAIL")
             avg_t   = sum(t_rollout_times) / len(t_rollout_times)
@@ -446,21 +496,24 @@ def main():
                 pbar.update(1)
                 if args.save_video:
                     save_rollout_video(
-                        r, f"{cond} r{ri:03d} OK",
-                        out_dir / "videos" / cond / f"rollout_{ri:03d}_OK.mp4")
+                        r, f"{disp_label(cond)} r{ri:03d} OK",
+                        out_dir / "videos" / disp_label(cond) / f"rollout_{ri:03d}_OK.mp4",
+                        feature=steer_feature)
             else:
                 if target is None:
                     pbar.update(1)
                 if args.save_video and not args.save_success_only:
                     save_rollout_video(
-                        r, f"{cond} r{ri:03d} {ok_str}",
-                        out_dir / "videos" / cond / f"rollout_{ri:03d}_{ok_str}.mp4")
+                        r, f"{disp_label(cond)} r{ri:03d} {ok_str}",
+                        out_dir / "videos" / disp_label(cond) / f"rollout_{ri:03d}_{ok_str}.mp4",
+                        feature=steer_feature)
         pbar.close()
         elapsed_cond = time.time() - t_cond_start
         print(f"  Condition time: {elapsed_cond/60:.1f} min  "
               f"({sum(t_rollout_times)/len(t_rollout_times):.0f}s/rollout avg)")
 
         peaks_success_by_cond[cond] = cond_peaks_success
+        speed_all_by_cond[cond] = cond_speed_all   # realized EEF displacement/step, ALL rollouts
         smu = float(np.mean(cond_peaks_success)) if cond_peaks_success else float("nan")
         mu_all = float(np.mean(cond_peaks_all)) if cond_peaks_all else float("nan")
         sd_all = float(np.std(cond_peaks_all)) if cond_peaks_all else float("nan")
@@ -469,12 +522,17 @@ def main():
         cmean_succ = float(np.mean(cond_means_success)) if cond_means_success else float("nan")
         cspeed_all = float(np.mean(cond_speed_all)) if cond_speed_all else float("nan")
         cspeed_succ = float(np.mean(cond_speed_success)) if cond_speed_success else float("nan")
+        # PREDICTED-ACTION feature means (what DiMaS actually steers — paper metric)
+        pa_speed = float(np.mean(cond_actsp_all)) if cond_actsp_all else float("nan")
+        pa_dz = float(np.mean(cond_actdz_all)) if cond_actdz_all else float("nan")
         summary[cond] = (n_grasp, n_plate, n_attempts, mu_all, sd_all, smu,
-                         cmean_all, cmean_succ, cspeed_all, cspeed_succ)
+                         cmean_all, cmean_succ, cspeed_all, cspeed_succ, pa_speed, pa_dz)
         print(f"  attempts={n_attempts}  grasp={n_grasp}/{n_attempts} ({100*n_grasp/n_attempts:.0f}%)"
               f"  on_plate={n_plate}/{n_attempts} ({100*n_plate/n_attempts:.0f}%)"
               f"  carry-MEAN(succ n={len(cond_means_success)})={cmean_succ:.1f}cm"
               f"  carry-SPEED(all)={cspeed_all:.2f}cm/step  SPEED(succ)={cspeed_succ:.2f}")
+        print(f"  PRED-ACTION(all): speed(||Δxyz||)={pa_speed:.4f}   dz={pa_dz:+.4f}   "
+              f"<- DiMaS-steered feature")
     clear_steering(policy)
     env.close()
 
@@ -488,23 +546,37 @@ def main():
           "peak is task-pinned to plate (~117cm)")
     print(f"{'condition':<14}{'attempts':>9}{'grasp%':>8}{'success%':>10}"
           f"{'cMEAN(all)':>12}{'Δheight':>9}{'SPEED(all)':>12}{'Δspeed%':>9}")
-    base = summary.get("none", (0,)*10)[6]        # baseline mean-carry (all)
-    base_sp = summary.get("none", (0,)*10)[8]     # baseline mean-speed (all)
-    for cond, (g, p, nattempts, mu, sd, smu, cmean_all, cmean_succ, csp_all, csp_succ) in summary.items():
+    base = summary.get("none", (0,)*12)[6]        # baseline mean-carry (all)
+    base_sp = summary.get("none", (0,)*12)[8]     # baseline mean-speed (all)
+    for cond, vals in summary.items():
+        (g, p, nattempts, mu, sd, smu, cmean_all, cmean_succ, csp_all, csp_succ) = vals[:10]
         dh = f"{cmean_all-base:+.1f}" if (cond != "none" and base == base and cmean_all == cmean_all) else "—"
         dsp = f"{100*(csp_all-base_sp)/base_sp:+.0f}%" if (cond != "none" and base_sp == base_sp and base_sp and csp_all == csp_all) else "—"
         print(f"{cond:<14}{nattempts:>9}{100*g/nattempts:>6.0f}%{100*p/nattempts:>9.0f}%"
               f"{cmean_all:>12.1f}{dh:>9}{csp_all:>12.2f}{dsp:>9}")
     print("(height in cm: dataset low=101.0 / high=114.7; speed in cm/control-step. "
           "For SPEED steering read the SPEED/Δspeed cols; for height read cMEAN/Δheight.)")
+    # PREDICTED-ACTION feature table (the quantity DiMaS steers, per the paper)
+    base_pas = summary.get("none", (float('nan'),)*12)[10]
+    base_pdz = summary.get("none", (float('nan'),)*12)[11]
+    print(f"\n{'PRED-ACTION':<14}{'speed||Δxyz||':>16}{'Δspeed%':>10}{'dz(signed)':>14}{'Δdz':>10}")
+    for cond, vals in summary.items():
+        pas, pdz = vals[10], vals[11]
+        dps = f"{100*(pas-base_pas)/base_pas:+.0f}%" if (cond != "none" and base_pas == base_pas and base_pas) else "—"
+        ddz = f"{pdz-base_pdz:+.4f}" if (cond != "none" and base_pdz == base_pdz) else "—"
+        print(f"{cond:<14}{pas:>16.4f}{dps:>10}{pdz:>+14.4f}{ddz:>10}")
     print("=" * 104)
 
     # ── save JSON summary (always) ──────────────────────────────────────────────
     import json as _json
-    base = summary.get("none", (0,)*10)[6]
-    base_sp = summary.get("none", (0,)*10)[8]
+    base = summary.get("none", (0,)*12)[6]
+    base_sp = summary.get("none", (0,)*12)[8]
+    base_pas = summary.get("none", (float('nan'),)*12)[10]
+    base_pdz = summary.get("none", (float('nan'),)*12)[11]
     summary_rows = []
-    for cond, (g, p, nattempts, mu, sd, smu, cmean_all, cmean_succ, csp_all, csp_succ) in summary.items():
+    for cond, vals in summary.items():
+        (g, p, nattempts, mu, sd, smu, cmean_all, cmean_succ, csp_all, csp_succ) = vals[:10]
+        pas, pdz = vals[10], vals[11]
         summary_rows.append({
             "condition":       cond,
             "attempts":        nattempts,
@@ -516,6 +588,10 @@ def main():
             "speed_all_cmps":       round(csp_all, 3),
             "speed_succ_cmps":      round(csp_succ, 3) if csp_succ == csp_succ else None,
             "delta_speed_pct":      round(100 * (csp_all - base_sp) / base_sp, 1) if (cond != "none" and base_sp) else 0.0,
+            "pred_action_speed":    round(pas, 4) if pas == pas else None,
+            "pred_action_dz":       round(pdz, 4) if pdz == pdz else None,
+            "delta_pred_speed_pct": round(100 * (pas - base_pas) / base_pas, 1) if (cond != "none" and base_pas == base_pas and base_pas) else 0.0,
+            "delta_pred_dz":        round(pdz - base_pdz, 4) if (cond != "none" and base_pdz == base_pdz) else 0.0,
             "peaks_success":        peaks_success_by_cond.get(cond, []),
         })
     summary_path = out_dir / "summary.json"
@@ -524,31 +600,44 @@ def main():
                     "results": summary_rows}, _f, indent=2)
     print(f"[✓] summary JSON → {summary_path}")
 
-    # ── boxplot of carry-peak by condition — SUCCESSFUL (on-plate) rollouts only ─
-    if len(peaks_success_by_cond) >= 1:
+    # ── boxplot of the STEERED feature by condition (matches DiMaS Fig 2/3) ──────
+    # speed run  -> distribution of realized EEF displacement per step (all rollouts)
+    # height run -> distribution of carry-phase peak EEF-z (successful rollouts)
+    if steer_feature == "speed":
+        vals_by_cond = speed_all_by_cond
+        ylabel = "EEF displacement per step (cm)  [all rollouts]"
+        title = "Speed steering — EEF displacement distribution"
+        subset = "all"
+    else:
+        vals_by_cond = peaks_success_by_cond
+        ylabel = "Carry-phase peak EEF z (cm)  [successful rollouts]"
+        title = "Height steering — carry-z distribution (task-completed)"
+        subset = "success"
+    if len(vals_by_cond) >= 1:
         import matplotlib; matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        cols = {"none": "#555", "caa_high": "#C0392B", "caa_low": "#E8A87C",
-                "physical_high": "#1ABC9C", "physical_low": "#8E44AD"}
-        labels = list(peaks_success_by_cond.keys())
-        data = [peaks_success_by_cond[c] if peaks_success_by_cond[c] else [np.nan] for c in labels]
+        cols = {"none": "#555",
+                "dimas_high": "#C0392B", "dimas_low": "#2E86C1"}   # red=increase, blue=decrease
+        labels = list(vals_by_cond.keys())
+        data = [vals_by_cond[c] if vals_by_cond[c] else [np.nan] for c in labels]
         fig, ax = plt.subplots(figsize=(max(4, 2 * len(labels)), 5))
         bp = ax.boxplot(data, patch_artist=True, medianprops={"color": "white", "lw": 2})
         for patch, c in zip(bp["boxes"], labels):
             patch.set_facecolor(cols.get(c, "#888")); patch.set_alpha(0.85)
         all_vals = [v for d in data for v in d if v == v]
         if all_vals:
-            ymax = max(all_vals)
+            ymin = min(all_vals)
             for i, c in enumerate(labels):
-                ax.text(i + 1, ymax + 1, f"n={len(peaks_success_by_cond[c])}",
+                ax.text(i + 1, ymin - 0.04 * (abs(ymin) + 1),
+                        f"n={len([v for v in vals_by_cond[c] if v == v])}",
                         ha="center", fontsize=9, color="black")
-        ax.set_xticklabels(labels, rotation=15, fontsize=10)
-        ax.set_ylabel("Carry-phase peak EEF z (cm)  [successful rollouts only]")
-        ax.set_title(f"Height steering separation (task-completed only)\n{Path(args.policy_path).name}")
+        ax.set_xticklabels([disp_label(c) for c in labels], rotation=15, fontsize=10)
+        ax.set_ylabel(ylabel)
+        ax.set_title(f"{title}\n{Path(args.policy_path).name}")
         ax.grid(axis="y", alpha=0.3)
         fig.tight_layout()
         fig.savefig(out_dir / "steering_separation_boxplot.png", dpi=200)
-        print(f"[✓] boxplot (successful-only) → {out_dir/'steering_separation_boxplot.png'}")
+        print(f"[✓] boxplot ({steer_feature}, {subset}) → {out_dir/'steering_separation_boxplot.png'}")
     print(f"[✓] outputs → {out_dir.resolve()}")
 
 
