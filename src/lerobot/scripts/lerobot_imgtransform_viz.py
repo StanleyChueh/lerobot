@@ -116,14 +116,25 @@ def visualize_image_transforms(cfg: DatasetConfig, output_dir: Path = OUTPUT_DIR
     output_dir = output_dir / cfg.repo_id.split("/")[-1]
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get 1st frame from 1st camera of 1st episode
-    original_frame = dataset[0][dataset.meta.camera_keys[0]]
-    to_pil(original_frame).save(output_dir / "original_frame.png", quality=100)
-    print("\nOriginal frame saved to:")
-    print(f"    {output_dir / 'original_frame.png'}.")
+    camera_keys = dataset.meta.camera_keys
+    if not camera_keys:
+        raise ValueError(f"No camera found in dataset {cfg.repo_id}.")
 
-    save_all_transforms(cfg.image_transforms, original_frame, output_dir, n_examples)
-    save_each_transform(cfg.image_transforms, original_frame, output_dir, n_examples)
+    # Get 1st frame of 1st episode, then visualize the transforms for every camera of the dataset
+    frame = dataset[0]
+    for camera_key in camera_keys:
+        camera_name = camera_key.removeprefix("observation.images.").replace(".", "_")
+        camera_dir = output_dir / camera_name
+        camera_dir.mkdir(parents=True, exist_ok=True)
+
+        original_frame = frame[camera_key]
+        to_pil(original_frame).save(camera_dir / "original_frame.png", quality=100)
+        print(f"\n=== {camera_key} ===")
+        print("Original frame saved to:")
+        print(f"    {camera_dir / 'original_frame.png'}.")
+
+        save_all_transforms(cfg.image_transforms, original_frame, camera_dir, n_examples)
+        save_each_transform(cfg.image_transforms, original_frame, camera_dir, n_examples)
 
 
 def main():
