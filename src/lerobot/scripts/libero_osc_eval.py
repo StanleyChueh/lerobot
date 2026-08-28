@@ -120,9 +120,21 @@ def _bowl_keys(obs):
     return [k for k in obs if "bowl" in k.lower() and k.endswith("_pos") and "to_robot" not in k]
 
 
+def _target_keys(obs, keywords):
+    """Generic target-object position key finder. keywords is a list of strings
+    that must ALL appear in the key name (e.g. ['alphabet','soup'] or ['bowl']).
+    Skips robot/to_robot keys."""
+    return [k for k in obs
+            if all(w in k.lower() for w in keywords)
+            and k.endswith("_pos") and "to_robot" not in k
+            and "robot0" not in k]
+
+
 def run_rollout(env, init_state, policy, preprocessor, postprocessor,
                 device, task, max_steps, plate_key=None, phase_gate=False,
-                third_camera: str | None = None):
+                third_camera: str | None = None,
+                target_keywords: list | None = None,
+                container_mode: str = "plate"):
     from lerobot.utils.control_utils import predict_action
 
     policy.reset(); preprocessor.reset(); postprocessor.reset()
@@ -131,7 +143,8 @@ def run_rollout(env, init_state, policy, preprocessor, postprocessor,
     for _ in range(5):  # settle (zero OSC delta, gripper open)
         obs, _, _, _ = env.step(np.array([0, 0, 0, 0, 0, 0, -1.0], dtype=np.float32))
 
-    bowls = _bowl_keys(obs)
+    kws   = target_keywords if target_keywords else ["bowl"]
+    bowls = _target_keys(obs, kws) or _bowl_keys(obs)   # fallback to bowl for libero_spatial
     b0 = {b: float(obs[b][2]) for b in bowls}
     bowl_peak = dict(b0)
     eef_z, eef_xyz, images = [], [], []
@@ -184,7 +197,11 @@ def run_rollout(env, init_state, policy, preprocessor, postprocessor,
     if lifted is not None and plate_key is not None and plate_key in obs:
         fb, tp = obs[lifted], obs[plate_key]
         dxy = float(np.linalg.norm(fb[:2] - tp[:2])); dz = float(fb[2] - tp[2])
-        on_plate = bool(dxy < 0.06 and -0.02 < dz < 0.08 and fb[2] > 0.88)
+        if container_mode == "basket":
+            # Object is inside the basket: within 15cm XY radius, 0–20cm above basket centre
+            on_plate = bool(dxy < 0.15 and -0.05 < dz < 0.20)
+        else:
+            on_plate = bool(dxy < 0.06 and -0.02 < dz < 0.08 and fb[2] > 0.88)
 
     return {
         "eef_heights": np.array(eef_z, dtype=np.float64),
@@ -336,11 +353,27 @@ def main():
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=policy.config, pretrained_path=args.policy_path)
 
+    # ── Derive target object + container from suite and BDDL filename ─────────
+    import re as _re
+    if args.suite == "libero_object":
+        container_mode = "basket"
+        m = _re.search(r'pick_up_the_(.+?)_and_place', fname)
+        target_name = m.group(1) if m else None   # e.g. "alphabet_soup"
+        target_keywords = target_name.split("_") if target_name else ["bowl"]
+        print(f"libero_object: target={target_name}  keywords={target_keywords}")
+    else:
+        container_mode = "plate"
+        target_keywords = None   # falls back to _bowl_keys inside run_rollout
+
     env = make_env(bddl_path, third_camera=args.third_camera)
     obs0 = env.reset()
-    plate_key = next((k for k in obs0 if "plate" in k.lower()
-                      and k.endswith("_pos") and "to_robot" not in k), None)
-    print(f"plate_key={plate_key}")
+    if container_mode == "basket":
+        plate_key = next((k for k in obs0 if "basket" in k.lower()
+                          and k.endswith("_pos") and "to_robot" not in k), None)
+    else:
+        plate_key = next((k for k in obs0 if "plate" in k.lower()
+                          and k.endswith("_pos") and "to_robot" not in k), None)
+    print(f"container_key={plate_key}  mode={container_mode}")
 
     def carry_peak_cm(eef_m):
         e = np.asarray(eef_m) * 100
@@ -452,7 +485,9 @@ def main():
             r = run_rollout(env, init, policy, preprocessor, postprocessor,
                             device, args.task, args.max_steps, plate_key,
                             phase_gate=args.caa_phase_gate,
-                            third_camera=args.third_camera)
+                            third_camera=args.third_camera,
+                            target_keywords=target_keywords,
+                            container_mode=container_mode)
             t_rollout_times.append(time.time() - t_roll)
             n_attempts += 1; ri += 1
             n_grasp += int(r["grasped"]); n_plate += int(r["on_plate"])

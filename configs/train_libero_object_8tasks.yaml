@@ -1,0 +1,74 @@
+# Fine-tune smolvla_base on libero_object tasks 0-7.
+# Tasks 8 (chocolate_pudding) and 9 (orange_juice) are held out as unseen objects.
+#
+# Run AFTER converting HDF5 demos:
+#   conda run -n lerobot python src/lerobot/scripts/convert_libero_object_to_lerobot.py \
+#     --output-dir /home/bruce/datasets/lerobot_libero_object_8tasks \
+#     --tasks 0 1 2 3 4 5 6 7
+#
+# Then train:
+#   conda run -n lerobot python src/lerobot/scripts/lerobot_train.py \
+#     --config-path configs/train_libero_object_8tasks.yaml \
+#     policy.push_to_hub=true \
+#     policy.repo_id=YOUR_HF_USERNAME/smolvla_libero_object_8tasks
+
+dataset:
+  repo_id: lerobot_libero_object_8tasks   # matches output_dir.name from convert script
+  root: /home/bruce/datasets/lerobot_libero_object_8tasks  # = output_dir (root is used directly)
+
+policy:
+  type: smolvla
+  pretrained_path: lerobot/smolvla_base
+  n_action_steps: 50
+  chunk_size: 50
+  empty_cameras: 0              # no empty_camera_0 needed; we have 2 real cams
+  resize_imgs_with_padding: [512, 512]
+  freeze_vision_encoder: true   # only train action expert + state proj
+  train_expert_only: true
+  train_state_proj: true
+  max_state_dim: 32
+  max_action_dim: 32
+  normalization_mapping:
+    VISUAL: IDENTITY
+    STATE: MEAN_STD
+    ACTION: MEAN_STD
+  push_to_hub: false            # set to true if you want to upload to HF Hub
+  # repo_id: YOUR_HF_USERNAME/smolvla_libero_object_8tasks
+
+rename_map:
+  observation.images.agentview: observation.images.camera1
+  observation.images.robot0_eye_in_hand: observation.images.camera2
+
+output_dir: outputs/train/smolvla_libero_object_8tasks
+job_name: smolvla_obj8tasks
+
+seed: 1000
+num_workers: 4
+batch_size: 16
+steps: 50000        # ~125 epochs over 400 demos × 150 steps/demo; adjust as needed
+
+save_checkpoint: true
+save_freq: 10000
+log_freq: 200
+eval_freq: 50000    # set to 0 to disable online eval (needs a LIBERO env)
+
+optimizer:
+  type: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-10
+  grad_clip_norm: 10.0
+  betas: [0.9, 0.95]
+  eps: 1.0e-8
+
+scheduler:
+  type: cosine_decay_with_warmup
+  num_warmup_steps: 1000
+  num_decay_steps: 50000
+  peak_lr: 1.0e-4
+  decay_lr: 2.5e-6
+
+wandb:
+  enable: false
+
+tensorboard:
+  enable: false
