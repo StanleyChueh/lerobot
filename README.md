@@ -815,6 +815,8 @@ python src/lerobot/scripts/libero_osc_eval.py \
 
 # Contrastive Conceptor Activation Steering(COAST) Reproduction Experiments
 
+Csteer = Csuccess(Success-only steering)
+
 ```
 SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_compute_coast.py \
   --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_osc_natural \
@@ -823,7 +825,7 @@ SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_compute_coast.py \
   --output outputs/coast_repro/coast_ns10_posonly_a10.pt
 ```
 
-Evaluation the before/after success rate 
+Evaluation the before/after success rate (Success-only steering)
 
 ```
 SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_osc_eval.py \
