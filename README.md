@@ -844,16 +844,197 @@ Result:
 Baseline:90% success rate(45/50)
 W COAST:96% success rate(48/50)
 
-Another COAST example to improve success rate 
+
+# COAST Paper-exact Method
+
+## Step1: Collect rollouts + fit conceptors + source videos
 
 ```
-python src/lerobot/scripts/libero_compute_coast.py   --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams   --split success --positive-only --aperture 10   --n-rollouts 80 --task-idx 0   --max-steps 400 --n-action-steps 10   --output outputs/coast_height_two_cams.pt
+conda activate libero_sim && cd ~/CSL/lerobot_nn/
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_compute_coast.py \
+  --policy-path HuggingFaceVLA/smolvla_libero \
+  --input-format standard \
+  --suite libero_spatial \
+  --task-idx 0 \
+  --task "pick up the black bowl between the plate and the ramekin and place it on the plate" \
+  --n-rollouts 15 \
+  --split success \
+  --aperture 10.0 \
+  --max-steps 400 \
+  --n-action-steps 10 \
+  --save-diagnostics \
+  --save-video \
+  --video-dir outputs/coast_paper/task0/fit_videos \
+  --output outputs/coast_paper/task0/coast_fit.pt
 ```
 
+Output:
+
 ```
-python src/lerobot/scripts/libero_osc_eval.py   --policy-path ethanCSL/svla_franka_pick_n_place_vla_steering_libero_height_two_cams   --conditions none coast_success   --coast-path outputs/coast_height_two_cams.pt   --coast-beta 0.35   --task-idx 0 --n-rollouts 30 --max-steps 400 --n-action-steps 10   --out-dir outputs/coast_two_cams   --save-video
+outputs/coast_paper/task0/fit_videos/
+  success/rollout_000_success.mp4   ← base policy succeeded
+  failure/rollout_002_failure.mp4   ← base policy failed
 ```
 
-Result:
-Baseline:17% success rate(5/30)
-W COAST:33% success rate(10/30)
+## Step2: Layer selection by quota
+
+```
+conda activate libero_sim && cd ~/CSL/lerobot_nn/
+python -c "
+import torch, numpy as np, json, pathlib
+art = torch.load('outputs/coast_paper/task0/coast_fit.pt',
+                 map_location='cpu', weights_only=False)
+print(f\"fit rollouts: {art['n_success']} success / {art['n_failure']} failure\")
+qs = sorted([(int(k), float(np.trace(art['layers'][k]['pos'].numpy())) / 480)
+             for k in art['layers']], key=lambda x: -x[1])
+print('Layer  Q = Tr(C_steer)/d')
+for i,(l,q) in enumerate(qs):
+    print(f'  L{l:<3}  {q:.5f}' + ('  <-- pick this' if i == 0 else ''))
+print()
+print('Best layer:', qs[0][0])
+pathlib.Path('outputs/coast_paper/task0/best_layer.txt').write_text(str(qs[0][0]))
+" 2>/dev/null
+```
+
+Focus on "Best layer: N"
+
+## Step3:β sweep on training data
+
+```
+BEST_LAYER=$(cat outputs/coast_paper/task0/best_layer.txt)
+
+conda activate libero_sim && cd ~/CSL/lerobot_nn 
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_coast_sweep.py \
+  --policy-path     HuggingFaceVLA/smolvla_libero \
+  --input-format    standard        \
+  --coast-path      outputs/coast_paper/task0/coast_fit.pt \
+  --task-idx        0               \
+  --task            "pick up the black bowl between the plate and the ramekin and place it on the plate" \
+  --n-rollouts      15              \
+  --layers          $BEST_LAYER     \
+  --betas           0.3 0.5 0.7    \
+  --out             outputs/coast_paper/task0/sweep_fit.txt
+```
+
+## Test success rate
+
+```
+BEST_LAYER=$(cat outputs/coast_paper/task0/best_layer.txt)
+# read BEST_BETA from the last line of sweep_fit.txt, or set manually
+BEST_BETA=0.5
+
+conda activate libero_sim && cd ~/CSL/lerobot_nn 
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_coast_sweep.py \
+  --policy-path     HuggingFaceVLA/smolvla_libero \
+  --input-format    standard        \
+  --coast-path      outputs/coast_paper/task0/coast_fit.pt \
+  --task-idx        0               \
+  --task            "pick up the black bowl between the plate and the ramekin and place it on the plate" \
+  --init-indices    $(seq 15 44)    \
+  --layers          $BEST_LAYER     \
+  --betas           $BEST_BETA      \
+  --out             outputs/coast_paper/task0/eval_test.txt
+```
+
+## Evaluation videos
+
+```
+BEST_LAYER=$(cat outputs/coast_paper/task0/best_layer.txt)
+BEST_BETA=0.5
+
+conda activate libero_sim && cd ~/CSL/lerobot_nn \
+SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_osc_eval.py \
+  --policy-path     HuggingFaceVLA/smolvla_libero \
+  --input-format    standard             \
+  --suite           libero_spatial       \
+  --task-idx        0                    \
+  --task            "pick up the black bowl between the plate and the ramekin and place it on the plate" \
+  --init-indices    $(seq 15 44)         \
+  --conditions      none coast_success   \
+  --coast-path      outputs/coast_paper/task0/coast_fit.pt \
+  --coast-beta      $BEST_BETA           \
+  --coast-layer-lo  $BEST_LAYER          \
+  --coast-layer-hi  $((BEST_LAYER + 1))  \
+  --max-steps       400                  \
+  --n-action-steps  10                   \
+  --save-video                           \
+  --out-dir         outputs/coast_paper/task0/eval_videos
+```
+
+Output:
+
+outputs/coast_paper/task0/eval_videos/videos/
+  none/
+    rollout_001_OK.mp4      ← baseline succeeded
+    rollout_003_FAIL.mp4    ← baseline failed
+  coast_success/
+    rollout_001_OK.mp4      ← COAST steered, succeeded
+    rollout_003_OK.mp4      ← COAST turned a failure into success
+    rollout_005_FAIL.mp4    ← still failed under COAST
+
+## Quota bar chart 
+
+```
+conda activate libero_sim && cd ~/CSL/lerobot_nn
+SMOLVLA_DEBUG=0 python -c "
+import torch, numpy as np, pathlib
+import matplotlib; matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+art = torch.load('outputs/coast_paper/task0/coast_fit.pt',
+                 map_location='cpu', weights_only=False)
+best = int(pathlib.Path('outputs/coast_paper/task0/best_layer.txt').read_text())
+
+layers, qs = zip(*sorted(
+    [(int(k), float(np.trace(art['layers'][k]['pos'].numpy())) / 480)
+     for k in art['layers']], key=lambda x: x[0]))
+
+fig, ax = plt.subplots(figsize=(10, 3.5))
+colors = ['#e74c3c' if l == best else '#95a5a6' for l in layers]
+ax.bar(layers, qs, color=colors, edgecolor='white', linewidth=0.4)
+ax.axvline(best, color='#e74c3c', lw=1.5, ls='--', alpha=0.6)
+ax.set_xlabel('lm_expert layer index', fontsize=11)
+ax.set_ylabel('Q = Tr(C_steer) / d', fontsize=11)
+ax.set_title('Conceptor quota per layer — red bar = paper Stage 1 selection', fontsize=11)
+ax.set_xticks(layers); ax.tick_params(axis='x', labelsize=7)
+plt.tight_layout()
+out = 'outputs/coast_paper/task0/quota_bars.png'
+fig.savefig(out, dpi=160); print('Saved:', out)
+" 2>/dev/null
+```
+
+## Mechanism analysis 
+
+```
+BEST_LAYER=$(cat outputs/coast_paper/task0/best_layer.txt)
+BEST_BETA=0.5
+
+conda activate libero_sim && cd ~/CSL/lerobot_nn
+SMOLVLA_DEBUG=0  python src/lerobot/scripts/libero_coast_mechanism.py \
+  --policy-path     HuggingFaceVLA/smolvla_libero \
+  --input-format    standard          \
+  --coast-path      outputs/coast_paper/task0/coast_fit.pt \
+  --task-idx        0                 \
+  --task            "pick up the black bowl between the plate and the ramekin and place it on the plate" \
+  --init-indices    $(seq 15 44)      \
+  --coast-layer     $BEST_LAYER       \
+  --coast-beta      $BEST_BETA        \
+  --max-steps       400               \
+  --n-action-steps  10                \
+  --save-video                        \
+  --n-video-max     5                 \
+  --out-dir         outputs/coast_paper/task0/mechanism
+```
+
+Output:
+
+outputs/coast_paper/task0/mechanism/
+  paired_rollouts.csv         ← per-state: baseline outcome, COAST outcome, fail mode
+  activation_metrics.csv      ← per-step: layer, A_success, A_failure, margin, for both conditions
+  summary.json                ← aggregate counts and McNemar p-value
+  figures/
+    failure_mode_geometry.png ← (1) PCA of success vs failure activation clusters
+    causal_margin_shift.png   ← (2) Δmargin by outcome group — the core causal plot
+    success_margin_over_time.png ← (3) how margin evolves step-by-step during steered rollouts
+    phase_margin_roc.png      ← (4) ROC-AUC: can margin predict eventual success at each phase?
+
