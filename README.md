@@ -916,7 +916,7 @@ SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_coast_sweep.py \
   --out             outputs/coast_paper/task0/sweep_fit.txt
 ```
 
-## Test success rate
+## Step4: Test success rate
 
 ```
 BEST_LAYER=$(cat outputs/coast_paper/task0/best_layer.txt)
@@ -936,7 +936,7 @@ SMOLVLA_DEBUG=0 python src/lerobot/scripts/libero_coast_sweep.py \
   --out             outputs/coast_paper/task0/eval_test.txt
 ```
 
-## Evaluation videos
+## Step5: Evaluation videos
 
 ```
 BEST_LAYER=$(cat outputs/coast_paper/task0/best_layer.txt)
@@ -972,7 +972,7 @@ outputs/coast_paper/task0/eval_videos/videos/
     rollout_003_OK.mp4      ← COAST turned a failure into success
     rollout_005_FAIL.mp4    ← still failed under COAST
 
-## Quota bar chart 
+## Step6: Quota bar chart 
 
 ```
 conda activate libero_sim && cd ~/CSL/lerobot_nn
@@ -1003,7 +1003,7 @@ fig.savefig(out, dpi=160); print('Saved:', out)
 " 2>/dev/null
 ```
 
-## Mechanism analysis 
+## Step7: Mechanism analysis 
 
 ```
 BEST_LAYER=$(cat outputs/coast_paper/task0/best_layer.txt)
