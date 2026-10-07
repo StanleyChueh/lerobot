@@ -1038,3 +1038,14 @@ outputs/coast_paper/task0/mechanism/
     success_margin_over_time.png ← (3) how margin evolves step-by-step during steered rollouts
     phase_margin_roc.png      ← (4) ROC-AUC: can margin predict eventual success at each phase?
 
+# GR00T N1.7 evaluation in IsaacSim
+
+```
+cd ~/Stanley_ws/IsaacLab && conda activate lerobot-latest
+python scripts/imitation_learning/lerobot/gr00t_server.py     --checkpoint ethanCSL/openarm_visuomotor_stanley_GR00T_500     --task "Pick up the Pringles can with the right arm, hand it to the left arm"     --port 5556
+```
+
+```
+cd ~/Stanley_ws/IsaacLab && conda activate env_isaaclab
+./isaaclab.sh -p scripts/imitation_learning/lerobot/eval_groot_jointspace.py     --task Isaac-PickUp-RedCube-OpenArm-IK-Abs-v0     --num_rollouts 10 --horizon 300 --enable_cameras     --cameras right_wrist_cam,wrist_cam,body_cam --task_mode handover  
+```
