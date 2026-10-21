@@ -1,3 +1,29 @@
+LaWAM training
+```
+ lerobot-train \
+  --policy.path=jialei02/lawam-pretrain-lerobot \
+  --dataset.repo_id=ethanCSL/openarm_pringles_lerobot_real_v00 \
+  --dataset.image_transforms.enable=true \
+  --dataset.image_transforms.random_order=true \
+  --dataset.image_transforms.max_num_transforms=6 \
+  --rename_map='{"observation.images.body_cam":"observation.images.image","observation.images.wrist_cam":"observation.images.image2","observation.images.right_wrist_cam":"observation.images.image3"}' \
+  --policy.input_features='{"observation.images.image3":{"type":"VISUAL","shape":[3,256,256]}}' \
+  --policy.primary_image_features='["observation.images.image"]' \
+  --policy.wrist_image_features='["observation.images.image2","observation.images.image3"]' \
+  --policy.action_horizon=24 \
+  --policy.n_action_steps=24 \
+  --policy.device=cuda \
+  --policy.repo_id=ethanCSL/lawam_openarm_pringles_v00 \
+  --batch_size=16 \
+  --num_workers=8 \
+  --steps=25000 \
+  --save_freq=5000 \
+  --output_dir=outputs/train/lawam_openarm_pringles_v00 \
+  --job_name=lawam_openarm_pringles_v00 \
+  --wandb.enable=false
+```
+
+
 <p align="center">
   <img alt="LeRobot, Hugging Face Robotics Library" src="./media/readme/lerobot-logo-thumbnail.png" width="100%">
 </p>
