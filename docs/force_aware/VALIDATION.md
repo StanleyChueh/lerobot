@@ -51,7 +51,7 @@ UV_CACHE_DIR=/tmp/force-aware-uv uv run --no-sync python -m compileall -q tools/
 git diff --check
 ```
 
-Result: all pass.
+Result: all pass. The committed-diff check initially detected inherited CRLF annotation line endings; normalized the copied CSV to LF without changing values and rechecked.
 
 ## Data/source acquisition
 
