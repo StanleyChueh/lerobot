@@ -1,0 +1,67 @@
+{
+  "openarm_sha": "9abbe126128ce17f66c98c726688dac70b84a966",
+  "datasets": {
+    "openarm_insertbattery_lerobot_real_v00": {
+      "sha": "24eb901651f35bbab3ff7c375ce2dcd05abb1c16",
+      "sha256": {
+        "api.json": "caf5076ec67b3215ce6108cb54abb733fd4ad033ac6f8143acc65ae7bd02bc05",
+        "meta/info.json": "d581184d8093d22a8c91b2b08f9394f64dc50d007dd7bd7ae678e2d60c059a52",
+        "meta/stats.json": "f4520a75a37f4717d35d24e1483ecc1d69a3f27ad8ed1d0616c5fb1612a2711f",
+        "meta/tasks.parquet": "9bdab049a41beb7a3616530cf3a85cacf36f9da3eb0eea0ea52f14fcf634c391",
+        "meta/episodes/chunk-000/file-000.parquet": "f3fb6148db8f00556f303052fc553f7211a5a01a4a931d31ac2e1e76ab3d0b92",
+        "meta/episodes/chunk-000/file-003.parquet": "0895319a2a3a3d9b4667e576633b7a0f279b571b13d63440512ce8a28449dc89",
+        "meta/episodes/chunk-000/file-001.parquet": "64a72e54d34b340dfa451946dea6da375bf1aa4254d587b5e0245180c54ce051",
+        "meta/episodes/chunk-000/file-004.parquet": "d24ae6f89b50d05774c06b4b49bec4bf9d6a45a42b82346becdcec279d8003f7",
+        "meta/episodes/chunk-000/file-002.parquet": "5e21dc08737f12d22a1bc74ec17629c66e23174a09f7c1ec788adbb171100191",
+        "videos/observation.images.body_cam/chunk-000/file-000.mp4": "01be07fd3d7dc0dee2976a0f6f714106851c182b0ce27cd63ad33d9ea7a027dd",
+        "data/chunk-000/file-000.parquet": "7ae42ae425cd59acc83fddfc96362e739cefe448270a8b63e7ee8168acd68e84",
+        "data/chunk-000/file-003.parquet": "19f51b46e60e57cd6f0186c4b6f65f8d04ec28356184b24d34072a94bf7ea988",
+        "data/chunk-000/file-001.parquet": "97ff87854aa0880e1747d864cf236c981d56bc791d1af35a9694246973423c37",
+        "data/chunk-000/file-004.parquet": "d190b1324ddc2dc283d5de6ecf68cdd69f227e757406ffd98549dc9501062b44",
+        "data/chunk-000/file-002.parquet": "ce2c6ea488f55d77b4079035b333ea5996bbe98881364a455bef41b68fa0b512"
+      }
+    },
+    "openarm_pringles_lerobot_real_10_v00": {
+      "sha": "cebdee98115ab6827a4ec2655335c536b5dd085b",
+      "sha256": {
+        "api.json": "8ea2b94147f1712f1f44d644a11ae6b3bca046626a3d20a50f891e3c34618f94",
+        "meta/info.json": "47958db0f00cddda7547e5a10cf9a4deaee11ae4fb9faec48d5361e8c5032a11",
+        "meta/stats.json": "d984160cab566fdae4a2616dbb6231bacfe62cc40a8766dc2bdf9e30cfec4892",
+        "meta/tasks.parquet": "87a109f924fbf68aa105998a2906b9695655f7e6cf3c5065ac4996262c3bd732",
+        "meta/episodes/chunk-000/file-000.parquet": "7a12bbda1f0ea8747b55249391f681754e03ccf16a5feb7d90e0d2921b01a6f4",
+        "videos/observation.images.body_cam/chunk-000/file-000.mp4": "44ba7ce5325b2c1f549f4fdac546bfbe18295c7197bc62070a30bd6ce642f3a3",
+        "data/chunk-000/file-000.parquet": "f8190732b61e8cc0678fda1bb3d81f482fb76cfdee294cede6b99f817a4de234"
+      }
+    },
+    "openarm_pringles_lerobot_real_v00": {
+      "sha": "2c1bc860347c44fc0fbae7567469d36ee49baa8d",
+      "sha256": {
+        "api.json": "773cc19eb570750eebf7402f02406c86cbb7862654c8f83e84cc4a7f75a2bf5a",
+        "meta/info.json": "8f1afff3b3c95c86229b7d0a008393347f85d48e37326684ed4b5da8597a0797",
+        "meta/stats.json": "6bd5c32b79d4c5172388b3dc77b87b53f6f8c2a940533c9df01d80d71810f504",
+        "meta/tasks.parquet": "87a109f924fbf68aa105998a2906b9695655f7e6cf3c5065ac4996262c3bd732",
+        "meta/episodes/chunk-000/file-000.parquet": "6bbb9ab1f22cf13188535767749336cad0afa5307a8d1b3913ce505bf8edb393",
+        "videos/observation.images.body_cam/chunk-000/file-000.mp4": "51b3f0d89c5cfdebafa768a8b6b5b7b23c821f1d1f677b695d361e1d45916d50",
+        "data/chunk-000/file-000.parquet": "e6be83a572dab9841604be3f0dc6337423ccd8f79e499c4706ce521ff181c761"
+      }
+    }
+  },
+  "checkpoint_sha": "8593bf2539eb663a536aac77c2ab6f33219a54ba",
+  "checkpoint_small_file_sha256": {
+    "policy_postprocessor.json": "68470e2ef2c5263e75791636bc3303dd73b0b51fe3bcb40e997e22d1fba84b64",
+    "policy_preprocessor.json": "59e30a95c38768b1b4d5c68a5d20d3ceb06a40d194575364c187295584e5d7a1",
+    "train_config.json": "b8321ff181f688124edae89e1e1a55d3067cf2ba5bb09ae0858befd0391a8f30",
+    "policy_preprocessor_step_5_normalizer_processor.safetensors": "24865a3b934eb4fb7f171d3f896e070f9642ef8b5069a4eefeb304113c3cbd05",
+    "config.json": "ee062b20106df080b53559554be724aa462ea133eecb697bd3d2e0747fa144e9",
+    "policy_postprocessor_step_0_unnormalizer_processor.safetensors": "c09e56d77ce783050dfa3a90cdb04db6126764e6b1effa3ecb00e5d01c5d955e"
+  },
+  "neuralactuator_infer_sha256": "629d1f58103ecf047b7a9bf1cc462b43af40190f270629f58c3d006514217b8d",
+  "python": "3.13.9 (main, Oct 31 2025, 23:02:44) [Clang 21.1.4 ]",
+  "packages": {
+    "torch": "2.11.0+cu128",
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "pyarrow": "25.0.1",
+    "safetensors": "0.8.0"
+  }
+}

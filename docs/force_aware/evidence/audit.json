@@ -1,0 +1,1119 @@
+{
+  "openarm_insertbattery_lerobot_real_v00": {
+    "sha": "24eb901651f35bbab3ff7c375ce2dcd05abb1c16",
+    "episodes": 50,
+    "frames": 38178,
+    "video_scope": "Metadata spans only; full video decoding NOT checked",
+    "action_lead_frames_proxy": 2,
+    "start_joint_std": [
+      0.004581494204764942,
+      0.0038169598550814115,
+      0.011486175017578693,
+      0.0025978569206818914,
+      0.008098390772799703,
+      0.004181563716795869,
+      0.01675805654080327,
+      0.01301009378635963,
+      0.0021555900439530398,
+      0.0014540375422622369,
+      0.002864360662217086,
+      0.0005691021803770279,
+      0.004022829054209962,
+      0.002535891583741243,
+      0.007212848368436335,
+      0.004655362308410459
+    ],
+    "checks": [
+      {
+        "name": "codebase_version",
+        "status": "PASS",
+        "detail": "v3.0",
+        "evidence": {
+          "version": "v3.0"
+        }
+      },
+      {
+        "name": "fps",
+        "status": "PASS",
+        "detail": "info.fps = 30",
+        "evidence": {
+          "fps": 30.0
+        }
+      },
+      {
+        "name": "required_columns",
+        "status": "PASS",
+        "detail": "all index/timestamp columns present",
+        "evidence": {
+          "missing": []
+        }
+      },
+      {
+        "name": "feature_schema",
+        "status": "PASS",
+        "detail": "info.json features match parquet columns and shapes",
+        "evidence": {
+          "problems": [],
+          "dims": {
+            "observation.state": 16,
+            "action": 16
+          }
+        }
+      },
+      {
+        "name": "finite_state_action",
+        "status": "PASS",
+        "detail": "no NaN/inf in state or action",
+        "evidence": {}
+      },
+      {
+        "name": "empty_episodes",
+        "status": "PASS",
+        "detail": "no empty episodes",
+        "evidence": {
+          "episodes": []
+        }
+      },
+      {
+        "name": "episode_lengths_match_metadata",
+        "status": "PASS",
+        "detail": "episode metadata lengths match parquet",
+        "evidence": {
+          "mismatch": {}
+        }
+      },
+      {
+        "name": "total_episodes",
+        "status": "PASS",
+        "detail": "info.json 50, parquet 50",
+        "evidence": {
+          "info": 50,
+          "data": 50
+        }
+      },
+      {
+        "name": "missing_frames",
+        "status": "PASS",
+        "detail": "frame_index contiguous from 0 in every episode",
+        "evidence": {
+          "gaps": {},
+          "nonzero_start": {}
+        }
+      },
+      {
+        "name": "timestamps",
+        "status": "PASS",
+        "detail": "timestamps on a 1/30 s grid, monotonic",
+        "evidence": {
+          "episodes": {},
+          "note": "timestamps are written as frame_index/fps by lerobot-record, so a wrong control rate is not visible here; see the real/sim joint-speed comparison"
+        }
+      },
+      {
+        "name": "episode_durations",
+        "status": "PASS",
+        "detail": "50 episodes, 19.3-34.5 s (mean 25.5 s)",
+        "evidence": {
+          "min_frames": 580,
+          "max_frames": 1035,
+          "mean_frames": 763.56
+        }
+      },
+      {
+        "name": "camera_streams",
+        "status": "PASS",
+        "detail": "3 camera streams with complete episode coverage",
+        "evidence": {
+          "cameras": [
+            "observation.images.body_cam",
+            "observation.images.wrist_cam",
+            "observation.images.right_wrist_cam"
+          ],
+          "problems": [],
+          "shapes": {
+            "observation.images.body_cam": [
+              480,
+              640,
+              3
+            ],
+            "observation.images.wrist_cam": [
+              480,
+              640,
+              3
+            ],
+            "observation.images.right_wrist_cam": [
+              480,
+              640,
+              3
+            ]
+          },
+          "remote_videos_not_checked": false
+        }
+      },
+      {
+        "name": "camera_fps",
+        "status": "PASS",
+        "detail": "video fps == fps",
+        "evidence": {}
+      },
+      {
+        "name": "stats_observation.state",
+        "status": "PASS",
+        "detail": "stats.json mean/std match a recomputation from parquet",
+        "evidence": {
+          "max_mean_diff_in_std": 1.043307584455912e-05,
+          "max_std_rel_diff": 0.00012612932610904488,
+          "constant_dims": [],
+          "count_in_stats": 38178.0,
+          "frames": 38178
+        }
+      },
+      {
+        "name": "stats_action",
+        "status": "PASS",
+        "detail": "stats.json mean/std match a recomputation from parquet",
+        "evidence": {
+          "max_mean_diff_in_std": 3.5528624225462394e-06,
+          "max_std_rel_diff": 7.0213944390750565e-06,
+          "constant_dims": [],
+          "count_in_stats": 38178.0,
+          "frames": 38178
+        }
+      }
+    ]
+  },
+  "openarm_pringles_lerobot_real_10_v00": {
+    "sha": "cebdee98115ab6827a4ec2655335c536b5dd085b",
+    "episodes": 10,
+    "frames": 2575,
+    "video_scope": "Metadata spans only; full video decoding NOT checked",
+    "action_lead_frames_proxy": 2,
+    "start_joint_std": [
+      0.004743353494334459,
+      0.004600538226720048,
+      0.005018107559302587,
+      0.005145820926365061,
+      0.004507388131102628,
+      0.005802442482066546,
+      0.00366791312494211,
+      0.009668800237726337,
+      0.00033256269608419626,
+      0.0014176320999152495,
+      0.0005514928318296696,
+      0.0010349172435953104,
+      0.00011444259434938427,
+      0.0024309901533270317,
+      0.00970028507865648,
+      0.005169114676443116
+    ],
+    "checks": [
+      {
+        "name": "codebase_version",
+        "status": "PASS",
+        "detail": "v3.0",
+        "evidence": {
+          "version": "v3.0"
+        }
+      },
+      {
+        "name": "fps",
+        "status": "PASS",
+        "detail": "info.fps = 30",
+        "evidence": {
+          "fps": 30.0
+        }
+      },
+      {
+        "name": "required_columns",
+        "status": "PASS",
+        "detail": "all index/timestamp columns present",
+        "evidence": {
+          "missing": []
+        }
+      },
+      {
+        "name": "feature_schema",
+        "status": "PASS",
+        "detail": "info.json features match parquet columns and shapes",
+        "evidence": {
+          "problems": [],
+          "dims": {
+            "observation.state": 16,
+            "action": 16
+          }
+        }
+      },
+      {
+        "name": "finite_state_action",
+        "status": "PASS",
+        "detail": "no NaN/inf in state or action",
+        "evidence": {}
+      },
+      {
+        "name": "empty_episodes",
+        "status": "PASS",
+        "detail": "no empty episodes",
+        "evidence": {
+          "episodes": []
+        }
+      },
+      {
+        "name": "episode_lengths_match_metadata",
+        "status": "PASS",
+        "detail": "episode metadata lengths match parquet",
+        "evidence": {
+          "mismatch": {}
+        }
+      },
+      {
+        "name": "total_episodes",
+        "status": "PASS",
+        "detail": "info.json 10, parquet 10",
+        "evidence": {
+          "info": 10,
+          "data": 10
+        }
+      },
+      {
+        "name": "missing_frames",
+        "status": "PASS",
+        "detail": "frame_index contiguous from 0 in every episode",
+        "evidence": {
+          "gaps": {},
+          "nonzero_start": {}
+        }
+      },
+      {
+        "name": "timestamps",
+        "status": "PASS",
+        "detail": "timestamps on a 1/30 s grid, monotonic",
+        "evidence": {
+          "episodes": {},
+          "note": "timestamps are written as frame_index/fps by lerobot-record, so a wrong control rate is not visible here; see the real/sim joint-speed comparison"
+        }
+      },
+      {
+        "name": "episode_durations",
+        "status": "PASS",
+        "detail": "10 episodes, 8.0-9.3 s (mean 8.6 s)",
+        "evidence": {
+          "min_frames": 241,
+          "max_frames": 280,
+          "mean_frames": 257.5
+        }
+      },
+      {
+        "name": "camera_streams",
+        "status": "PASS",
+        "detail": "3 camera streams with complete episode coverage",
+        "evidence": {
+          "cameras": [
+            "observation.images.body_cam",
+            "observation.images.wrist_cam",
+            "observation.images.right_wrist_cam"
+          ],
+          "problems": [],
+          "shapes": {
+            "observation.images.body_cam": [
+              480,
+              640,
+              3
+            ],
+            "observation.images.wrist_cam": [
+              480,
+              640,
+              3
+            ],
+            "observation.images.right_wrist_cam": [
+              480,
+              640,
+              3
+            ]
+          },
+          "remote_videos_not_checked": false
+        }
+      },
+      {
+        "name": "camera_fps",
+        "status": "PASS",
+        "detail": "video fps == fps",
+        "evidence": {}
+      },
+      {
+        "name": "stats_observation.state",
+        "status": "PASS",
+        "detail": "stats.json mean/std match a recomputation from parquet",
+        "evidence": {
+          "max_mean_diff_in_std": 5.66762216913915e-06,
+          "max_std_rel_diff": 5.0374559848833236e-05,
+          "constant_dims": [],
+          "count_in_stats": 2575.0,
+          "frames": 2575
+        }
+      },
+      {
+        "name": "stats_action",
+        "status": "PASS",
+        "detail": "stats.json mean/std match a recomputation from parquet",
+        "evidence": {
+          "max_mean_diff_in_std": 1.9743423352804715e-06,
+          "max_std_rel_diff": 4.7559941188650255e-06,
+          "constant_dims": [],
+          "count_in_stats": 2575.0,
+          "frames": 2575
+        }
+      },
+      {
+        "name": "openarm_gripper_mapping",
+        "status": "PASS",
+        "detail": "gripper openness from hybrid: right open/closed (-1.2979999780654907, 0.0), left (1.2121000289916992, 0.0)",
+        "evidence": {
+          "endpoints": {
+            "right_gripper": [
+              -1.2979999780654907,
+              0.0
+            ],
+            "left_gripper": [
+              1.2121000289916992,
+              0.0
+            ]
+          },
+          "signal": "hybrid",
+          "thresholds_openness": {
+            "right_gripper": "RJ8.pos",
+            "left_gripper": "LJ8.pos",
+            "right_prefix": "RJ",
+            "left_prefix": "LJ",
+            "open_tol": 0.06,
+            "close_delta": 0.12,
+            "empty_thresh": 0.12,
+            "min_hold": 10,
+            "min_overlap": 1,
+            "settle": 15,
+            "slip_thresh": 0.06,
+            "static_eps": 0.0001,
+            "pause_frames": 30,
+            "spike_floor": 0.05,
+            "track_mult": 3.0,
+            "dup_thresh": 0.01,
+            "z_thresh": 3.0
+          }
+        }
+      },
+      {
+        "name": "openarm_exclude_flags",
+        "status": "PASS",
+        "detail": "0/10 episodes carry a severe flag ['drop_risk', 'left_abnormal', 'left_early_close', 'no_handover', 'right_post_release_close', 'right_regrasp', 'tracking_error']",
+        "evidence": {
+          "excluded": [],
+          "reasons": {}
+        }
+      },
+      {
+        "name": "openarm_minor_flags",
+        "status": "WARN",
+        "detail": "non-severe flags: {'timing_outlier': 1, 'action_spike': 1}",
+        "evidence": {
+          "timing_outlier": 1,
+          "action_spike": 1
+        }
+      },
+      {
+        "name": "openarm_trajectory_duplicates",
+        "status": "PASS",
+        "detail": "0 episodes have a near-duplicate arm trajectory (nn_dist < 0.01)",
+        "evidence": {
+          "nn_dist_median": 0.2221531834334667
+        }
+      },
+      {
+        "name": "openarm_handover_overlap",
+        "status": "PASS",
+        "detail": "both-hold overlap 2-8 frames (median 3); drop_risk below 1",
+        "evidence": {
+          "per_episode": {
+            "0": 3,
+            "1": 2,
+            "2": 8,
+            "3": 7,
+            "4": 3,
+            "5": 3,
+            "6": 3,
+            "7": 7,
+            "8": 2,
+            "9": 7
+          }
+        }
+      },
+      {
+        "name": "ckpt_state_dim",
+        "status": "WARN",
+        "detail": "config declares state [6] but normalizer stats are [16] = dataset [16]: stale input_features inherited from the pretrained base (metadata only; strict servers such as lerobot-policy-server refuse it)",
+        "evidence": {
+          "dataset": 16,
+          "declared": 6,
+          "normalizer": 16,
+          "max_state_dim": 32,
+          "policy_type": "smolvla"
+        }
+      },
+      {
+        "name": "ckpt_action_dim",
+        "status": "PASS",
+        "detail": "action [16] matches checkpoint",
+        "evidence": {
+          "dataset": 16,
+          "declared": 16,
+          "normalizer": 16,
+          "max_action_dim": 32
+        }
+      },
+      {
+        "name": "ckpt_cameras",
+        "status": "PASS",
+        "detail": "all 3 checkpoint cameras present",
+        "evidence": {
+          "checkpoint_cameras": [
+            "observation.images.camera1",
+            "observation.images.camera2",
+            "observation.images.camera3"
+          ],
+          "dataset_cameras_after_rename": {
+            "observation.images.camera3": "observation.images.body_cam",
+            "observation.images.camera2": "observation.images.wrist_cam",
+            "observation.images.camera1": "observation.images.right_wrist_cam"
+          },
+          "rename_map": {
+            "observation.images.right_wrist_cam": "observation.images.camera1",
+            "observation.images.wrist_cam": "observation.images.camera2",
+            "observation.images.body_cam": "observation.images.camera3"
+          },
+          "empty_cameras": 0
+        }
+      },
+      {
+        "name": "ckpt_image_shapes",
+        "status": "PASS",
+        "detail": "policy resizes to [512, 512]; declared image shapes are not used for slicing",
+        "evidence": {
+          "observation.images.camera1": [
+            [
+              3,
+              256,
+              256
+            ],
+            [
+              480,
+              640,
+              3
+            ]
+          ],
+          "observation.images.camera2": [
+            [
+              3,
+              256,
+              256
+            ],
+            [
+              480,
+              640,
+              3
+            ]
+          ],
+          "observation.images.camera3": [
+            [
+              3,
+              256,
+              256
+            ],
+            [
+              480,
+              640,
+              3
+            ]
+          ]
+        }
+      },
+      {
+        "name": "ckpt_normalizer_observation.state",
+        "status": "PASS",
+        "detail": "checkpoint statistics equal this dataset's (it was trained on exactly these frames)",
+        "evidence": {
+          "max_mean_shift_in_ckpt_std": 5.667414513010489e-06,
+          "worst_dims": {
+            "LJ4.pos": 0.0,
+            "LJ8.pos": 0.0,
+            "RJ6.pos": 0.0
+          },
+          "frac_frames_any_dim_|z|>4": 0.0054,
+          "ckpt_count": 2575.0,
+          "dataset_frames": 2575
+        }
+      },
+      {
+        "name": "ckpt_normalizer_action",
+        "status": "PASS",
+        "detail": "checkpoint statistics equal this dataset's (it was trained on exactly these frames)",
+        "evidence": {
+          "max_mean_shift_in_ckpt_std": 1.9392532911787543e-06,
+          "worst_dims": {
+            "LJ8.pos": 0.0,
+            "RJ8.pos": 0.0,
+            "LJ4.pos": 0.0
+          },
+          "frac_frames_any_dim_|z|>4": 0.0054,
+          "ckpt_count": 2575.0,
+          "dataset_frames": 2575
+        }
+      },
+      {
+        "name": "ckpt_chunk_vs_episode_length",
+        "status": "PASS",
+        "detail": "every episode >= chunk_size 50",
+        "evidence": {
+          "short_episodes": []
+        }
+      }
+    ]
+  },
+  "openarm_pringles_lerobot_real_v00": {
+    "sha": "2c1bc860347c44fc0fbae7567469d36ee49baa8d",
+    "episodes": 50,
+    "frames": 12115,
+    "video_scope": "Metadata spans only; full video decoding NOT checked",
+    "action_lead_frames_proxy": 2,
+    "start_joint_std": [
+      0.004083064418965545,
+      0.0028315766094332575,
+      0.005824850601696207,
+      0.003003441121309307,
+      0.0074294514648493865,
+      0.0063413858798906705,
+      0.012287875135423084,
+      0.009444614176003776,
+      0.0019157366638584436,
+      0.001215082004219178,
+      0.0006748991532051582,
+      0.0009035415426855589,
+      0.0002012801999578005,
+      0.001509120331554232,
+      0.009492540916132334,
+      0.006316153066056072
+    ],
+    "checks": [
+      {
+        "name": "codebase_version",
+        "status": "PASS",
+        "detail": "v3.0",
+        "evidence": {
+          "version": "v3.0"
+        }
+      },
+      {
+        "name": "fps",
+        "status": "PASS",
+        "detail": "info.fps = 30",
+        "evidence": {
+          "fps": 30.0
+        }
+      },
+      {
+        "name": "required_columns",
+        "status": "PASS",
+        "detail": "all index/timestamp columns present",
+        "evidence": {
+          "missing": []
+        }
+      },
+      {
+        "name": "feature_schema",
+        "status": "PASS",
+        "detail": "info.json features match parquet columns and shapes",
+        "evidence": {
+          "problems": [],
+          "dims": {
+            "observation.state": 16,
+            "action": 16
+          }
+        }
+      },
+      {
+        "name": "finite_state_action",
+        "status": "PASS",
+        "detail": "no NaN/inf in state or action",
+        "evidence": {}
+      },
+      {
+        "name": "empty_episodes",
+        "status": "PASS",
+        "detail": "no empty episodes",
+        "evidence": {
+          "episodes": []
+        }
+      },
+      {
+        "name": "episode_lengths_match_metadata",
+        "status": "PASS",
+        "detail": "episode metadata lengths match parquet",
+        "evidence": {
+          "mismatch": {}
+        }
+      },
+      {
+        "name": "total_episodes",
+        "status": "PASS",
+        "detail": "info.json 50, parquet 50",
+        "evidence": {
+          "info": 50,
+          "data": 50
+        }
+      },
+      {
+        "name": "missing_frames",
+        "status": "PASS",
+        "detail": "frame_index contiguous from 0 in every episode",
+        "evidence": {
+          "gaps": {},
+          "nonzero_start": {}
+        }
+      },
+      {
+        "name": "timestamps",
+        "status": "PASS",
+        "detail": "timestamps on a 1/30 s grid, monotonic",
+        "evidence": {
+          "episodes": {},
+          "note": "timestamps are written as frame_index/fps by lerobot-record, so a wrong control rate is not visible here; see the real/sim joint-speed comparison"
+        }
+      },
+      {
+        "name": "episode_durations",
+        "status": "PASS",
+        "detail": "50 episodes, 6.3-9.4 s (mean 8.1 s)",
+        "evidence": {
+          "min_frames": 188,
+          "max_frames": 282,
+          "mean_frames": 242.3
+        }
+      },
+      {
+        "name": "camera_streams",
+        "status": "PASS",
+        "detail": "3 camera streams with complete episode coverage",
+        "evidence": {
+          "cameras": [
+            "observation.images.body_cam",
+            "observation.images.wrist_cam",
+            "observation.images.right_wrist_cam"
+          ],
+          "problems": [],
+          "shapes": {
+            "observation.images.body_cam": [
+              480,
+              640,
+              3
+            ],
+            "observation.images.wrist_cam": [
+              480,
+              640,
+              3
+            ],
+            "observation.images.right_wrist_cam": [
+              480,
+              640,
+              3
+            ]
+          },
+          "remote_videos_not_checked": false
+        }
+      },
+      {
+        "name": "camera_fps",
+        "status": "PASS",
+        "detail": "video fps == fps",
+        "evidence": {}
+      },
+      {
+        "name": "stats_observation.state",
+        "status": "PASS",
+        "detail": "stats.json mean/std match a recomputation from parquet",
+        "evidence": {
+          "max_mean_diff_in_std": 5.472272759948966e-06,
+          "max_std_rel_diff": 4.6455037512639006e-05,
+          "constant_dims": [],
+          "count_in_stats": 12115.0,
+          "frames": 12115
+        }
+      },
+      {
+        "name": "stats_action",
+        "status": "PASS",
+        "detail": "stats.json mean/std match a recomputation from parquet",
+        "evidence": {
+          "max_mean_diff_in_std": 1.8555069366903374e-06,
+          "max_std_rel_diff": 4.319155151935766e-06,
+          "constant_dims": [],
+          "count_in_stats": 12115.0,
+          "frames": 12115
+        }
+      },
+      {
+        "name": "openarm_gripper_mapping",
+        "status": "PASS",
+        "detail": "gripper openness from hybrid: right open/closed (-1.2979999780654907, 0.0), left (1.2121000289916992, 0.0)",
+        "evidence": {
+          "endpoints": {
+            "right_gripper": [
+              -1.2979999780654907,
+              0.0
+            ],
+            "left_gripper": [
+              1.2121000289916992,
+              0.0
+            ]
+          },
+          "signal": "hybrid",
+          "thresholds_openness": {
+            "right_gripper": "RJ8.pos",
+            "left_gripper": "LJ8.pos",
+            "right_prefix": "RJ",
+            "left_prefix": "LJ",
+            "open_tol": 0.06,
+            "close_delta": 0.12,
+            "empty_thresh": 0.12,
+            "min_hold": 10,
+            "min_overlap": 1,
+            "settle": 15,
+            "slip_thresh": 0.06,
+            "static_eps": 0.0001,
+            "pause_frames": 30,
+            "spike_floor": 0.05,
+            "track_mult": 3.0,
+            "dup_thresh": 0.01,
+            "z_thresh": 3.0
+          }
+        }
+      },
+      {
+        "name": "openarm_exclude_flags",
+        "status": "FAIL",
+        "detail": "14/50 episodes carry a severe flag ['drop_risk', 'left_abnormal', 'left_early_close', 'no_handover', 'right_post_release_close', 'right_regrasp', 'tracking_error']: [16, 28, 32, 35, 36, 39, 40, 41, 42, 43, 44, 45, 46, 47]",
+        "evidence": {
+          "excluded": [
+            16,
+            28,
+            32,
+            35,
+            36,
+            39,
+            40,
+            41,
+            42,
+            43,
+            44,
+            45,
+            46,
+            47
+          ],
+          "reasons": {
+            "16": "drop_risk",
+            "28": "drop_risk",
+            "32": "drop_risk",
+            "35": "drop_risk",
+            "36": "drop_risk",
+            "39": "drop_risk",
+            "40": "drop_risk",
+            "41": "drop_risk",
+            "42": "drop_risk",
+            "43": "drop_risk",
+            "44": "drop_risk",
+            "45": "drop_risk",
+            "46": "drop_risk",
+            "47": "drop_risk"
+          }
+        }
+      },
+      {
+        "name": "openarm_minor_flags",
+        "status": "WARN",
+        "detail": "non-severe flags: {'action_spike': 4}",
+        "evidence": {
+          "action_spike": 4
+        }
+      },
+      {
+        "name": "openarm_trajectory_duplicates",
+        "status": "PASS",
+        "detail": "0 episodes have a near-duplicate arm trajectory (nn_dist < 0.01)",
+        "evidence": {
+          "nn_dist_median": 0.20586898625942476
+        }
+      },
+      {
+        "name": "openarm_handover_overlap",
+        "status": "PASS",
+        "detail": "both-hold overlap -2-12 frames (median 2); drop_risk below 1",
+        "evidence": {
+          "per_episode": {
+            "0": 3,
+            "1": 2,
+            "2": 8,
+            "3": 7,
+            "4": 3,
+            "5": 3,
+            "6": 3,
+            "7": 7,
+            "8": 2,
+            "9": 7,
+            "10": 1,
+            "11": 8,
+            "12": 7,
+            "13": 4,
+            "14": 2,
+            "15": 3,
+            "16": 0,
+            "17": 2,
+            "18": 8,
+            "19": 3,
+            "20": 1,
+            "21": 3,
+            "22": 2,
+            "23": 2,
+            "24": 1,
+            "25": 11,
+            "26": 12,
+            "27": 2,
+            "28": 0,
+            "29": 3,
+            "30": 3,
+            "31": 2,
+            "32": 0,
+            "33": 12,
+            "34": 1,
+            "35": -1,
+            "36": 0,
+            "37": 4,
+            "38": 2,
+            "39": -1,
+            "40": -2,
+            "41": -2,
+            "42": 0,
+            "43": -1,
+            "44": -1,
+            "45": -1,
+            "46": -1,
+            "47": -1,
+            "48": 1,
+            "49": 1
+          }
+        }
+      }
+    ]
+  },
+  "real_10_matches": {
+    "0": [
+      0
+    ],
+    "1": [
+      1
+    ],
+    "2": [
+      2
+    ],
+    "3": [
+      3
+    ],
+    "4": [
+      4
+    ],
+    "5": [
+      5
+    ],
+    "6": [
+      6
+    ],
+    "7": [
+      7
+    ],
+    "8": [
+      8
+    ],
+    "9": [
+      9
+    ]
+  },
+  "controlled_subsets": {
+    "17": [
+      1,
+      4,
+      7,
+      10,
+      17,
+      20,
+      25,
+      30,
+      35,
+      46
+    ],
+    "29": [
+      2,
+      6,
+      10,
+      12,
+      22,
+      23,
+      25,
+      28,
+      30,
+      38
+    ],
+    "43": [
+      0,
+      1,
+      12,
+      17,
+      20,
+      22,
+      25,
+      27,
+      29,
+      40
+    ]
+  },
+  "subset_descriptors": {
+    "original": {
+      "episodes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "frames": 2575,
+      "flagged_for_review": 0,
+      "median_overlap_frames": 3.0,
+      "median_right_path_joint_units": 12.415289163225339
+    },
+    "17": {
+      "episodes": [
+        1,
+        4,
+        7,
+        10,
+        17,
+        20,
+        25,
+        30,
+        35,
+        46
+      ],
+      "frames": 2467,
+      "flagged_for_review": 2,
+      "median_overlap_frames": 2.0,
+      "median_right_path_joint_units": 12.038721060912167
+    },
+    "29": {
+      "episodes": [
+        2,
+        6,
+        10,
+        12,
+        22,
+        23,
+        25,
+        28,
+        30,
+        38
+      ],
+      "frames": 2507,
+      "flagged_for_review": 1,
+      "median_overlap_frames": 2.5,
+      "median_right_path_joint_units": 12.605163152148634
+    },
+    "43": {
+      "episodes": [
+        0,
+        1,
+        12,
+        17,
+        20,
+        22,
+        25,
+        27,
+        29,
+        40
+      ],
+      "frames": 2541,
+      "flagged_for_review": 1,
+      "median_overlap_frames": 2.0,
+      "median_right_path_joint_units": 11.875856569222512
+    }
+  },
+  "image_start_descriptors": {
+    "original": {
+      "min_uv_px": [
+        292.4,
+        121.7
+      ],
+      "max_uv_px": [
+        404.4,
+        352.4
+      ],
+      "kernel_effective_n_48px": 3.0079060307686882,
+      "scope": "Inherited human annotations; reference-point consistency not revalidated; no metric calibration"
+    },
+    "pool": {
+      "min_uv_px": [
+        247.6,
+        29.3
+      ],
+      "max_uv_px": [
+        462.1,
+        410.6
+      ],
+      "kernel_effective_n_48px": 4.532594469496417,
+      "scope": "Inherited human annotations; reference-point consistency not revalidated; no metric calibration"
+    },
+    "17": {
+      "min_uv_px": [
+        247.6,
+        130.4
+      ],
+      "max_uv_px": [
+        449.3,
+        316.4
+      ],
+      "kernel_effective_n_48px": 3.7888422526888537,
+      "scope": "Inherited human annotations; reference-point consistency not revalidated; no metric calibration"
+    },
+    "29": {
+      "min_uv_px": [
+        247.6,
+        29.3
+      ],
+      "max_uv_px": [
+        447.6,
+        410.6
+      ],
+      "kernel_effective_n_48px": 5.567700932834227,
+      "scope": "Inherited human annotations; reference-point consistency not revalidated; no metric calibration"
+    },
+    "43": {
+      "min_uv_px": [
+        252.0,
+        29.3
+      ],
+      "max_uv_px": [
+        462.1,
+        410.6
+      ],
+      "kernel_effective_n_48px": 5.318023227751389,
+      "scope": "Inherited human annotations; reference-point consistency not revalidated; no metric calibration"
+    }
+  }
+}
